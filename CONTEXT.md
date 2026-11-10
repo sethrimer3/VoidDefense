@@ -850,3 +850,6 @@ A multi-segment autonomous mechanical worm that patrols the Void frontier, absor
 
 **Resistance Operations**:
 The non-economic, non-idle cosmetic flavor view showing the Engineering Bay (a giant experimental turret prototype with autonomous welders) and Research Lab (captured Void specimens and researchers) growing alongside tech progression.
+
+**Void pixel**:
+The smallest unit of Void Defense terrain and simulation: one simulation cell. Four Void pixels occupy the area of one former cell; each has half its width and height. Camera zoom changes its display size, not its simulation size.

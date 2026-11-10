@@ -30,7 +30,7 @@
  *    or rifle loops from trivially exhausting the reservoir without surviving the siege. */
 
 import { dist } from "../exact.ts";
-import { MATERIAL_RESISTANCE, VOID_BALANCE, WORK_SCALE } from "./config.ts";
+import { MATERIAL_RESISTANCE, pixels, VOID_BALANCE, PIXEL_WORK_SCALE } from "./config.ts";
 import { hash01, ORTHO } from "./grid.ts";
 import { CellMaterial, type ScenarioConfig, type VoidNode, type ZeroContactReason } from "./model.ts";
 import type { VoidPhysics } from "./physics.ts";
@@ -148,6 +148,8 @@ export class VoidField {
     if (gravityAnchorCells && gravityAnchorCells[idx]) {
       base = Math.round(base * 1.45);
     }
+    // Four pixels occupy one former cell. Scaling work precision by four
+    // gives each pixel exactly one quarter of the former erosion cost.
     return Math.max(10, base);
   }
 
@@ -243,7 +245,7 @@ export class VoidField {
             y: vy + 0.5,
             hp: 90,
             maxHp: 90,
-            radius: 1.4,
+            radius: pixels(1.4),
           });
           this.energyRemaining = Math.max(0, this.energyRemaining - VOID_BALANCE.nodeSpawnEnergyCost);
           break;
@@ -275,8 +277,8 @@ export class VoidField {
       const veinWave =
         0.5 +
         0.5 *
-          Math.sin(cellX * 0.23 + cellY * 0.17 + (world.seed & 0xff)) *
-          Math.cos(cellX * 0.14 - cellY * 0.29 + ((tick >> 6) * 0.35));
+          Math.sin(cellX / pixels(1) * 0.23 + cellY / pixels(1) * 0.17 + (world.seed & 0xff)) *
+          Math.cos(cellX / pixels(1) * 0.14 - cellY / pixels(1) * 0.29 + ((tick >> 6) * 0.35));
       wEdge *= 0.45 + 1.15 * veinWave;
 
       if (mat === CellMaterial.STREET || mat === CellMaterial.PARK) {
@@ -292,7 +294,7 @@ export class VoidField {
         const cx = cellX + 0.5;
         const cy = cellY + 0.5;
         for (const node of this.nodes) {
-          if (dist(cx - node.x, cy - node.y) <= 10) {
+          if (dist(cx - node.x, cy - node.y) <= pixels(10)) {
             wEdge *= VOID_BALANCE.nodeErosionBoost;
             break;
           }
@@ -304,7 +306,7 @@ export class VoidField {
 
     if (totalWeightedEdges <= 0) return "active";
 
-    const totalMicroWork = Math.round(workAvailable * WORK_SCALE) + this.remainderMicroWork;
+    const totalMicroWork = Math.round(workAvailable * PIXEL_WORK_SCALE) + this.remainderMicroWork;
     let spentMicroWork = 0;
 
     for (let i = 0; i < this.frontierCells.length; i++) {
@@ -316,9 +318,9 @@ export class VoidField {
       // Optional shield projector absorption before terrain takes damage
       let effectiveMicro = shareMicro;
       if (opts.shieldAbsorptionAt) {
-        const absorbedWork = opts.shieldAbsorptionAt(cIdx, shareMicro / WORK_SCALE);
+        const absorbedWork = opts.shieldAbsorptionAt(cIdx, shareMicro / PIXEL_WORK_SCALE);
         if (absorbedWork > 0) {
-          const absorbedMicro = Math.min(effectiveMicro, Math.round(absorbedWork * WORK_SCALE));
+          const absorbedMicro = Math.min(effectiveMicro, Math.round(absorbedWork * PIXEL_WORK_SCALE));
           effectiveMicro -= absorbedMicro;
         }
       }
@@ -356,7 +358,7 @@ export class VoidField {
     }
 
     this.remainderMicroWork = Math.max(0, totalMicroWork - spentMicroWork);
-    const actualEnergySpent = spentMicroWork / WORK_SCALE;
+    const actualEnergySpent = spentMicroWork / PIXEL_WORK_SCALE;
     this.energyRemaining = Math.max(0, this.energyRemaining - actualEnergySpent);
     this.totalWorkResisted += actualEnergySpent;
 
@@ -374,7 +376,7 @@ export class VoidField {
    *   with cheap terrain/infantry loops. */
   applyAntiVoidAblation(world: VoidWorld, targetCellIdx: number, rawDamage: number): void {
     if (targetCellIdx < 0 || targetCellIdx >= world.grid.count) return;
-    const ablatedMicro = Math.round(rawDamage * WORK_SCALE);
+    const ablatedMicro = Math.round(rawDamage * PIXEL_WORK_SCALE);
     if (this.cellMicroWork[targetCellIdx] > 0) {
       this.cellMicroWork[targetCellIdx] = Math.max(0, this.cellMicroWork[targetCellIdx] - ablatedMicro);
     }

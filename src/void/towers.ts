@@ -1,6 +1,7 @@
 /** Resistance tower catalog, strike abilities, autonomous 1-pixel infantry,
  * 1x2 exosuit masons, Wall Serpents, and late-game cosmic Void organisms. */
 
+import { pixels } from "./config.ts";
 import { dist } from "../exact.ts";
 import { hash01, ORTHO } from "./grid.ts";
 import {
@@ -41,10 +42,10 @@ export const TOWER_SPECS: Record<TowerTypeId, TowerSpec> = {
     shortName: "Matter",
     description: "Fires synthetic land pellets that displace Void and reinforce crumbling frontiers.",
     cost: 60,
-    w: 3,
-    h: 3,
+    w: pixels(3),
+    h: pixels(3),
     maxHp: 180,
-    range: 34,
+    range: pixels(34),
     cooldownSeconds: 1.8,
     color: "#f28d35",
   },
@@ -54,10 +55,10 @@ export const TOWER_SPECS: Record<TowerTypeId, TowerSpec> = {
     shortName: "Masons",
     description: "Deploys 1×2 engineers to haul salvage, repair skyscrapers, and upgrade city income.",
     cost: 55,
-    w: 3,
-    h: 3,
+    w: pixels(3),
+    h: pixels(3),
     maxHp: 170,
-    range: 38,
+    range: pixels(38),
     cooldownSeconds: 3.0,
     color: "#e6b84d",
   },
@@ -67,10 +68,10 @@ export const TOWER_SPECS: Record<TowerTypeId, TowerSpec> = {
     shortName: "Rifles",
     description: "Deploys 1-pixel riflemen that destroy Void Nodes, organisms, and ablate frontier pressure.",
     cost: 50,
-    w: 3,
-    h: 3,
+    w: pixels(3),
+    h: pixels(3),
     maxHp: 190,
-    range: 32,
+    range: pixels(32),
     cooldownSeconds: 2.5,
     color: "#ff6b2b",
   },
@@ -80,10 +81,10 @@ export const TOWER_SPECS: Record<TowerTypeId, TowerSpec> = {
     shortName: "Builder",
     description: "Engineering teams execute user-drawn polyline wall blueprints and reinforce fortifications.",
     cost: 70,
-    w: 3,
-    h: 3,
+    w: pixels(3),
+    h: pixels(3),
     maxHp: 200,
-    range: 44,
+    range: pixels(44),
     cooldownSeconds: 2.2,
     color: "#d49b35",
   },
@@ -93,10 +94,10 @@ export const TOWER_SPECS: Record<TowerTypeId, TowerSpec> = {
     shortName: "Shield",
     description: "Projects a regenerating phase barrier that absorbs Void frontier erosion within its arc.",
     cost: 75,
-    w: 3,
-    h: 3,
+    w: pixels(3),
+    h: pixels(3),
     maxHp: 210,
-    range: 14,
+    range: pixels(14),
     cooldownSeconds: 1.0,
     color: "#45d1e6",
   },
@@ -106,10 +107,10 @@ export const TOWER_SPECS: Record<TowerTypeId, TowerSpec> = {
     shortName: "Serpent",
     description: "Launches an autonomous construct that slithers along Void fronts leaving a ferrocrete wall trail.",
     cost: 95,
-    w: 3,
-    h: 3,
+    w: pixels(3),
+    h: pixels(3),
     maxHp: 220,
-    range: 48,
+    range: pixels(48),
     cooldownSeconds: 8.0,
     color: "#7ad7f0",
   },
@@ -119,10 +120,10 @@ export const TOWER_SPECS: Record<TowerTypeId, TowerSpec> = {
     shortName: "Anchor",
     description: "Locally stabilizes geometry, increasing the Void work required to erode nearby structures by 45%.",
     cost: 85,
-    w: 3,
-    h: 3,
+    w: pixels(3),
+    h: pixels(3),
     maxHp: 240,
-    range: 18,
+    range: pixels(18),
     cooldownSeconds: 2.0,
     color: "#6d88ff",
   },
@@ -132,10 +133,10 @@ export const TOWER_SPECS: Record<TowerTypeId, TowerSpec> = {
     shortName: "Rockets",
     description: "Fires long-range micro-missiles that burst into ferrocrete wall & land particles on impact.",
     cost: 90,
-    w: 3,
-    h: 3,
+    w: pixels(3),
+    h: pixels(3),
     maxHp: 185,
-    range: 46,
+    range: pixels(46),
     cooldownSeconds: 2.6,
     color: "#ff4f38",
   },
@@ -145,10 +146,10 @@ export const TOWER_SPECS: Record<TowerTypeId, TowerSpec> = {
     shortName: "Mechs",
     description: "Deploys armored 2×2 exomechs with high-powered thermal beams and rapid fortification repair.",
     cost: 120,
-    w: 4,
-    h: 4,
+    w: pixels(4),
+    h: pixels(4),
     maxHp: 300,
-    range: 38,
+    range: pixels(38),
     cooldownSeconds: 4.0,
     color: "#ffa630",
   },
@@ -173,7 +174,7 @@ export const STRIKE_SPECS: Record<StrikeId, StrikeSpec> = {
     description: "Drops a sacrificial bedrock island inside the Void, expanding contact perimeter to slow city erosion.",
     supplyCost: 35,
     cooldownSeconds: 12,
-    radius: 6.5,
+    radius: pixels(6.5),
     color: "#f29d38",
   },
   containmentPulse: {
@@ -183,7 +184,7 @@ export const STRIKE_SPECS: Record<StrikeId, StrikeSpec> = {
     description: "EMP burst that shatters Void Nodes/organisms in radius and freezes Void expansion for 4.5s.",
     supplyCost: 45,
     cooldownSeconds: 18,
-    radius: 14,
+    radius: pixels(14),
     color: "#5ce1e6",
   },
   genesis: {
@@ -193,7 +194,7 @@ export const STRIKE_SPECS: Record<StrikeId, StrikeSpec> = {
     description: "High-density terraform wave that reclaims a wide disc of Void and rings it with ferrocrete wall.",
     supplyCost: 65,
     cooldownSeconds: 22,
-    radius: 10.5,
+    radius: pixels(10.5),
     color: "#7ce88b",
   },
   orbitalReinforcement: {
@@ -203,7 +204,7 @@ export const STRIKE_SPECS: Record<StrikeId, StrikeSpec> = {
     description: "Drops a ferrocrete bunker pad and 4 elite thermal riflemen at the target point.",
     supplyCost: 50,
     cooldownSeconds: 20,
-    radius: 5,
+    radius: pixels(5),
     color: "#ff7338",
   },
   seismicFrame: {
@@ -213,7 +214,7 @@ export const STRIKE_SPECS: Record<StrikeId, StrikeSpec> = {
     description: "Reinforces all buildings and streets in radius to maximum structural HP and clears erosion work.",
     supplyCost: 40,
     cooldownSeconds: 16,
-    radius: 12,
+    radius: pixels(12),
     color: "#e6c85c",
   },
 };
@@ -592,7 +593,7 @@ export class VoidCombatManager {
     const cx = world.grid.xOf(cellIdx) + 0.5;
     const cy = world.grid.yOf(cellIdx) + 0.5;
     let absorbed = 0;
-    const maxR = TOWER_SPECS.shieldProjector.range + tech.shieldExtraRadius;
+    const maxR = TOWER_SPECS.shieldProjector.range + pixels(tech.shieldExtraRadius);
 
     for (const t of this.towers) {
       if (t.type !== "shieldProjector") continue;
@@ -671,8 +672,8 @@ export class VoidCombatManager {
               tx: target.x,
               ty: target.y,
               progress: 0,
-              duration: Math.max(0.25, dist(target.x - cx, target.y - cy) / 48),
-              radius: t.type === "rocketTeam" ? 3.2 : 2.3 * tech.matterCannonDensityMultiplier,
+              duration: Math.max(0.25, dist(target.x - cx, target.y - cy) / pixels(48)),
+              radius: pixels(t.type === "rocketTeam" ? 3.2 : 2.3 * tech.matterCannonDensityMultiplier),
               wallPayload: t.type === "rocketTeam",
               strength: tech.matterCannonDensityMultiplier,
             });
@@ -717,7 +718,7 @@ export class VoidCombatManager {
     if (voidField.frontierCells.length === 0) return null;
     let bestCell = -1;
     let bestScore = Number.POSITIVE_INFINITY;
-    const step = Math.max(1, Math.floor(voidField.frontierCells.length / 48));
+    const step = Math.max(1, Math.floor(voidField.frontierCells.length / pixels(48)));
     const offset = salt % step;
 
     for (let i = offset; i < voidField.frontierCells.length; i += step) {
@@ -760,11 +761,11 @@ export class VoidCombatManager {
         if (tech.tacticalRetreat) {
           const home = this.towers.find((t) => t.uid === a.homeUid);
           if (home) {
-            const dx = home.x + 1.5 - a.x;
-            const dy = home.y + 1.5 - a.y;
+            const dx = home.x + TOWER_SPECS[home.type].w / 2 - a.x;
+            const dy = home.y + TOWER_SPECS[home.type].h / 2 - a.y;
             const d = Math.max(0.1, dist(dx, dy));
-            a.x += (dx / d) * 12 * dt;
-            a.y += (dy / d) * 12 * dt;
+            a.x += (dx / d) * pixels(12) * dt;
+            a.y += (dy / d) * pixels(12) * dt;
           }
         }
         a.hp -= 18 * dt;
@@ -793,22 +794,22 @@ export class VoidCombatManager {
     dt: number,
     tech: EvaluatedTech,
   ): void {
-    const target = this.pickFrontierTargetNear(world, voidField, a.x, a.y, 60, tick + a.id);
+    const target = this.pickFrontierTargetNear(world, voidField, a.x, a.y, pixels(60), tick + a.id);
     if (target) {
       const dx = target.x - a.x;
       const dy = target.y - a.y;
       const d = Math.max(0.1, dist(dx, dy));
       // Orbit/slither along frontier tangent when close
-      const ux = d < 3.5 ? -dy / d : dx / d;
-      const uy = d < 3.5 ? dx / d : dy / d;
-      const spd = 9.5 * tech.serpentSpeedMultiplier;
+      const ux = d < pixels(3.5) ? -dy / d : dx / d;
+      const uy = d < pixels(3.5) ? dx / d : dy / d;
+      const spd = pixels(9.5) * tech.serpentSpeedMultiplier;
       a.x = Math.max(2, Math.min(world.grid.w - 3, a.x + ux * spd * dt));
       a.y = Math.max(2, Math.min(world.grid.h - 3, a.y + uy * spd * dt));
     }
     a.cooldown -= dt;
     if (a.cooldown <= 0) {
       a.cooldown = 0.22;
-      physics.depositMatterDisc(world, a.x, a.y, 1.35 * tech.serpentSpeedMultiplier, true, 1.2);
+      physics.depositMatterDisc(world, a.x, a.y, pixels(1.35) * tech.serpentSpeedMultiplier, true, 1.2);
     }
   }
 
@@ -820,18 +821,18 @@ export class VoidCombatManager {
     dt: number,
     tech: EvaluatedTech,
   ): void {
-    const speed = 10.5 * tech.masonSpeedMultiplier;
+    const speed = pixels(10.5) * tech.masonSpeedMultiplier;
     const home = this.towers.find((t) => t.uid === a.homeUid);
-    const anchorX = home?.focus?.x ?? (home ? home.x + 1.5 : a.x);
-    const anchorY = home?.focus?.y ?? (home ? home.y + 1.5 : a.y);
+    const anchorX = home?.focus?.x ?? (home ? home.x + TOWER_SPECS[home.type].w / 2 : a.x);
+    const anchorY = home?.focus?.y ?? (home ? home.y + TOWER_SPECS[home.type].h / 2 : a.y);
 
     if (a.carryingMatter <= 0 && !tech.matterSynthesis) {
       // Return to home depot or salvage cell to pick up matter
       if (home) {
-        const hx = home.x + 1.5;
-        const hy = home.y + 1.5;
+        const hx = home.x + TOWER_SPECS[home.type].w / 2;
+        const hy = home.y + TOWER_SPECS[home.type].h / 2;
         const d = dist(hx - a.x, hy - a.y);
-        if (d <= 2.2) {
+        if (d <= pixels(2.2)) {
           a.carryingMatter = 1;
         } else {
           a.x += ((hx - a.x) / d) * speed * dt;
@@ -850,12 +851,12 @@ export class VoidCombatManager {
           const tx = world.grid.xOf(cIdx) + 0.5;
           const ty = world.grid.yOf(cIdx) + 0.5;
           const d = dist(tx - a.x, ty - a.y);
-          if (d <= 1.8) {
-            physics.depositMatterDisc(world, tx, ty, 1.1, true, tech.masonRepairMultiplier);
+          if (d <= pixels(1.8)) {
+            physics.depositMatterDisc(world, tx, ty, pixels(1.1), true, tech.masonRepairMultiplier);
             if (!tech.matterSynthesis) a.carryingMatter = 0;
             return;
           }
-          if (d <= 48) {
+          if (d <= pixels(48)) {
             a.x += ((tx - a.x) / d) * speed * dt;
             a.y += ((ty - a.y) / d) * speed * dt;
             return;
@@ -868,7 +869,7 @@ export class VoidCombatManager {
     if (a.targetCell < 0 || tick % 30 === 0) {
       let bestIdx = -1;
       let bestScore = -Infinity;
-      const r = 28;
+      const r = pixels(28);
       for (let sample = 0; sample < 24; sample++) {
         const ox = Math.round((hash01(world.seed, a.id, tick, sample) - 0.5) * r * 2);
         const oy = Math.round((hash01(world.seed, a.id + 99, tick, sample) - 0.5) * r * 2);
@@ -900,7 +901,7 @@ export class VoidCombatManager {
       const tx = world.grid.xOf(a.targetCell) + 0.5;
       const ty = world.grid.yOf(a.targetCell) + 0.5;
       const d = dist(tx - a.x, ty - a.y);
-      if (d <= 1.8) {
+      if (d <= pixels(1.8)) {
         const idx = a.targetCell;
         if (world.hp[idx] < world.maxHp[idx]) {
           world.hp[idx] = Math.min(world.maxHp[idx], world.hp[idx] + Math.round(45 * tech.masonRepairMultiplier));
@@ -933,13 +934,13 @@ export class VoidCombatManager {
     tech: EvaluatedTech,
   ): void {
     const isMech = a.kind === "heavyMech";
-    const speed = isMech ? 8.5 : 11.5;
-    const range = (isMech ? 16 : 13) * tech.rifleRangeMultiplier;
+    const speed = pixels(isMech ? 8.5 : 11.5);
+    const range = pixels(isMech ? 16 : 13) * tech.rifleRangeMultiplier;
     const damage = (isMech ? 28 * tech.mechDamageMultiplier : 11) * tech.rifleDamageMultiplier;
 
     const home = this.towers.find((t) => t.uid === a.homeUid);
-    const focusX = home?.focus?.x ?? (home ? home.x + 1.5 : a.x);
-    const focusY = home?.focus?.y ?? (home ? home.y + 1.5 : a.y);
+    const focusX = home?.focus?.x ?? (home ? home.x + TOWER_SPECS[home.type].w / 2 : a.x);
+    const focusY = home?.focus?.y ?? (home ? home.y + TOWER_SPECS[home.type].h / 2 : a.y);
 
     a.cooldown = Math.max(0, a.cooldown - dt);
 
@@ -975,7 +976,7 @@ export class VoidCombatManager {
     // 2. Otherwise target nearest active Void frontier cell
     let frontierTarget: { x: number; y: number; cellIdx: number } | null = null;
     if (!hitOrganism && hitNodeIdx < 0) {
-      frontierTarget = this.pickFrontierTargetNear(world, voidField, focusX, focusY, 36, tick + a.id);
+      frontierTarget = this.pickFrontierTargetNear(world, voidField, focusX, focusY, pixels(36), tick + a.id);
       if (frontierTarget) {
         targetX = frontierTarget.x;
         targetY = frontierTarget.y;
@@ -1016,7 +1017,7 @@ export class VoidCombatManager {
       } else if (d > range * 0.8) {
         a.x = Math.max(1, Math.min(world.grid.w - 2, a.x + ((targetX - a.x) / d) * speed * dt));
         a.y = Math.max(1, Math.min(world.grid.h - 2, a.y + ((targetY - a.y) / d) * speed * dt));
-      } else if (tech.tacticalRetreat && d < 3.5) {
+      } else if (tech.tacticalRetreat && d < pixels(3.5)) {
         // Kite away from immediate Void edge while firing
         a.x = Math.max(1, Math.min(world.grid.w - 2, a.x - ((targetX - a.x) / d) * speed * 0.7 * dt));
         a.y = Math.max(1, Math.min(world.grid.h - 2, a.y - ((targetY - a.y) / d) * speed * 0.7 * dt));
@@ -1024,7 +1025,7 @@ export class VoidCombatManager {
     } else {
       // Move toward focus point
       const d = dist(focusX - a.x, focusY - a.y);
-      if (d > 3.0) {
+      if (d > pixels(3.0)) {
         a.x += ((focusX - a.x) / d) * speed * 0.65 * dt;
         a.y += ((focusY - a.y) / d) * speed * 0.65 * dt;
       }
@@ -1105,7 +1106,7 @@ export class VoidCombatManager {
           let bestD = Infinity;
           for (const t of this.towers) {
             const d = dist(t.x - o.x, t.y - o.y);
-            if (d > 85) continue; // Only react to observed/nearby defenses, never omniscient across whole board
+            if (d > pixels(85)) continue; // Only react to observed/nearby defenses, never omniscient across whole board
             const weight = t.type === "repairDepot" ? 0.5 : 1.0;
             if (d * weight < bestD) {
               bestD = d * weight;
@@ -1113,8 +1114,8 @@ export class VoidCombatManager {
             }
           }
           if (bestT) {
-            o.targetX = bestT.x + 1.5;
-            o.targetY = bestT.y + 1.5;
+            o.targetX = bestT.x + TOWER_SPECS[bestT.type].w / 2;
+            o.targetY = bestT.y + TOWER_SPECS[bestT.type].h / 2;
           }
         } else if (voidField.frontierCells.length > 0) {
           const pick = voidField.frontierCells[(tick + o.id * 17) % voidField.frontierCells.length];
@@ -1127,7 +1128,7 @@ export class VoidCombatManager {
         const dx = o.targetX - o.x;
         const dy = o.targetY - o.y;
         const d = Math.max(0.1, dist(dx, dy));
-        const speed = o.kind === "voidBee" ? 15 : o.kind === "constellationSpider" ? 9 : o.kind === "nebulaWorm" ? 7.5 : 4.5;
+        const speed = pixels(o.kind === "voidBee" ? 15 : o.kind === "constellationSpider" ? 9 : o.kind === "nebulaWorm" ? 7.5 : 4.5);
         o.x = Math.max(2, Math.min(world.grid.w - 3, o.x + (dx / d) * speed * dt));
         o.y = Math.max(2, Math.min(world.grid.h - 3, o.y + (dy / d) * speed * dt));
       }

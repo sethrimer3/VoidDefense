@@ -2,7 +2,7 @@
  * Central Rupture, Twin Breaches, Delayed Collapse, Archipelago City,
  * Organism Escalation, and Endless). */
 
-import { DEFAULT_WORLD_H, DEFAULT_WORLD_W, LARGE_WORLD_H, LARGE_WORLD_W } from "./config.ts";
+import { DEFAULT_WORLD_H, DEFAULT_WORLD_W, LARGE_WORLD_H, LARGE_WORLD_W, pixels } from "./config.ts";
 import type { ScenarioConfig, ScenarioId } from "./model.ts";
 
 export const SCENARIOS: readonly ScenarioConfig[] = [
@@ -18,7 +18,7 @@ export const SCENARIOS: readonly ScenarioConfig[] = [
     rampPerMinute: 130,
     startingSuppliesSiege: 220,
     startingSuppliesWatch: 360,
-    portals: [{ xFrac: 0.5, yFrac: 0.28, radius: 13, activateAtSeconds: 0 }],
+    portals: [{ xFrac: 0.5, yFrac: 0.28, radius: pixels(13), activateAtSeconds: 0 }],
   },
   {
     id: "edgeAdvance",
@@ -33,8 +33,8 @@ export const SCENARIOS: readonly ScenarioConfig[] = [
     startingSuppliesSiege: 210,
     startingSuppliesWatch: 350,
     portals: [
-      { xFrac: 0.28, yFrac: 0.1, radius: 11, activateAtSeconds: 0 },
-      { xFrac: 0.72, yFrac: 0.1, radius: 11, activateAtSeconds: 0 },
+      { xFrac: 0.28, yFrac: 0.1, radius: pixels(11), activateAtSeconds: 0 },
+      { xFrac: 0.72, yFrac: 0.1, radius: pixels(11), activateAtSeconds: 0 },
     ],
   },
   {
@@ -49,7 +49,7 @@ export const SCENARIOS: readonly ScenarioConfig[] = [
     rampPerMinute: 165,
     startingSuppliesSiege: 230,
     startingSuppliesWatch: 380,
-    portals: [{ xFrac: 0.5, yFrac: 0.5, radius: 14, activateAtSeconds: 0 }],
+    portals: [{ xFrac: 0.5, yFrac: 0.5, radius: pixels(14), activateAtSeconds: 0 }],
   },
   {
     id: "twinBreaches",
@@ -64,8 +64,8 @@ export const SCENARIOS: readonly ScenarioConfig[] = [
     startingSuppliesSiege: 240,
     startingSuppliesWatch: 400,
     portals: [
-      { xFrac: 0.28, yFrac: 0.3, radius: 11, activateAtSeconds: 0 },
-      { xFrac: 0.72, yFrac: 0.68, radius: 11, activateAtSeconds: 0 },
+      { xFrac: 0.28, yFrac: 0.3, radius: pixels(11), activateAtSeconds: 0 },
+      { xFrac: 0.72, yFrac: 0.68, radius: pixels(11), activateAtSeconds: 0 },
     ],
   },
   {
@@ -81,8 +81,8 @@ export const SCENARIOS: readonly ScenarioConfig[] = [
     startingSuppliesSiege: 240,
     startingSuppliesWatch: 420,
     portals: [
-      { xFrac: 0.35, yFrac: 0.24, radius: 12, activateAtSeconds: 0 },
-      { xFrac: 0.68, yFrac: 0.72, radius: 12, activateAtSeconds: 25 },
+      { xFrac: 0.35, yFrac: 0.24, radius: pixels(12), activateAtSeconds: 0 },
+      { xFrac: 0.68, yFrac: 0.72, radius: pixels(12), activateAtSeconds: 25 },
     ],
   },
   {
@@ -98,8 +98,8 @@ export const SCENARIOS: readonly ScenarioConfig[] = [
     startingSuppliesSiege: 270,
     startingSuppliesWatch: 460,
     portals: [
-      { xFrac: 0.5, yFrac: 0.35, radius: 14, activateAtSeconds: 0 },
-      { xFrac: 0.5, yFrac: 0.7, radius: 12, activateAtSeconds: 20 },
+      { xFrac: 0.5, yFrac: 0.35, radius: pixels(14), activateAtSeconds: 0 },
+      { xFrac: 0.5, yFrac: 0.7, radius: pixels(12), activateAtSeconds: 20 },
     ],
   },
   {
@@ -115,9 +115,9 @@ export const SCENARIOS: readonly ScenarioConfig[] = [
     startingSuppliesSiege: 300,
     startingSuppliesWatch: 500,
     portals: [
-      { xFrac: 0.3, yFrac: 0.25, radius: 13, activateAtSeconds: 0 },
-      { xFrac: 0.7, yFrac: 0.25, radius: 13, activateAtSeconds: 0 },
-      { xFrac: 0.5, yFrac: 0.65, radius: 13, activateAtSeconds: 30 },
+      { xFrac: 0.3, yFrac: 0.25, radius: pixels(13), activateAtSeconds: 0 },
+      { xFrac: 0.7, yFrac: 0.25, radius: pixels(13), activateAtSeconds: 0 },
+      { xFrac: 0.5, yFrac: 0.65, radius: pixels(13), activateAtSeconds: 30 },
     ],
   },
   {
@@ -133,9 +133,9 @@ export const SCENARIOS: readonly ScenarioConfig[] = [
     startingSuppliesSiege: 260,
     startingSuppliesWatch: 440,
     portals: [
-      { xFrac: 0.5, yFrac: 0.24, radius: 13, activateAtSeconds: 0 },
-      { xFrac: 0.25, yFrac: 0.65, radius: 11, activateAtSeconds: 35 },
-      { xFrac: 0.75, yFrac: 0.65, radius: 11, activateAtSeconds: 65 },
+      { xFrac: 0.5, yFrac: 0.24, radius: pixels(13), activateAtSeconds: 0 },
+      { xFrac: 0.25, yFrac: 0.65, radius: pixels(11), activateAtSeconds: 35 },
+      { xFrac: 0.75, yFrac: 0.65, radius: pixels(11), activateAtSeconds: 65 },
     ],
     endless: true,
   },

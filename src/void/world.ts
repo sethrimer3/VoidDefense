@@ -10,7 +10,7 @@
  *   baseline scorable city value present when the Resistance arrives on scene. */
 
 import { dist } from "../exact.ts";
-import { TICK_HZ } from "./config.ts";
+import { PIXELS_PER_FORMER_CELL, TICK_HZ } from "./config.ts";
 import { hash, hash01, VoidGrid } from "./grid.ts";
 import {
   type BuildingArchStyle,
@@ -80,7 +80,7 @@ export class VoidWorld {
   readonly totalBaselineValue: number;
   readonly totalBaselineWeightedHp: number;
 
-  constructor(scenario: ScenarioConfig) {
+  constructor(scenario: ScenarioConfig, layoutOnly = false) {
     this.grid = new VoidGrid(scenario.worldW, scenario.worldH);
     this.seed = scenario.seed;
     const n = this.grid.count;
@@ -95,8 +95,12 @@ export class VoidWorld {
     this.towerAt = new Int16Array(n).fill(-1);
     this.streetTier = new Uint8Array(n);
 
-    this.generateMetropolis(scenario);
-    this.applyInitialBreaches(scenario);
+    if (layoutOnly) {
+      this.generateMetropolis(scenario);
+      this.applyInitialBreaches(scenario);
+    } else {
+      this.generatePixelMetropolis(scenario);
+    }
     const totalValue = this.snapshotBaseline();
     let totalHp = 0;
     for (let i = 0; i < n; i++) {
@@ -104,6 +108,45 @@ export class VoidWorld {
     }
     this.totalBaselineValue = totalValue;
     this.totalBaselineWeightedHp = Math.max(1, totalHp);
+  }
+
+  /** Preserve the authored city footprint and income, subdividing every layout
+   * cell into four independent pixels. The coarse layout is discarded before play. */
+  private generatePixelMetropolis(scenario: ScenarioConfig): void {
+    const scale = PIXELS_PER_FORMER_CELL;
+    const layout = new VoidWorld({
+      ...scenario,
+      worldW: Math.ceil(scenario.worldW / scale),
+      worldH: Math.ceil(scenario.worldH / scale),
+      portals: scenario.portals.map(p => ({ ...p, radius: p.radius / scale })),
+    }, true);
+    const expand = (cell: number): number[] => {
+      const x = layout.grid.xOf(cell) * scale;
+      const y = layout.grid.yOf(cell) * scale;
+      const cells: number[] = [];
+      for (let dy = 0; dy < scale; dy++) for (let dx = 0; dx < scale; dx++) {
+        if (this.grid.inBounds(x + dx, y + dy)) cells.push(this.grid.index(x + dx, y + dy));
+      }
+      return cells;
+    };
+    for (let i = 0; i < layout.grid.count; i++) {
+      for (const pixel of expand(i)) {
+        this.material[pixel] = layout.material[i];
+        this.hp[pixel] = layout.hp[i];
+        this.maxHp[pixel] = layout.maxHp[i];
+        this.buildingAt[pixel] = layout.buildingAt[i];
+        this.streetTier[pixel] = layout.streetTier[i];
+      }
+    }
+    for (const b of layout.buildings) {
+      const cells = b.cells.flatMap(expand);
+      this.buildings.push({ ...b, x: b.x * scale, y: b.y * scale,
+        w: b.w * scale, h: b.h * scale, cells,
+        baselineValue: cells.length * (b.isSkyscraper ? 5 : 3) });
+    }
+    for (const p of layout.portals) {
+      this.portals.push({ ...p, x: p.x * scale, y: p.y * scale, radius: p.radius * scale });
+    }
   }
 
   private generateMetropolis(scenario: ScenarioConfig): void {

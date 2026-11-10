@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { decode, defaults, SAVE_KEY } from "../src/save.ts";
-import { VOID_BALANCE, VOID_SAVE_KEY } from "../src/void/config.ts";
+import { pixels, VOID_BALANCE, VOID_SAVE_KEY } from "../src/void/config.ts";
 import { getScenario, SCENARIOS } from "../src/void/maps.ts";
 import { CellMaterial } from "../src/void/model.ts";
 import { VoidPhysics } from "../src/void/physics.ts";
@@ -29,8 +29,8 @@ test("1. Procedural metropolitan map repeatability, density, and baseline integr
   const w1 = new VoidWorld(sc);
   const w2 = new VoidWorld(sc);
 
-  assert.equal(w1.grid.w, 192);
-  assert.equal(w1.grid.h, 256);
+  assert.equal(w1.grid.w, pixels(192));
+  assert.equal(w1.grid.h, pixels(256));
   assert.equal(w1.totalBaselineValue, w2.totalBaselineValue);
   assert.deepEqual(w1.material, w2.material);
   assert.deepEqual(w1.hp, w2.hp);
@@ -40,11 +40,11 @@ test("1. Procedural metropolitan map repeatability, density, and baseline integr
   const skyscrapers = w1.buildings.filter((b) => b.isSkyscraper);
   assert.ok(skyscrapers.length >= 20, `Expected >=20 skyscrapers, got ${skyscrapers.length}`);
 
-  // Large 256x384 scenario also generates cleanly
+  // Large 512x768 scenario also generates cleanly
   const largeSc = getScenario("archipelagoCity");
   const wLarge = new VoidWorld(largeSc);
-  assert.equal(wLarge.grid.w, 256);
-  assert.equal(wLarge.grid.h, 384);
+  assert.equal(wLarge.grid.w, pixels(256));
+  assert.equal(wLarge.grid.h, pixels(384));
   assert.ok(wLarge.buildings.length >= 200);
 });
 
@@ -124,7 +124,7 @@ test("4. Explicit zero-contact resolution states (victory, defeat, delayed porta
 
   // Case A: Eradicate all Void cells -> voidEradicatedVictory
   const portal = world.portals[0];
-  physics.depositMatterDisc(world, portal.x, portal.y, portal.radius + 2, false, 1.0);
+  physics.depositMatterDisc(world, portal.x, portal.y, portal.radius + pixels(2), false, 1.0);
   const resEradicated = vf.step(world, physics, sc, 1, 1 / 30, {
     wallResistanceMultiplier: 1,
     perimeterResonanceBonus: 0,
@@ -137,7 +137,7 @@ test("4. Explicit zero-contact resolution states (victory, defeat, delayed porta
   const pDelayed = new VoidPhysics();
   const vfDelayed = new VoidField(wDelayed, delayedSc);
   const p0 = wDelayed.portals[0];
-  pDelayed.depositMatterDisc(wDelayed, p0.x, p0.y, p0.radius + 2, false, 1.0);
+  pDelayed.depositMatterDisc(wDelayed, p0.x, p0.y, p0.radius + pixels(2), false, 1.0);
   const resDelayed = vfDelayed.step(wDelayed, pDelayed, delayedSc, 1, 1 / 30, {
     wallResistanceMultiplier: 1,
     perimeterResonanceBonus: 0,
@@ -414,4 +414,50 @@ test("10. Advanced towers, Wall Serpent trail, Matter Synthesis, and Cosmic Orga
     if (sim.world.material[i] === CellMaterial.WALL) wallCount++;
   }
   assert.ok(wallCount > 10, `Expected constructed ferrocrete wall cells, got ${wallCount}`);
+});
+
+test("11. Each former city cell becomes four independent simulation pixels", () => {
+  const scenario = getScenario("tutorialBreach");
+  const world = new VoidWorld(scenario);
+  const layout = new VoidWorld({ ...scenario, worldW: scenario.worldW / 2,
+    worldH: scenario.worldH / 2, portals: scenario.portals.map(p => ({ ...p, radius: p.radius / 2 })) }, true);
+  assert.equal(world.grid.count, layout.grid.count * 4);
+  assert.equal(world.buildings.length, layout.buildings.length);
+  assert.equal(world.totalBaselineValue, layout.totalBaselineValue * 4);
+  const building = world.buildings.find(b => b.cells.length >= 16)!;
+  assert.equal(building.baseIncome, layout.buildings[building.id].baseIncome);
+  assert.equal(building.w, layout.buildings[building.id].w * 2);
+  const first = building.cells[0];
+  const x = world.grid.xOf(first), y = world.grid.yOf(first);
+  const siblings = [first, first + 1, first + world.grid.w, first + world.grid.w + 1];
+  assert.equal(x % 2, 0);
+  assert.equal(y % 2, 0);
+  const hpBefore = siblings.map(i => world.hp[i]);
+  new VoidPhysics().consumeCellIntoVoid(world, first, false);
+  assert.equal(world.material[first], CellMaterial.VOID);
+  assert.equal(world.hp[first], 0);
+  for (let i = 1; i < siblings.length; i++) {
+    assert.equal(world.buildingAt[siblings[i]], building.id);
+    assert.equal(world.hp[siblings[i]], hpBefore[i], "consumption must not remove the other three pixels");
+  }
+});
+
+test("12. Fine pixels erode independently while preserving the fixed-point energy budget", () => {
+  const scenario = { ...getScenario("tutorialBreach"), worldW: 16, worldH: 16,
+    portals: [], initialVoidEnergy: 1000, baseGrowthRate: 1, rampPerMinute: 0 };
+  const world = new VoidWorld(scenario);
+  world.material.fill(CellMaterial.STREET);
+  world.hp.fill(16); world.maxHp.fill(16); world.buildingAt.fill(-1);
+  const center = world.grid.index(8, 8);
+  new VoidPhysics().consumeCellIntoVoid(world, center, false);
+  const field = new VoidField(world, scenario);
+  const before = field.energyRemaining;
+  field.step(world, new VoidPhysics(), scenario, 1, 1 / 30, {
+    wallResistanceMultiplier: 1, perimeterResonanceBonus: 0,
+  });
+  assert.ok(world.hp[center - 1] < 16 || world.hp[center + 1] < 16,
+    "the quarter-area pixels must receive real erosion, not just finer rendering");
+  assert.ok(field.energyRemaining < before);
+  assert.ok(Math.abs((before - field.energyRemaining) - field.totalWorkResisted) < 1e-9);
+  assert.equal(world.hp[center + 2], 16, "non-frontier sibling pixels remain intact");
 });

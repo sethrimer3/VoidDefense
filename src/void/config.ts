@@ -9,13 +9,18 @@ export const VOID_SAVE_VERSION = 1;
 export const TICK_HZ = 30;
 export const TICK_DT = 1 / TICK_HZ;
 
-/** Candidate metropolitan world sizes (fine simulation cells).
- * Defaulting to 192 x 256 (49,152 cells, ~6.6x original Defend), with 256 x 384
- * supported for benchmark comparison and large scenarios. */
-export const DEFAULT_WORLD_W = 192;
-export const DEFAULT_WORLD_H = 256;
-export const LARGE_WORLD_W = 256;
-export const LARGE_WORLD_H = 384;
+/** One world pixel IS one simulation cell. Each former cell is subdivided 2×2.
+ * Camera zoom changes display size only; there is no smaller terrain art grid. */
+export const PIXELS_PER_FORMER_CELL = 2;
+export const PIXEL_AREA = 1 / (PIXELS_PER_FORMER_CELL ** 2);
+/** Convert authored distances/speeds from the former grid into world pixels. */
+export const pixels = (formerCells: number): number => formerCells * PIXELS_PER_FORMER_CELL;
+
+/** Same metropolitan footprint, four times as many independently simulated pixels. */
+export const DEFAULT_WORLD_W = pixels(192);
+export const DEFAULT_WORLD_H = pixels(256);
+export const LARGE_WORLD_W = pixels(256);
+export const LARGE_WORLD_H = pixels(384);
 
 /** Spatial chunk size in cells for dirty-region terrain & rooftop rendering. */
 export const CHUNK_SIZE = 16;
@@ -23,6 +28,8 @@ export const CHUNK_SIZE = 16;
 /** Micro-work fixed-point scale so fractional frontier work is conserved
  * deterministically across any perimeter length without floating-point drift. */
 export const WORK_SCALE = 1000;
+/** Extra fixed-point precision preserves quarter-cell erosion costs exactly. */
+export const PIXEL_WORK_SCALE = WORK_SCALE / PIXEL_AREA;
 
 /** Material resistance (micro-work required to erode 1 HP of cell integrity).
  * Unreinforced civilian streets and buildings erode rapidly enough that an unopposed

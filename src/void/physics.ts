@@ -1,3 +1,4 @@
+import { PIXEL_AREA, pixels } from "./config.ts";
 /** Destructible terrain, structural support connectivity, detached debris
  * clusters, prismatic inward debris streams, and matter restoration/reinforcement
  * for Void Defense. */
@@ -72,7 +73,7 @@ export class VoidPhysics {
       const ny = dy / d;
       // Add tangential swirl + inward pull for cinematic curved streamlines
       const swirl = (hash01(world.seed, 612, idx, this.debris.length) - 0.5) * 9.5;
-      const speed = 5.5 + hash01(world.seed, 613, idx) * 6.0;
+      const speed = pixels(5.5 + hash01(world.seed, 613, idx) * 6.0);
       const palIdx =
         prevMat === CellMaterial.SKYSCRAPER
           ? (idx + this.debris.length) % 4
@@ -147,7 +148,7 @@ export class VoidPhysics {
           components.sort((aComp, bComp) => bComp.length - aComp.length);
           for (let i = 1; i < components.length; i++) {
             const splinter = components[i];
-            if (splinter.length <= 2) {
+            if (splinter.length <= 2 / PIXEL_AREA) {
               for (const cIdx of splinter) {
                 world.material[cIdx] = CellMaterial.SALVAGE;
                 world.hp[cIdx] = 20;
@@ -173,7 +174,7 @@ export class VoidPhysics {
       const dy = d.portalY - d.y;
       const distToPortal = dist(dx, dy);
       if (distToPortal > 0.6) {
-        const pull = 18 * dt;
+        const pull = pixels(18) * dt;
         d.vx += (dx / distToPortal) * pull - (dy / distToPortal) * (4.5 * dt);
         d.vy += (dy / distToPortal) * pull + (dx / distToPortal) * (4.5 * dt);
       }

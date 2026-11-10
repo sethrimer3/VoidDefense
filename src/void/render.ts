@@ -2,7 +2,7 @@
  *
  * Key architecture:
  * - Dirty-chunk offscreen canvas caching (`CHUNK_SIZE = 16` cells, rendered at
- *   `ART = 4` art pixels per cell) so static streets, stepped skyscraper rooftops,
+ *   one raster pixel per simulation cell) so static streets, stepped skyscraper rooftops,
  *   multi-cell directional shadows, rooftop features (helipads, spires, solar arrays,
  *   reactor domes, sky gardens), and deep cosmic nebula interiors are only repainted
  *   in chunks touched by Void erosion, debris, or construction.
@@ -11,13 +11,13 @@
  *     arterial avenues with crosswalks and moving civilian/emergency traffic, deep
  *     nebula Void fields, sizzling magenta/orange frontier rims, concentric prismatic
  *     event-horizon portals, and curved inward debris streams.
- *   - Close zoom reveals 1-art-pixel riflemen with muzzle flashes, 1x2 exosuit
+ *   - Close zoom reveals 1-pixel riflemen with muzzle flashes, 1x2 exosuit
  *     engineers with welding arcs and carried matter bricks, turret barrels, and
  *     individual fracturing pixels.
  * - Reuses camera math from `src/defend/render.ts` and `Loupe` from `src/defend/loupe.ts`. */
 
 import { Loupe } from "../defend/loupe.ts";
-import { CHUNK_SIZE } from "./config.ts";
+import { CHUNK_SIZE, pixels } from "./config.ts";
 import { hash, hash01 } from "./grid.ts";
 import {
   CellMaterial,
@@ -30,7 +30,6 @@ import type { VoidSim } from "./sim.ts";
 import { STRIKE_SPECS, TOWER_SPECS } from "./towers.ts";
 import type { VoidWorld } from "./world.ts";
 
-const ART = 4; // 4x4 art pixels per logical simulation cell
 
 export type DragPreview =
   | { kind: "tower"; type: TowerTypeId; x: number; y: number; valid: boolean }
@@ -166,6 +165,8 @@ export class VoidRenderer {
   readonly canvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
   private readonly terrainLayer: HTMLCanvasElement;
+  private readonly sceneLayer: HTMLCanvasElement;
+  private readonly sceneCtx: CanvasRenderingContext2D;
   private readonly tctx: CanvasRenderingContext2D;
   private renderedWorld: VoidWorld | null = null;
   readonly loupe = new Loupe();
@@ -180,6 +181,8 @@ export class VoidRenderer {
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d", { alpha: false })!;
+    this.sceneLayer = document.createElement("canvas");
+    this.sceneCtx = this.sceneLayer.getContext("2d", { alpha: false })!;
     this.terrainLayer = document.createElement("canvas");
     this.tctx = this.terrainLayer.getContext("2d", { alpha: false })!;
   }
@@ -188,7 +191,7 @@ export class VoidRenderer {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const cw = Math.max(1, Math.round((this.canvas.clientWidth || 800) * dpr));
     const ch = Math.max(1, Math.round((this.canvas.clientHeight || 600) * dpr));
-    const fit = Math.max(1.5, Math.min(cw / worldW, ch / worldH));
+    const fit = Math.min(cw / worldW, ch / worldH);
     if (
       this.canvas.width !== cw ||
       this.canvas.height !== ch ||
@@ -258,8 +261,8 @@ export class VoidRenderer {
   /** Repaints only dirtied 16x16 cell chunks into `this.terrainLayer`. */
   private syncDirtyChunks(world: VoidWorld): void {
     const { w, h, chunksW, chunksH, dirtyChunks } = world.grid;
-    const targetW = w * ART;
-    const targetH = h * ART;
+    const targetW = w;
+    const targetH = h;
 
     if (
       this.renderedWorld !== world ||
@@ -326,373 +329,67 @@ export class VoidRenderer {
     return maxShade;
   }
 
+  /** Terrain is colored one cell at a time: no sub-cell windows or art tiles. */
   private paintChunk(c: CanvasRenderingContext2D, world: VoidWorld, x0: number, y0: number): void {
     const { w, h } = world.grid;
-    const x1 = Math.min(w, x0 + CHUNK_SIZE);
-    const y1 = Math.min(h, y0 + CHUNK_SIZE);
-
-    for (let y = y0; y < y1; y++) {
-      for (let x = x0; x < x1; x++) {
-        const idx = y * w + x;
+    for (let y = y0; y < Math.min(h, y0 + CHUNK_SIZE); y++) {
+      for (let x = x0; x < Math.min(w, x0 + CHUNK_SIZE); x++) {
+        const idx = world.grid.index(x, y);
         const mat = world.material[idx];
-        const ax = x * ART;
-        const ay = y * ART;
-
-        if (mat === CellMaterial.VOID) {
-          // Multi-layered cosmic nebula interior with swirling dust lanes & star clusters
-          const wx = x * 0.14 + Math.sin(y * 0.11 + (world.seed & 31)) * 1.6;
-          const wy = y * 0.14 + Math.cos(x * 0.11 - (world.seed & 15)) * 1.6;
-          const neb =
-            0.5 +
-            0.5 * Math.sin(wx + wy * 0.7) * Math.cos(wx * 0.8 - wy * 1.1);
-          const ridge = Math.abs(Math.sin(wx * 1.7 - wy * 1.3));
-
-          if (ridge > 0.86) {
-            c.fillStyle = neb > 0.55 ? "#57166e" : "#163359";
-          } else if (neb > 0.68) {
-            c.fillStyle = "#2b1055";
-          } else if (neb > 0.42) {
-            c.fillStyle = "#160933";
-          } else if (neb > 0.22) {
-            c.fillStyle = "#0b051d";
-          } else {
-            c.fillStyle = "#04020a";
-          }
-          c.fillRect(ax, ay, ART, ART);
-
-          // Sub-cell nebula filament pixel
-          if (ridge > 0.72) {
-            c.fillStyle = neb > 0.5 ? "#8c2280" : "#225885";
-            c.fillRect(ax + ((x + y) & 2), ay + ((x ^ y) & 2), 2, 1);
-          }
-
-          // Crisp star field
-          const starRoll = hash01(world.seed, 991, x, y);
-          if (starRoll < 0.24) {
-            const sx = (hash(world.seed, 992, x, y) & 3);
-            const sy = (hash(world.seed, 993, x, y) & 3);
-            if (starRoll < 0.035) {
-              // Bright 2px cross/glint star
-              c.fillStyle = "#ffffff";
-              c.fillRect(ax + sx, ay + sy, 1, 1);
-              c.fillStyle = starRoll < 0.018 ? "#7afcff" : "#ff85e4";
-              c.fillRect(ax + Math.min(3, sx + 1), ay + sy, 1, 1);
-            } else {
-              c.fillStyle =
-                starRoll < 0.09
-                  ? "#7afcff"
-                  : starRoll < 0.15
-                    ? "#ff94e8"
-                    : starRoll < 0.19
-                      ? "#ffd27d"
-                      : "#8a68d6";
-              c.fillRect(ax + sx, ay + sy, 1, 1);
-            }
-          }
-          continue;
-        }
-
-        if (mat === CellMaterial.UNCLAIMED) {
-          // East River / Archipelago deep reflective water channel
-          const wave = Math.sin(x * 0.35 + y * 0.2) * 0.5 + 0.5;
-          c.fillStyle = wave > 0.6 ? "#153956" : wave > 0.3 ? "#0f2c44" : "#0a2033";
-          c.fillRect(ax, ay, ART, ART);
-          if (((x + y * 3) & 3) === 0) {
-            c.fillStyle = "#2b678f";
-            c.fillRect(ax + 1, ay + 2, 2, 1);
-          }
-          continue;
-        }
-
-        if (mat === CellMaterial.STREET) {
-          const isAlley = world.streetTier[idx] === 4;
-          c.fillStyle = isAlley ? "#222732" : "#1a212c";
-          c.fillRect(ax, ay, ART, ART);
-
-          if (!isAlley) {
-            // Sidewalk curb along adjacent buildings
-            const adjBld =
-              (x > 0 && world.buildingAt[idx - 1] >= 0) ||
-              (x + 1 < w && world.buildingAt[idx + 1] >= 0) ||
-              (y > 0 && world.buildingAt[idx - w] >= 0) ||
-              (y + 1 < h && world.buildingAt[idx + w] >= 0);
-
-            if (adjBld) {
-              c.fillStyle = "#2c3545";
-              c.fillRect(ax, ay, ART, ART);
-              c.fillStyle = "#1f2633";
-              c.fillRect(ax + 1, ay + 1, 2, 2);
-              // Warm amber streetlamp pools every 5 cells along sidewalks
-              if ((x + y) % 5 === 0) {
-                c.fillStyle = "#6e4d26";
-                c.fillRect(ax + 1, ay + 1, 2, 2);
-                c.fillStyle = "#ffbe55";
-                c.fillRect(ax + 1, ay + 1, 1, 1);
-              }
-            } else {
-              // Arterial avenue lane markings & mag-lev transit guideways
-              if (y % 3 === 0) {
-                c.fillStyle = "#d9822b";
-                c.fillRect(ax + 1, ay + 1, 1, 2);
-              } else if (x % 3 === 0) {
-                c.fillStyle = "#3d6e8f";
-                c.fillRect(ax + 1, ay + 1, 2, 1);
-              }
-              // Zebra crosswalks at intersections
-              if (x % 18 <= 1 && y % 14 <= 1) {
-                c.fillStyle = "#6c7a8c";
-                c.fillRect(ax, ay + 1, 1, 2);
-                c.fillRect(ax + 2, ay + 1, 1, 2);
-              }
-            }
-          } else {
-            // Internal alley / pedestrian walkway with warm doorway light spill
-            if ((x * 3 + y) % 4 === 0) {
-              c.fillStyle = "#4f3b25";
-              c.fillRect(ax + 1, ay + 1, 2, 1);
-            }
-          }
-
-          const shade = this.computeShadowAt(world, x, y, 0);
-          if (shade > 0) {
-            c.fillStyle = `rgba(5, 8, 15, ${shade})`;
-            c.fillRect(ax, ay, ART, ART);
-          }
-          continue;
-        }
-
-        if (mat === CellMaterial.PARK) {
-          // Lush urban park / civic plaza with stone paths, trees, and warm lamps
-          const isPath = (x + y) % 6 === 0 || (x - y + 256) % 7 === 0;
-          if (isPath) {
-            c.fillStyle = "#38414f";
-            c.fillRect(ax, ay, ART, ART);
-            c.fillStyle = "#4d586b";
-            c.fillRect(ax + 1, ay + 1, 2, 2);
-            if ((x + y) % 12 === 0) {
-              c.fillStyle = "#ffbe55";
-              c.fillRect(ax + 1, ay + 1, 1, 1);
-            }
-          } else {
-            c.fillStyle = "#19382a";
-            c.fillRect(ax, ay, ART, ART);
-            const treeRoll = hash01(world.seed, 994, x, y);
-            if (treeRoll < 0.55) {
-              c.fillStyle = treeRoll < 0.25 ? "#2e6b4e" : "#23523b";
-              c.fillRect(ax + 1, ay, 2, 3);
-              c.fillRect(ax, ay + 1, 3, 2);
-              c.fillStyle = "#46966e";
-              c.fillRect(ax + 1, ay + 1, 1, 1);
-            } else if (treeRoll > 0.92) {
-              // Park fountain / reflective pool glint
-              c.fillStyle = "#246985";
-              c.fillRect(ax, ay, 3, 3);
-              c.fillStyle = "#7ce8ff";
-              c.fillRect(ax + 1, ay + 1, 1, 1);
-            }
-          }
-          const shade = this.computeShadowAt(world, x, y, 0);
-          if (shade > 0) {
-            c.fillStyle = `rgba(5, 8, 15, ${shade * 0.85})`;
-            c.fillRect(ax, ay, ART, ART);
-          }
-          continue;
-        }
-
-        if (mat === CellMaterial.RECLAIMED) {
-          // Sacrificial Landfall island vs reclaimed city street
-          if (!world.isBaselineCell[idx]) {
-            c.fillStyle = "#4f3220";
-            c.fillRect(ax, ay, ART, ART);
-            c.fillStyle = "#7a4d30";
-            c.fillRect(ax, ay, ART - 1, ART - 1);
-            c.fillStyle = "#ff9e38";
-            c.fillRect(ax + 1, ay + 1, 2, 1);
-            if (((x + y) & 1) === 0) {
-              c.fillStyle = "#ffd166";
-              c.fillRect(ax + 2, ay + 2, 1, 1);
-            }
-          } else {
-            c.fillStyle = "#333d4b";
-            c.fillRect(ax, ay, ART, ART);
-            c.fillStyle = "#485669";
-            c.fillRect(ax + 1, ay + 1, 2, 2);
-            c.fillStyle = "#e69238";
-            c.fillRect(ax + 1, ay + 1, 1, 1);
-          }
-          continue;
-        }
-
-        if (mat === CellMaterial.SALVAGE) {
-          c.fillStyle = "#26232b";
-          c.fillRect(ax, ay, ART, ART);
-          c.fillStyle = "#6e472b";
-          c.fillRect(ax, ay + 1, 3, 2);
-          c.fillStyle = (x + y) % 2 === 0 ? "#ff8c29" : "#48e5ff";
-          c.fillRect(ax + 1, ay + 1, 1, 1);
-          continue;
-        }
-
-        if (mat === CellMaterial.WALL || mat === CellMaterial.BARRIER) {
-          c.fillStyle = "#374252";
-          c.fillRect(ax, ay, ART, ART);
-          c.fillStyle = "#5c6d85";
-          c.fillRect(ax, ay, ART - 1, ART - 1);
-          c.fillStyle = mat === CellMaterial.BARRIER ? "#48e5ff" : "#ff922b";
-          c.fillRect(ax + 1, ay + 1, 2, 2);
-          c.fillStyle = "#ffffff";
-          c.fillRect(ax + 1, ay + 1, 1, 1);
-          continue;
-        }
-
-        // Building or Skyscraper cell with stepped setbacks, architectural palettes, and rooftop features
+        const roll = hash01(world.seed, 995, x, y);
         const bId = world.buildingAt[idx];
         const b = bId >= 0 ? world.buildings[bId] : undefined;
-        const hpRatio = world.maxHp[idx] > 0 ? world.hp[idx] / world.maxHp[idx] : 1;
-        const isSky = mat === CellMaterial.SKYSCRAPER;
-
-        if (!b) {
-          c.fillStyle = isSky ? "#2f3d52" : "#283242";
-          c.fillRect(ax, ay, ART, ART);
-          continue;
-        }
-
-        const stylePalettes = ARCH_PALETTES[b.archStyle] ?? ARCH_PALETTES.glassTower;
-        const pal = stylePalettes[b.variant % stylePalettes.length];
-
-        const distL = x - b.x;
-        const distR = b.x + b.w - 1 - x;
-        const distT = y - b.y;
-        const distB = b.y + b.h - 1 - y;
-        const inset = Math.min(distL, distR, distT, distB);
-
-        // Select tier base color by setback inset
-        c.fillStyle = inset >= 2 ? pal.crown : inset === 1 ? pal.mid : pal.podium;
-        c.fillRect(ax, ay, ART, ART);
-
-        // Outer building bevels (sunlit N/W rim, shadowed S/E rim)
-        const nSame = y > 0 && world.buildingAt[idx - w] === bId;
-        const wSame = x > 0 && world.buildingAt[idx - 1] === bId;
-        const sSame = y + 1 < h && world.buildingAt[idx + w] === bId;
-        const eSame = x + 1 < w && world.buildingAt[idx + 1] === bId;
-
-        if (!nSame) {
-          c.fillStyle = pal.litEdge;
-          c.fillRect(ax, ay, ART, 1);
-        }
-        if (!wSame) {
-          c.fillStyle = pal.litEdge;
-          c.fillRect(ax, ay, 1, ART);
-        }
-        if (!sSame) {
-          c.fillStyle = pal.shadeEdge;
-          c.fillRect(ax, ay + ART - 1, ART, 1);
-        }
-        if (!eSame) {
-          c.fillStyle = pal.shadeEdge;
-          c.fillRect(ax + ART - 1, ay, 1, ART);
-        }
-
-        // Second-tier setback bevel for skyscrapers & large structures
-        if (inset === 1 && b.w >= 4 && b.h >= 4) {
-          if (distT === 1 || distL === 1) {
-            c.fillStyle = pal.litEdge;
-            if (distT === 1) c.fillRect(ax, ay, ART, 1);
-            if (distL === 1) c.fillRect(ax, ay, 1, ART);
+        let color: string;
+        if (mat === CellMaterial.VOID) {
+          const wave = Math.sin(x * 0.07 + Math.sin(y * 0.055)) * Math.cos(y * 0.07 - x * 0.04);
+          color = wave > 0.5 ? "#57166e" : wave > 0 ? "#2b1055" : "#0b051d";
+          if (roll > 0.997) color = "#bba5ff";
+        } else if (mat === CellMaterial.UNCLAIMED) {
+          color = roll > 0.5 ? "#102135" : "#12283e";
+        } else if (mat === CellMaterial.PARK) {
+          color = roll > 0.55 ? "#315b48" : "#234434";
+        } else if (mat === CellMaterial.RECLAIMED) {
+          color = roll > 0.6 ? "#897651" : "#665740";
+        } else if (mat === CellMaterial.WALL || mat === CellMaterial.BARRIER) {
+          color = mat === CellMaterial.BARRIER ? "#48c9dc" : (x + y) % 3 === 0 ? "#b2bdc8" : "#6e7d8e";
+        } else if (mat === CellMaterial.SALVAGE) {
+          color = roll > 0.7 ? "#b17b46" : "#453b43";
+        } else if (b) {
+          const palettes = ARCH_PALETTES[b.archStyle];
+          const pal = palettes[b.variant % palettes.length];
+          const inset = Math.min(x - b.x, y - b.y, b.x + b.w - 1 - x, b.y + b.h - 1 - y);
+          color = inset >= pixels(2) ? pal.crown : inset >= pixels(1) ? pal.mid : pal.podium;
+          const north = y === 0 || world.buildingAt[idx - w] !== bId;
+          const west = x === 0 || world.buildingAt[idx - 1] !== bId;
+          const south = y + 1 === h || world.buildingAt[idx + w] !== bId;
+          const east = x + 1 === w || world.buildingAt[idx + 1] !== bId;
+          if (north || west) color = pal.litEdge;
+          else if (south || east) color = pal.shadeEdge;
+          // Window ribbons and roof equipment occupy whole simulation pixels.
+          else if (inset < pixels(1) && (x + y + b.variant) % 3 === 0) color = pal.windowWarm;
+          else if (inset >= pixels(1)) {
+            const dx = x - Math.floor(b.x + b.w / 2);
+            const dy = y - Math.floor(b.y + b.h / 2);
+            if (b.roofFeature === "helipad" && Math.abs(dx) <= 1 && Math.abs(dy) <= 1) {
+              color = dx !== 0 || dy === 0 ? "#ffbe3b" : "#19202b";
+            } else if (b.roofFeature === "skyGarden" && (x + y) % 3 !== 0) color = "#48a878";
+            else if (b.roofFeature === "solarArray" && y % 3 === 0) color = "#5ba4e6";
+            else if (dx === 0 && dy === 0) color = pal.windowAlt;
           }
-          if (distB === 1 || distR === 1) {
-            c.fillStyle = pal.shadeEdge;
-            if (distB === 1) c.fillRect(ax, ay + ART - 1, ART, 1);
-            if (distR === 1) c.fillRect(ax + ART - 1, ay, 1, ART);
-          }
+          if (world.hp[idx] < world.maxHp[idx] * 0.4) color = roll < 0.4 ? "#ff42b8" : "#12091c";
+          else if (world.hp[idx] < world.maxHp[idx] * 0.75 && roll < 0.3) color = "#ff8c29";
+        } else {
+          color = world.streetTier[idx] === 4 ? "#293340" : "#192330";
+          if (world.streetTier[idx] !== 4 && (x + y) % 10 === 0) color = "#a69a73";
         }
-
-        // Rooftop features on interior cells (`inset >= 1`) vs structured window bands on outer cells
-        const centerX = b.x + Math.floor(b.w / 2);
-        const centerY = b.y + Math.floor(b.h / 2);
-        const isCenterCell = x === centerX && y === centerY;
-
-        if (inset >= 1) {
-          switch (b.roofFeature) {
-            case "helipad":
-              if (isCenterCell) {
-                c.fillStyle = "#19202b";
-                c.fillRect(ax, ay, ART, ART);
-                c.fillStyle = "#ffbe3b";
-                c.fillRect(ax + 1, ay, 1, 4);
-                c.fillRect(ax + 3, ay, 1, 4);
-                c.fillRect(ax + 1, ay + 2, 3, 1);
-              } else {
-                c.fillStyle = pal.windowAlt;
-                c.fillRect(ax + 1, ay + 1, 1, 1);
-              }
-              break;
-            case "reactorDome":
-            case "coolingTowers":
-              c.fillStyle = "#1c2d3d";
-              c.fillRect(ax + 1, ay + 1, 2, 2);
-              c.fillStyle = isCenterCell ? "#48e5ff" : "#ff8c29";
-              c.fillRect(ax + 1, ay + 1, 1, 1);
-              break;
-            case "solarArray":
-              c.fillStyle = "#1c3f6e";
-              c.fillRect(ax, ay + 1, 3, 2);
-              c.fillStyle = "#5ba4e6";
-              c.fillRect(ax + 1, ay + 1, 2, 1);
-              break;
-            case "skyGarden":
-              c.fillStyle = "#245942";
-              c.fillRect(ax + 1, ay + 1, 2, 2);
-              c.fillStyle = "#48a878";
-              c.fillRect(ax + 1, ay + 1, 1, 1);
-              if (isCenterCell) {
-                c.fillStyle = "#ffbe55";
-                c.fillRect(ax + 2, ay + 2, 1, 1);
-              }
-              break;
-            case "spire":
-            case "commsArray":
-              if (isCenterCell) {
-                c.fillStyle = "#c2d4e8";
-                c.fillRect(ax + 1, ay + 1, 2, 2);
-                c.fillStyle = "#ff3b30";
-                c.fillRect(ax + 1, ay + 1, 1, 1);
-              } else {
-                c.fillStyle = pal.windowWarm;
-                c.fillRect(ax + 1, ay + 2, 2, 1);
-              }
-              break;
+        c.fillStyle = color;
+        c.fillRect(x, y, 1, 1);
+        if (mat !== CellMaterial.VOID && mat !== CellMaterial.UNCLAIMED) {
+          const shade = this.computeShadowAt(world, x, y, b?.height ?? 0);
+          if (shade > 0) {
+            c.fillStyle = `rgba(5, 8, 16, ${shade * 0.75})`;
+            c.fillRect(x, y, 1, 1);
           }
-        } else if (hpRatio > 0.3) {
-          // Structured horizontal/vertical architectural window ribbons (not uniform gray noise!)
-          const winRoll = hash01(world.seed, 995, x, y);
-          if (winRoll < (isSky ? 0.78 : 0.62)) {
-            c.fillStyle =
-              b.development > 1.05
-                ? "#ffd166"
-                : winRoll < 0.28
-                  ? pal.windowAlt
-                  : pal.windowWarm;
-            c.fillRect(ax + 1, ay + 1, 1, 1);
-            if (isSky || winRoll < 0.42) {
-              c.fillRect(ax + 2, ay + 2, 1, 1);
-            }
-          }
-        }
-
-        // Shadow cast onto this building by even taller NW skyscrapers
-        const shade = this.computeShadowAt(world, x, y, b.height);
-        if (shade > 0) {
-          c.fillStyle = `rgba(5, 8, 16, ${shade * 0.75})`;
-          c.fillRect(ax, ay, ART, ART);
-        }
-
-        // Visual damage fractures & glowing ember cracks when eroded
-        if (hpRatio < 0.75) {
-          c.fillStyle = "#12091c";
-          c.fillRect(ax + 1, ay + 2, 2, 1);
-          c.fillStyle = hpRatio < 0.4 ? "#ff42b8" : "#ff8c29";
-          c.fillRect(ax + 2, ay + 1, 1, 1);
         }
       }
     }
@@ -712,13 +409,12 @@ export class VoidRenderer {
     this.resize(world.grid.w, world.grid.h);
     this.syncDirtyChunks(world);
 
-    const c = this.ctx;
+    if (this.sceneLayer.width !== world.grid.w || this.sceneLayer.height !== world.grid.h) {
+      this.sceneLayer.width = world.grid.w;
+      this.sceneLayer.height = world.grid.h;
+    }
+    const c = this.sceneCtx;
     c.setTransform(1, 0, 0, 1, 0, 0);
-    c.fillStyle = "#060810";
-    c.fillRect(0, 0, this.canvas.width, this.canvas.height);
-
-    const scale = this.cam.s * this.px;
-    c.setTransform(scale, 0, 0, scale, this.cam.x, this.cam.y);
     c.imageSmoothingEnabled = false;
 
     // 1. Draw cached metropolitan terrain layer
@@ -946,40 +642,20 @@ export class VoidRenderer {
 
     // 9. Draw autonomous agents: 1x1 riflemen, 1x2 engineers, 2x2 heavy mechs, wall serpents (V3)
     for (const a of combat.agents) {
+      const ax = Math.floor(a.x), ay = Math.floor(a.y);
       if (a.kind === "rifleman") {
-        // High-contrast 1x1 art-pixel rifleman: dark silhouette backing + warm-orange armor + helmet glint
-        c.fillStyle = "#0a0d14";
-        c.fillRect(a.x - 0.6, a.y - 0.6, 1.2, 1.2);
         c.fillStyle = "#ff7b24";
-        c.fillRect(a.x - 0.45, a.y - 0.45, 0.9, 0.9);
-        c.fillStyle = "#ffe8a3";
-        c.fillRect(a.x - 0.2, a.y - 0.45, 0.4, 0.4);
+        c.fillRect(ax, ay, 1, 1);
       } else if (a.kind === "engineer") {
-        // 1x2 exosuit engineer + carried matter brick + welding spark flash
-        c.fillStyle = "#0a0d14";
-        c.fillRect(a.x - 0.6, a.y - 0.95, 1.2, 1.9);
+        c.fillStyle = a.carryingMatter > 0 ? "#48e5ff" : "#ffd15c";
+        c.fillRect(ax, ay - 1, 1, 1);
         c.fillStyle = "#d9822b";
-        c.fillRect(a.x - 0.45, a.y - 0.2, 0.9, 0.95);
-        c.fillStyle = "#ffd15c";
-        c.fillRect(a.x - 0.45, a.y - 0.8, 0.9, 0.7);
-        if (a.carryingMatter > 0) {
-          c.fillStyle = "#48e5ff";
-          c.fillRect(a.x - 0.35, a.y - 1.25, 0.7, 0.45);
-        } else if (a.state === "repair" || a.state === "haulToBuild") {
-          // Welding torch arc flash
-          c.fillStyle = ((Math.floor(animTime * 16) + a.id) & 1) === 0 ? "#7afcff" : "#ffffff";
-          c.fillRect(a.x + 0.35, a.y - 0.5, 0.5, 0.5);
-        }
+        c.fillRect(ax, ay, 1, 1);
       } else if (a.kind === "heavyMech") {
-        // 2x2 armored exomech with dual shoulder pods
-        c.fillStyle = "#0c1018";
-        c.fillRect(a.x - 1.2, a.y - 1.2, 2.4, 2.4);
         c.fillStyle = "#ff9e30";
-        c.fillRect(a.x - 1.0, a.y - 1.0, 2.0, 2.0);
-        c.fillStyle = "#263040";
-        c.fillRect(a.x - 0.55, a.y - 0.55, 1.1, 1.1);
+        c.fillRect(ax - 1, ay - 1, 2, 2);
         c.fillStyle = "#7afcff";
-        c.fillRect(a.x - 0.3, a.y - 0.3, 0.6, 0.6);
+        c.fillRect(ax, ay - 1, 1, 1);
       } else if (a.kind === "wallSerpent") {
         c.fillStyle = "#0c1420";
         c.fillRect(a.x - 1.1, a.y - 1.1, 2.2, 2.2);
@@ -1174,6 +850,17 @@ export class VoidRenderer {
         c.stroke();
       }
     }
+
+    // Camera magnifies the same world pixels; it never creates a finer art grid.
+    const output = this.ctx;
+    output.setTransform(1, 0, 0, 1, 0, 0);
+    output.fillStyle = "#060810";
+    output.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    const scale = this.cam.s * this.px;
+    output.imageSmoothingEnabled = false;
+    output.setTransform(scale, 0, 0, scale, this.cam.x, this.cam.y);
+    output.drawImage(this.sceneLayer, 0, 0);
+    output.setTransform(1, 0, 0, 1, 0, 0);
 
     // 16. Touch/drag magnifying glass (`Loupe`)
     if (showMagnifier && pointerForLoupe) {

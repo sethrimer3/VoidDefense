@@ -31,6 +31,8 @@ npm run font           # Rebuild the Alembic pixel font from scripts/pixel-font/
 - `tsconfig` only includes `src/`; tests are not type-checked by `npm run build`.
 - CI (`.github/workflows/static.yml`) runs `npm test` and `npm run build` on push to `main`, then deploys `dist/` to GitHub Pages (the repository's Pages source must be **GitHub Actions**). Vite `base: "./"` keeps asset paths relative, so the build works under `/TowerDefense/`; asset URLs must not be root-absolute.
 
+Void Defense uses one world pixel per simulation cell (384×512 default, 512×768 large). Each former cell is subdivided 2×2; keep terrain art and simulation on the same lattice. `node tests/void-pixels.mjs` checks rendering and camera input (needs the dev server).
+
 Per-feature browser checks and tools are listed in `docs/architecture/commands.md`; each topic doc names its own.
 
 ## Architecture
