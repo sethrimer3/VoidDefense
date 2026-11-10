@@ -19,6 +19,7 @@ export const SCENARIOS: readonly ScenarioConfig[] = [
     startingSuppliesSiege: 220,
     startingSuppliesWatch: 360,
     portals: [{ xFrac: 0.5, yFrac: 0.28, radius: 13, activateAtSeconds: 0 }],
+    countryside: { ruralCells: 30, suburbCells: 16 },
   },
   {
     id: "edgeAdvance",
@@ -36,6 +37,7 @@ export const SCENARIOS: readonly ScenarioConfig[] = [
       { xFrac: 0.28, yFrac: 0.1, radius: 11, activateAtSeconds: 0 },
       { xFrac: 0.72, yFrac: 0.1, radius: 11, activateAtSeconds: 0 },
     ],
+    countryside: { ruralCells: 34, suburbCells: 18 },
   },
   {
     id: "centralRupture",
@@ -50,6 +52,7 @@ export const SCENARIOS: readonly ScenarioConfig[] = [
     startingSuppliesSiege: 230,
     startingSuppliesWatch: 380,
     portals: [{ xFrac: 0.5, yFrac: 0.5, radius: 14, activateAtSeconds: 0 }],
+    countryside: { ruralCells: 24, suburbCells: 14 },
   },
   {
     id: "twinBreaches",
@@ -67,6 +70,7 @@ export const SCENARIOS: readonly ScenarioConfig[] = [
       { xFrac: 0.28, yFrac: 0.3, radius: 11, activateAtSeconds: 0 },
       { xFrac: 0.72, yFrac: 0.68, radius: 11, activateAtSeconds: 0 },
     ],
+    countryside: { ruralCells: 28, suburbCells: 14 },
   },
   {
     id: "delayedCollapse",
@@ -84,6 +88,7 @@ export const SCENARIOS: readonly ScenarioConfig[] = [
       { xFrac: 0.35, yFrac: 0.24, radius: 12, activateAtSeconds: 0 },
       { xFrac: 0.68, yFrac: 0.72, radius: 12, activateAtSeconds: 25 },
     ],
+    countryside: { ruralCells: 28, suburbCells: 14 },
   },
   {
     id: "archipelagoCity",
@@ -101,6 +106,7 @@ export const SCENARIOS: readonly ScenarioConfig[] = [
       { xFrac: 0.5, yFrac: 0.35, radius: 14, activateAtSeconds: 0 },
       { xFrac: 0.5, yFrac: 0.7, radius: 12, activateAtSeconds: 20 },
     ],
+    countryside: { ruralCells: 34, suburbCells: 18 },
   },
   {
     id: "organismEscalation",
@@ -119,6 +125,7 @@ export const SCENARIOS: readonly ScenarioConfig[] = [
       { xFrac: 0.7, yFrac: 0.25, radius: 13, activateAtSeconds: 0 },
       { xFrac: 0.5, yFrac: 0.65, radius: 13, activateAtSeconds: 30 },
     ],
+    countryside: { ruralCells: 36, suburbCells: 18 },
   },
   {
     id: "endless",
@@ -137,6 +144,7 @@ export const SCENARIOS: readonly ScenarioConfig[] = [
       { xFrac: 0.25, yFrac: 0.65, radius: 11, activateAtSeconds: 35 },
       { xFrac: 0.75, yFrac: 0.65, radius: 11, activateAtSeconds: 65 },
     ],
+    countryside: { ruralCells: 30, suburbCells: 14 },
     endless: true,
   },
 ];

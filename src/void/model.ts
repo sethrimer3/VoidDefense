@@ -27,7 +27,42 @@ export const CellMaterial = {
 
 export type CellMaterialId = (typeof CellMaterial)[keyof typeof CellMaterial];
 
-export type DistrictKind = "downtown" | "midtown" | "industrial" | "residential" | "plaza" | "breach";
+/** Render-only surface detail layered over a cell's material: the countryside between
+ * the metropolis and the Void (grass, meadow, forest, crop fields, orchards, dirt roads,
+ * rivers and bridges) plus rural props. `NONE` means the plain urban surface. */
+export const LandCover = {
+  NONE: 0,
+  GRASS: 1,
+  MEADOW: 2,
+  FOREST: 3,
+  FIELD_H: 4,
+  FIELD_V: 5,
+  DIRT_ROAD: 6,
+  RIVER: 7,
+  BRIDGE: 8,
+  ORCHARD: 9,
+  SILO: 10,
+} as const;
+
+export type LandCoverId = (typeof LandCover)[keyof typeof LandCover];
+
+/** Zone class of a cell along the city-to-Void gradient. */
+export const ZoneKind = {
+  RURAL: 0,
+  SUBURB: 1,
+  URBAN: 2,
+} as const;
+
+export type ZoneKindId = (typeof ZoneKind)[keyof typeof ZoneKind];
+
+export type DistrictKind =
+  | "downtown"
+  | "midtown"
+  | "industrial"
+  | "residential"
+  | "plaza"
+  | "breach"
+  | "rural";
 
 export type BuildingArchStyle =
   | "glassTower"
@@ -35,7 +70,9 @@ export type BuildingArchStyle =
   | "cyberArcology"
   | "foundryComplex"
   | "solarTerrace"
-  | "civicDome";
+  | "civicDome"
+  | "homestead"
+  | "barn";
 
 export type RoofFeatureKind =
   | "helipad"
@@ -247,6 +284,10 @@ export type ScenarioConfig = {
   startingSuppliesSiege: number;
   startingSuppliesWatch: number;
   portals: { xFrac: number; yFrac: number; radius: number; activateAtSeconds: number }[];
+  /** Countryside band between each portal and the metropolis, in cells beyond the portal
+   * radius: `ruralCells` of farmland, forest and country roads, then `suburbCells` of
+   * leafy low-rise blocks before the dense city. Defaults apply when omitted. */
+  countryside?: { ruralCells: number; suburbCells: number };
   endless?: boolean;
 };
 

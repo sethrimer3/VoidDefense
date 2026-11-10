@@ -34,6 +34,19 @@ function launchBrowser() {
 
 const browser = await launchBrowser();
 
+/** Clicks a HUD control from inside the page. The battle HUD re-renders its buttons every
+ * half second of simulation time, so Playwright's own click can keep finding the element
+ * detached; a direct `element.click()` lands on whichever button is current. */
+async function clickNow(page, selector) {
+  const found = await page.evaluate((sel) => {
+    const el = document.querySelector(sel);
+    if (!el) return false;
+    el.click();
+    return true;
+  }, selector);
+  assert.ok(found, `Expected a control matching ${selector}`);
+}
+
 try {
   const viewports = [
     { name: "desktop", width: 1280, height: 800 },
@@ -173,12 +186,12 @@ try {
     }
 
     // Set 3x speed and let battle run for 2.2 real seconds (~6.5 sim seconds of intense erosion, debris & fire)
-    await page.click("[data-cycle-speed]");
-    await page.click("[data-cycle-speed]");
+    await clickNow(page, "[data-cycle-speed]");
+    await clickNow(page, "[data-cycle-speed]");
     await page.waitForTimeout(2200);
 
     // Pause so before/after & close-up screenshots capture the exact same active tick
-    await page.click("[data-toggle-pause]");
+    await clickNow(page, "[data-toggle-pause]");
     await page.waitForTimeout(80);
 
     await page.screenshot({ path: path.join(OUT_DIR, `void-battle-${vp.name}.png`) });

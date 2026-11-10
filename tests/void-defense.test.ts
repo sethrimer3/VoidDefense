@@ -23,6 +23,7 @@ import {
 } from "../src/void/tech/wallet.ts";
 import { VoidField } from "../src/void/void-field.ts";
 import { VoidWorld } from "../src/void/world.ts";
+import { LandCover, ZoneKind } from "../src/void/model.ts";
 
 test("1. Procedural metropolitan map repeatability, density, and baseline integrity", () => {
   const sc = getScenario("tutorialBreach");
@@ -46,6 +47,81 @@ test("1. Procedural metropolitan map repeatability, density, and baseline integr
   assert.equal(wLarge.grid.w, 256);
   assert.equal(wLarge.grid.h, 384);
   assert.ok(wLarge.buildings.length >= 200);
+});
+
+test("1b. City gives way to countryside before the Void: zones, rural land cover, roads, river, hamlets", () => {
+  const sc = getScenario("tutorialBreach");
+  const world = new VoidWorld(sc);
+  const { w, h } = world.grid;
+  const portal = world.portals[0];
+
+  // Every cell is classified, and the three zones all exist on a default scenario
+  const zoneCounts = [0, 0, 0];
+  for (let i = 0; i < world.grid.count; i++) zoneCounts[world.zone[i]]++;
+  assert.ok(zoneCounts[ZoneKind.RURAL] > 2000, `rural cells: ${zoneCounts[ZoneKind.RURAL]}`);
+  assert.ok(zoneCounts[ZoneKind.SUBURB] > 1500, `suburb cells: ${zoneCounts[ZoneKind.SUBURB]}`);
+  assert.ok(zoneCounts[ZoneKind.URBAN] > zoneCounts[ZoneKind.RURAL], "the metropolis still dominates the map");
+
+  // The land next to the crater is countryside, far corners are city
+  const nearIdx = (portal.y + portal.radius + 4) * w + portal.x;
+  assert.equal(world.zone[nearIdx], ZoneKind.RURAL);
+  assert.equal(world.zone[(h - 6) * w + (w - 6)], ZoneKind.URBAN);
+
+  // Rural cells carry countryside land cover; urban cells carry none
+  const cover: Record<number, number> = {};
+  for (let i = 0; i < world.grid.count; i++) {
+    const lc = world.landCover[i];
+    cover[lc] = (cover[lc] ?? 0) + 1;
+    if (world.zone[i] === ZoneKind.URBAN && world.material[i] !== CellMaterial.PARK) {
+      assert.equal(lc, LandCover.NONE, `urban non-park cell ${i} has land cover ${lc}`);
+    }
+  }
+  assert.ok((cover[LandCover.GRASS] ?? 0) > 1000, "open grass");
+  assert.ok((cover[LandCover.FOREST] ?? 0) > 300, "forest");
+  assert.ok((cover[LandCover.DIRT_ROAD] ?? 0) > 60, "winding country roads");
+  assert.ok((cover[LandCover.RIVER] ?? 0) > 60, "a river");
+  assert.ok((cover[LandCover.FIELD_H] ?? 0) + (cover[LandCover.FIELD_V] ?? 0) + (cover[LandCover.ORCHARD] ?? 0) > 60, "fields and orchards");
+
+  // Dirt roads and bridges are passable baseline streets; river cells are water
+  for (let i = 0; i < world.grid.count; i++) {
+    const lc = world.landCover[i];
+    // The initial crater blast turns nearby ground into Void or salvage; skip those cells
+    const m = world.material[i];
+    if (m === CellMaterial.VOID || m === CellMaterial.SALVAGE) continue;
+    if (lc === LandCover.DIRT_ROAD || lc === LandCover.BRIDGE) {
+      assert.equal(world.material[i], CellMaterial.STREET);
+      assert.equal(world.streetTier[i], 8);
+      assert.equal(world.isBaselineCell[i], 1);
+    } else if (lc === LandCover.RIVER) {
+      assert.equal(world.material[i], CellMaterial.UNCLAIMED);
+    }
+  }
+
+  // Hamlets: homesteads and barns only in the countryside, and they are scorable buildings
+  const rural = world.buildings.filter((b) => b.district === "rural");
+  assert.ok(rural.length >= 3, `rural hamlets: ${rural.length}`);
+  for (const b of rural) {
+    assert.ok(b.archStyle === "homestead" || b.archStyle === "barn");
+    for (const cIdx of b.cells) {
+      assert.equal(world.zone[cIdx], ZoneKind.RURAL);
+      assert.equal(world.material[cIdx], CellMaterial.BUILDING);
+    }
+  }
+  // No city block buildings stand on countryside
+  for (const b of world.buildings) {
+    if (b.district === "rural") continue;
+    for (const cIdx of b.cells) assert.notEqual(world.zone[cIdx], ZoneKind.RURAL);
+  }
+
+  // Deterministic and tracked by the renderer's dirty chunks when consumed
+  const again = new VoidWorld(sc);
+  assert.deepEqual(again.landCover, world.landCover);
+  assert.deepEqual(again.zone, world.zone);
+  world.grid.clearDirtyFlags();
+  world.grid.markRadiusDirty(nearIdx, 6);
+  let dirty = 0;
+  for (let i = 0; i < world.grid.chunkCount; i++) dirty += world.grid.dirtyChunks[i];
+  assert.ok(dirty >= 2 && dirty <= 9, `chunks dirtied around a cell: ${dirty}`);
 });
 
 test("2. Void perimeter-budget physics: sacrificial land island slows city-front erosion", () => {

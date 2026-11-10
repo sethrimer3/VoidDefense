@@ -77,6 +77,15 @@ export class VoidGrid {
     this.allDirty = true;
   }
 
+  /** Marks every chunk overlapping the square of radius `r` cells around cell `i`
+   * (used so the Void's corruption band repaints around newly consumed cells). */
+  markRadiusDirty(i: number, r: number): void {
+    if (i < 0 || i >= this.count) return;
+    const x = i % this.w;
+    const y = (i / this.w) | 0;
+    this.markRectDirty({ x: x - r, y: y - r, w: r * 2 + 1, h: r * 2 + 1 });
+  }
+
   markAllDirty(): void {
     this.dirtyChunks.fill(1);
     this.allDirty = true;
