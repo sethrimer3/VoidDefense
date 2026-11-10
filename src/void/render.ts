@@ -84,162 +84,156 @@ type ArchPalette = {
   crown: string;
   litEdge: string;
   shadeEdge: string;
-  windowWarm: string;
-  windowAlt: string;
+  neonEdge: string;
+  neonCore: string;
+  roofAccent: string;
 };
+
+interface TronCorridor {
+  fromBld: number;
+  toBld: number;
+  path: readonly { x: number; y: number }[];
+}
+
+interface TronCycle {
+  corridorIdx: number;
+  color: string;
+  dist: number;
+  speed: number;
+}
 
 const ARCH_PALETTES: Record<MetroBuilding["archStyle"], readonly ArchPalette[]> = {
   glassTower: [
     {
-      podium: "#283241",
-      mid: "#36465a",
-      crown: "#4a6079",
-      litEdge: "#7f98b5",
-      shadeEdge: "#10161f",
-      windowWarm: "#ffbe55",
-      windowAlt: "#7ce8ff",
+      podium: "#0a0e14",
+      mid: "#101622",
+      crown: "#161f30",
+      litEdge: "#1f304d",
+      shadeEdge: "#04060a",
+      neonEdge: "#ff7b1a",
+      neonCore: "#ffbe55",
+      roofAccent: "#ff8c29",
     },
     {
-      podium: "#223442",
-      mid: "#2f4a5c",
-      crown: "#3f6478",
-      litEdge: "#6aa3bf",
-      shadeEdge: "#0e1a22",
-      windowWarm: "#ffaa3b",
-      windowAlt: "#8cf4ff",
+      podium: "#080c14",
+      mid: "#0d1420",
+      crown: "#131d2e",
+      litEdge: "#1a2c47",
+      shadeEdge: "#030508",
+      neonEdge: "#ff922b",
+      neonCore: "#ffd685",
+      roofAccent: "#ffa94d",
     },
   ],
   artDecoSetback: [
     {
-      podium: "#3b3028",
-      mid: "#524236",
-      crown: "#6e5846",
-      litEdge: "#9c7e63",
-      shadeEdge: "#1c1612",
-      windowWarm: "#ffb84d",
-      windowAlt: "#ffe299",
+      podium: "#0c0a0c",
+      mid: "#141014",
+      crown: "#1c161d",
+      litEdge: "#2b202c",
+      shadeEdge: "#050305",
+      neonEdge: "#ff5e1a",
+      neonCore: "#ffaa4d",
+      roofAccent: "#ff7426",
     },
     {
-      podium: "#42322b",
-      mid: "#5c453a",
-      crown: "#785a4b",
-      litEdge: "#a8826c",
-      shadeEdge: "#211714",
-      windowWarm: "#ff9c33",
-      windowAlt: "#ffd480",
+      podium: "#0d0b09",
+      mid: "#16110d",
+      crown: "#1f1813",
+      litEdge: "#2e231b",
+      shadeEdge: "#050403",
+      neonEdge: "#ff6d1f",
+      neonCore: "#ffbe55",
+      roofAccent: "#ff8c33",
     },
   ],
   cyberArcology: [
     {
-      podium: "#252b3d",
-      mid: "#343d57",
-      crown: "#465375",
-      litEdge: "#6e82b5",
-      shadeEdge: "#121521",
-      windowWarm: "#ff852b",
-      windowAlt: "#5ce1e6",
+      podium: "#080a12",
+      mid: "#0d111c",
+      crown: "#141928",
+      litEdge: "#1c253d",
+      shadeEdge: "#030408",
+      neonEdge: "#ff852b",
+      neonCore: "#ffcf70",
+      roofAccent: "#ff9933",
     },
     {
-      podium: "#2c283d",
-      mid: "#3e3857",
-      crown: "#544c75",
-      litEdge: "#8277b0",
-      shadeEdge: "#151221",
-      windowWarm: "#ff9e3b",
-      windowAlt: "#6ef3ff",
+      podium: "#0a0812",
+      mid: "#100d1c",
+      crown: "#18142a",
+      litEdge: "#221c3d",
+      shadeEdge: "#040308",
+      neonEdge: "#ff5424",
+      neonCore: "#ffa066",
+      roofAccent: "#ff6e38",
     },
   ],
   foundryComplex: [
     {
-      podium: "#382520",
-      mid: "#4f342c",
-      crown: "#69453a",
-      litEdge: "#946252",
-      shadeEdge: "#1c110e",
-      windowWarm: "#ff6b1a",
-      windowAlt: "#ffbe3b",
+      podium: "#0f0806",
+      mid: "#170c0a",
+      crown: "#22110d",
+      litEdge: "#331812",
+      shadeEdge: "#050202",
+      neonEdge: "#ff4d12",
+      neonCore: "#ff9047",
+      roofAccent: "#ff6122",
     },
     {
-      podium: "#332824",
-      mid: "#4a3933",
-      crown: "#634c44",
-      litEdge: "#8c6d61",
-      shadeEdge: "#191311",
-      windowWarm: "#ff7b24",
-      windowAlt: "#ffd166",
+      podium: "#0e0906",
+      mid: "#160e0a",
+      crown: "#20140e",
+      litEdge: "#2f1e14",
+      shadeEdge: "#050302",
+      neonEdge: "#ff5e1a",
+      neonCore: "#ffaa4d",
+      roofAccent: "#ff7426",
     },
   ],
   solarTerrace: [
     {
-      podium: "#2d3644",
-      mid: "#3e4b5e",
-      crown: "#52637a",
-      litEdge: "#7990b0",
-      shadeEdge: "#161b24",
-      windowWarm: "#ffad42",
-      windowAlt: "#ffe08c",
+      podium: "#090d12",
+      mid: "#0e141c",
+      crown: "#141d28",
+      litEdge: "#1b2838",
+      shadeEdge: "#030508",
+      neonEdge: "#ff7426",
+      neonCore: "#ffbe55",
+      roofAccent: "#ff8c33",
     },
     {
-      podium: "#333942",
-      mid: "#47505c",
-      crown: "#5c6878",
-      litEdge: "#8595ab",
-      shadeEdge: "#191c22",
-      windowWarm: "#ff9933",
-      windowAlt: "#ffd685",
+      podium: "#070b10",
+      mid: "#0c111a",
+      crown: "#121926",
+      litEdge: "#182336",
+      shadeEdge: "#020406",
+      neonEdge: "#ff802b",
+      neonCore: "#ffc96b",
+      roofAccent: "#ff9938",
     },
   ],
   civicDome: [
     {
-      podium: "#324252",
-      mid: "#465c73",
-      crown: "#5c7894",
-      litEdge: "#8ab0d4",
-      shadeEdge: "#172029",
-      windowWarm: "#ffd166",
-      windowAlt: "#80f5ff",
+      podium: "#080c10",
+      mid: "#0d131a",
+      crown: "#131b24",
+      litEdge: "#1a2533",
+      shadeEdge: "#030406",
+      neonEdge: "#ff8c2b",
+      neonCore: "#ffd685",
+      roofAccent: "#ffa242",
     },
   ],
-  // Countryside: pitched roofs seen from above (ridge highlight, eave shadow, warm window)
+  // Countryside: pitched roofs seen from above (ridge highlight, eave shadow, warm window).
+  // `neonCore` is the lit window colour; rural buildings carry no neon trim.
   homestead: [
-    {
-      podium: "#8c3a2a",
-      mid: "#a8432f",
-      crown: "#c45a42",
-      litEdge: "#d8765a",
-      shadeEdge: "#3a1410",
-      windowWarm: "#ffbe55",
-      windowAlt: "#ffe9a8",
-    },
-    {
-      podium: "#4a505d",
-      mid: "#5b6372",
-      crown: "#6f7889",
-      litEdge: "#8d97a8",
-      shadeEdge: "#1c2027",
-      windowWarm: "#ffbe55",
-      windowAlt: "#ffe9a8",
-    },
-    {
-      podium: "#7a5436",
-      mid: "#8f6442",
-      crown: "#a87a52",
-      litEdge: "#c49468",
-      shadeEdge: "#2c1c10",
-      windowWarm: "#ffbe55",
-      windowAlt: "#ffe9a8",
-    },
+    { podium: "#8c3a2a", mid: "#a8432f", crown: "#c45a42", litEdge: "#d8765a", shadeEdge: "#3a1410", neonEdge: "#ffbe55", neonCore: "#ffbe55", roofAccent: "#ffe9a8" },
+    { podium: "#4a505d", mid: "#5b6372", crown: "#6f7889", litEdge: "#8d97a8", shadeEdge: "#1c2027", neonEdge: "#ffbe55", neonCore: "#ffbe55", roofAccent: "#ffe9a8" },
+    { podium: "#7a5436", mid: "#8f6442", crown: "#a87a52", litEdge: "#c49468", shadeEdge: "#2c1c10", neonEdge: "#ffbe55", neonCore: "#ffbe55", roofAccent: "#ffe9a8" },
   ],
   barn: [
-    {
-      podium: "#8e2c22",
-      mid: "#ad3528",
-      crown: "#c64534",
-      litEdge: "#f2e8d8",
-      shadeEdge: "#3a100c",
-      windowWarm: "#ffbe55",
-      windowAlt: "#f2e8d8",
-    },
+    { podium: "#8e2c22", mid: "#ad3528", crown: "#c64534", litEdge: "#f2e8d8", shadeEdge: "#3a100c", neonEdge: "#ffbe55", neonCore: "#ffbe55", roofAccent: "#f2e8d8" },
   ],
 };
 
@@ -261,6 +255,16 @@ export class VoidRenderer {
   readonly loupe = new Loupe();
   /** When true, suppresses dynamic shimmer/lensing overlays for reduced-motion accessibility & comparison. */
   reduceEffects = false;
+
+  // Tron light cycle trails along streets connecting buildings
+  private corridors: TronCorridor[] = [];
+  private cycles: TronCycle[] = [];
+  private corridorsWorld: VoidWorld | null = null;
+  private lastTimeMs = 0;
+
+  // Offscreen bloom/soft-glow canvas for lightweight Gaussian-blur-like Tron neon passes
+  private glowCanvas: HTMLCanvasElement = document.createElement("canvas");
+  private gctx: CanvasRenderingContext2D = this.glowCanvas.getContext("2d")!;
 
   /** Camera state: `s` = zoom multiplier (1 = fit board), `x, y` = canvas pixel pan. */
   readonly cam = { s: 1, x: 0, y: 0 };
@@ -343,6 +347,112 @@ export class VoidRenderer {
     const ch = this.canvas.height;
     this.cam.x = bw <= cw ? (cw - bw) * 0.5 : Math.min(60, Math.max(cw - bw - 60, this.cam.x));
     this.cam.y = bh <= ch ? (ch - bh) * 0.5 : Math.min(60, Math.max(ch - bh - 60, this.cam.y));
+  }
+
+  /** Builds orthogonal street circuit corridors connecting nearby buildings for Tron light trails. */
+  private syncCorridors(world: VoidWorld): void {
+    if (this.corridorsWorld === world && this.corridors.length > 0) return;
+    this.corridorsWorld = world;
+    this.corridors = [];
+    this.cycles = [];
+
+    const { w, h } = world.grid;
+    const isStreet = (x: number, y: number) => {
+      if (x < 0 || x >= w || y < 0 || y >= h) return false;
+      const i = world.grid.index(x, y);
+      // Light cycles ride city streets only, never the countryside's dirt lanes
+      return world.material[i] === CellMaterial.STREET && world.streetTier[i] !== 8;
+    };
+
+    const findDoor = (b: MetroBuilding) => {
+      const cx = b.x + Math.floor(b.w / 2);
+      const cy = b.y + Math.floor(b.h / 2);
+      if (b.y > 0 && isStreet(cx, b.y - 1)) return { x: cx, y: b.y - 1 };
+      if (b.y + b.h < h && isStreet(cx, b.y + b.h)) return { x: cx, y: b.y + b.h };
+      if (b.x > 0 && isStreet(b.x - 1, cy)) return { x: b.x - 1, y: cy };
+      if (b.x + b.w < w && isStreet(b.x + b.w, cy)) return { x: b.x + b.w, y: cy };
+      for (let x = b.x; x < b.x + b.w; x++) {
+        if (b.y > 0 && isStreet(x, b.y - 1)) return { x, y: b.y - 1 };
+        if (b.y + b.h < h && isStreet(x, b.y + b.h)) return { x, y: b.y + b.h };
+      }
+      for (let y = b.y; y < b.y + b.h; y++) {
+        if (b.x > 0 && isStreet(b.x - 1, y)) return { x: b.x - 1, y };
+        if (b.x + b.w < w && isStreet(b.x + b.w, y)) return { x: b.x + b.w, y };
+      }
+      return null;
+    };
+
+    const visited = new Uint8Array(w * h);
+    const bldCount = world.buildings.length;
+
+    for (let i = 0; i < bldCount; i++) {
+      const bA = world.buildings[i];
+      const dA = findDoor(bA);
+      if (!dA) continue;
+
+      let bestB = -1;
+      let bestDist = 26;
+      for (let j = Math.max(0, i - 12); j < Math.min(bldCount, i + 12); j++) {
+        if (i === j) continue;
+        const bB = world.buildings[j];
+        const d = Math.abs(bB.x - bA.x) + Math.abs(bB.y - bA.y);
+        if (d > 2 && d < bestDist) {
+          bestDist = d;
+          bestB = j;
+        }
+      }
+      if (bestB === -1) continue;
+      const dB = findDoor(world.buildings[bestB]);
+      if (!dB) continue;
+
+      visited.fill(0);
+      visited[dA.y * w + dA.x] = 1;
+      const queue: { x: number; y: number; pts: { x: number; y: number }[] }[] = [
+        { x: dA.x, y: dA.y, pts: [dA] },
+      ];
+      let path: { x: number; y: number }[] | null = null;
+
+      while (queue.length > 0) {
+        const cur = queue.shift()!;
+        if (cur.x === dB.x && cur.y === dB.y) {
+          path = cur.pts;
+          break;
+        }
+        if (cur.pts.length >= 28) continue;
+        for (const [dx, dy] of [
+          [1, 0],
+          [-1, 0],
+          [0, 1],
+          [0, -1],
+        ]) {
+          const nx = cur.x + dx;
+          const ny = cur.y + dy;
+          if (!isStreet(nx, ny)) continue;
+          const idx = ny * w + nx;
+          if (visited[idx]) continue;
+          visited[idx] = 1;
+          queue.push({ x: nx, y: ny, pts: [...cur.pts, { x: nx, y: ny }] });
+        }
+      }
+
+      if (path && path.length >= 4) {
+        this.corridors.push({ fromBld: i, toBld: bestB, path });
+      }
+    }
+
+    // Populate active Tron cycles along the network
+    const cycleCount = Math.min(64, Math.floor(this.corridors.length * 0.45));
+    const colors = ["#ff9e38", "#ff7426", "#ffd166", "#48e5ff", "#ff8c33"];
+    for (let c = 0; c < cycleCount; c++) {
+      const corridorIdx = (c * 7 + (world.seed & 31)) % Math.max(1, this.corridors.length);
+      const corr = this.corridors[corridorIdx];
+      this.cycles.push({
+        corridorIdx,
+        color: colors[c % colors.length],
+        dist: ((c * 13) % Math.max(1, corr.path.length)),
+        speed: 5.5 + (c % 4) * 1.5,
+      });
+    }
   }
 
   /** Repaints only dirtied 16x16 cell chunks into `this.terrainLayer`. */
@@ -615,56 +725,13 @@ export class VoidRenderer {
       }
 
       const isAlley = world.streetTier[idx] === 4;
-      c.fillStyle = isAlley ? "#262a31" : "#1f2228";
+      // Deep carbon asphalt streetbed
+      c.fillStyle = isAlley ? "#050608" : "#040507";
       c.fillRect(ax, ay, ART, ART);
-
-      if (!isAlley) {
-        // Sidewalk curb along adjacent buildings
-        const adjBld =
-          (x > 0 && world.buildingAt[idx - 1] >= 0) ||
-          (x + 1 < w && world.buildingAt[idx + 1] >= 0) ||
-          (y > 0 && world.buildingAt[idx - w] >= 0) ||
-          (y + 1 < h && world.buildingAt[idx + w] >= 0);
-
-        if (adjBld) {
-          c.fillStyle = "#333a45";
-          c.fillRect(ax, ay, ART, ART);
-          c.fillStyle = "#262c36";
-          c.fillRect(ax + 1, ay + 1, 2, 2);
-          // Warm amber streetlamp pools every 5 cells along sidewalks
-          if ((x + y) % 5 === 0) {
-            c.fillStyle = "#7a5429";
-            c.fillRect(ax + 1, ay + 1, 2, 2);
-            c.fillStyle = "#ffbe55";
-            c.fillRect(ax + 1, ay + 1, 1, 1);
-          }
-        } else {
-          // Arterial avenue lane markings & mag-lev transit guideways
-          if (y % 3 === 0) {
-            c.fillStyle = "#d9822b";
-            c.fillRect(ax + 1, ay + 1, 1, 2);
-          } else if (x % 3 === 0) {
-            c.fillStyle = "#3d6e8f";
-            c.fillRect(ax + 1, ay + 1, 2, 1);
-          }
-          // Zebra crosswalks at intersections
-          if (x % 18 <= 1 && y % 14 <= 1) {
-            c.fillStyle = "#6c7a8c";
-            c.fillRect(ax, ay + 1, 1, 2);
-            c.fillRect(ax + 2, ay + 1, 1, 2);
-          }
-        }
-      } else {
-        // Internal alley / pedestrian walkway with warm doorway light spill
-        if ((x * 3 + y) % 4 === 0) {
-          c.fillStyle = "#5a4228";
-          c.fillRect(ax + 1, ay + 1, 2, 1);
-        }
-      }
 
       const shade = this.computeShadowAt(world, x, y, 0);
       if (shade > 0) {
-        c.fillStyle = `rgba(5, 8, 15, ${shade})`;
+        c.fillStyle = `rgba(2, 3, 5, ${shade * 0.9})`;
         c.fillRect(ax, ay, ART, ART);
       }
       this.paintCorruption(c, world, x, y, ax, ay, nearVoid);
@@ -675,39 +742,17 @@ export class VoidRenderer {
       if (cover !== LandCover.NONE) {
         this.paintCountryCell(c, world, x, y, ax, ay, cover);
       } else {
-        // Lush urban park / civic plaza with stone paths, trees, and warm lamps
-        const isPath = (x + y) % 6 === 0 || (x - y + 256) % 7 === 0;
-        if (isPath) {
-          c.fillStyle = "#38414f";
-          c.fillRect(ax, ay, ART, ART);
-          c.fillStyle = "#4d586b";
-          c.fillRect(ax + 1, ay + 1, 2, 2);
-          if ((x + y) % 12 === 0) {
-            c.fillStyle = "#ffbe55";
-            c.fillRect(ax + 1, ay + 1, 1, 1);
-          }
-        } else {
-          c.fillStyle = "#19382a";
-          c.fillRect(ax, ay, ART, ART);
-          const treeRoll = hash01(seed, 994, x, y);
-          if (treeRoll < 0.55) {
-            c.fillStyle = treeRoll < 0.25 ? "#2e6b4e" : "#23523b";
-            c.fillRect(ax + 1, ay, 2, 3);
-            c.fillRect(ax, ay + 1, 3, 2);
-            c.fillStyle = "#46966e";
-            c.fillRect(ax + 1, ay + 1, 1, 1);
-          } else if (treeRoll > 0.92) {
-            // Park fountain / reflective pool glint
-            c.fillStyle = "#246985";
-            c.fillRect(ax, ay, 3, 3);
-            c.fillStyle = "#7ce8ff";
-            c.fillRect(ax + 1, ay + 1, 1, 1);
-          }
+        // Dark obsidian civic plaza with geometric neon grid lines
+        c.fillStyle = "#090d12";
+        c.fillRect(ax, ay, ART, ART);
+        if ((x + y) % 4 === 0) {
+          c.fillStyle = "#1b332b";
+          c.fillRect(ax, ay, ART, 1);
         }
       }
       const shade = this.computeShadowAt(world, x, y, 0);
       if (shade > 0) {
-        c.fillStyle = `rgba(5, 8, 15, ${shade * 0.85})`;
+        c.fillStyle = `rgba(3, 4, 8, ${shade * 0.85})`;
         c.fillRect(ax, ay, ART, ART);
       }
       this.paintCorruption(c, world, x, y, ax, ay, nearVoid);
@@ -811,115 +856,90 @@ export class VoidRenderer {
     c.fillStyle = inset >= 2 ? pal.crown : inset === 1 ? pal.mid : pal.podium;
     c.fillRect(ax, ay, ART, ART);
 
-    // Outer building bevels (sunlit N/W rim, shadowed S/E rim)
-    const nSame = y > 0 && world.buildingAt[idx - w] === bId;
-    const wSame = x > 0 && world.buildingAt[idx - 1] === bId;
-    const sSame = y + 1 < h && world.buildingAt[idx + w] === bId;
-    const eSame = x + 1 < w && world.buildingAt[idx + 1] === bId;
+      // Outer building bevels: high-contrast Tron neon edge ribbons
+      const nSame = y > 0 && world.buildingAt[idx - w] === bId;
+      const wSame = x > 0 && world.buildingAt[idx - 1] === bId;
+      const sSame = y + 1 < h && world.buildingAt[idx + w] === bId;
+      const eSame = x + 1 < w && world.buildingAt[idx + 1] === bId;
 
-    if (!nSame) {
-      c.fillStyle = pal.litEdge;
-      c.fillRect(ax, ay, ART, 1);
-    }
-    if (!wSame) {
-      c.fillStyle = pal.litEdge;
-      c.fillRect(ax, ay, 1, ART);
-    }
-    if (!sSame) {
-      c.fillStyle = pal.shadeEdge;
-      c.fillRect(ax, ay + ART - 1, ART, 1);
-    }
-    if (!eSame) {
-      c.fillStyle = pal.shadeEdge;
-      c.fillRect(ax + ART - 1, ay, 1, ART);
-    }
-
-    // Second-tier setback bevel for skyscrapers & large structures
-    if (inset === 1 && b.w >= 4 && b.h >= 4) {
-      if (distT === 1 || distL === 1) {
-        c.fillStyle = pal.litEdge;
-        if (distT === 1) c.fillRect(ax, ay, ART, 1);
-        if (distL === 1) c.fillRect(ax, ay, 1, ART);
+      // Outer neon perimeter trace
+      if (!nSame) {
+        c.fillStyle = pal.neonEdge;
+        c.fillRect(ax, ay, ART, 1);
+        c.fillStyle = pal.neonCore;
+        c.fillRect(ax + 1, ay, ART - 2, 1);
       }
-      if (distB === 1 || distR === 1) {
-        c.fillStyle = pal.shadeEdge;
-        if (distB === 1) c.fillRect(ax, ay + ART - 1, ART, 1);
-        if (distR === 1) c.fillRect(ax + ART - 1, ay, 1, ART);
+      if (!wSame) {
+        c.fillStyle = pal.neonEdge;
+        c.fillRect(ax, ay, 1, ART);
+        c.fillStyle = pal.neonCore;
+        c.fillRect(ax, ay + 1, 1, ART - 2);
       }
-    }
-
-    // Rooftop features on interior cells (`inset >= 1`) vs structured window bands on outer cells
-    const centerX = b.x + Math.floor(b.w / 2);
-    const centerY = b.y + Math.floor(b.h / 2);
-    const isCenterCell = x === centerX && y === centerY;
-
-    if (inset >= 1) {
-      switch (b.roofFeature) {
-        case "helipad":
-          if (isCenterCell) {
-            c.fillStyle = "#19202b";
-            c.fillRect(ax, ay, ART, ART);
-            c.fillStyle = "#ffbe3b";
-            c.fillRect(ax + 1, ay, 1, 4);
-            c.fillRect(ax + 3, ay, 1, 4);
-            c.fillRect(ax + 1, ay + 2, 3, 1);
-          } else {
-            c.fillStyle = pal.windowAlt;
-            c.fillRect(ax + 1, ay + 1, 1, 1);
-          }
-          break;
-        case "reactorDome":
-        case "coolingTowers":
-          c.fillStyle = "#1c2d3d";
-          c.fillRect(ax + 1, ay + 1, 2, 2);
-          c.fillStyle = isCenterCell ? "#48e5ff" : "#ff8c29";
-          c.fillRect(ax + 1, ay + 1, 1, 1);
-          break;
-        case "solarArray":
-          c.fillStyle = "#1c3f6e";
-          c.fillRect(ax, ay + 1, 3, 2);
-          c.fillStyle = "#5ba4e6";
-          c.fillRect(ax + 1, ay + 1, 2, 1);
-          break;
-        case "skyGarden":
-          c.fillStyle = "#245942";
-          c.fillRect(ax + 1, ay + 1, 2, 2);
-          c.fillStyle = "#48a878";
-          c.fillRect(ax + 1, ay + 1, 1, 1);
-          if (isCenterCell) {
-            c.fillStyle = "#ffbe55";
-            c.fillRect(ax + 2, ay + 2, 1, 1);
-          }
-          break;
-        case "spire":
-        case "commsArray":
-          if (isCenterCell) {
-            c.fillStyle = "#c2d4e8";
-            c.fillRect(ax + 1, ay + 1, 2, 2);
-            c.fillStyle = "#ff3b30";
-            c.fillRect(ax + 1, ay + 1, 1, 1);
-          } else {
-            c.fillStyle = pal.windowWarm;
-            c.fillRect(ax + 1, ay + 2, 2, 1);
-          }
-          break;
+      if (!sSame) {
+        c.fillStyle = pal.neonEdge;
+        c.fillRect(ax, ay + ART - 1, ART, 1);
+        c.fillStyle = pal.neonCore;
+        c.fillRect(ax + 1, ay + ART - 1, ART - 2, 1);
       }
-    } else if (hpRatio > 0.3) {
-      // Structured horizontal/vertical architectural window ribbons (not uniform gray noise!)
-      const winRoll = hash01(seed, 995, x, y);
-      if (winRoll < (isSky ? 0.78 : 0.62)) {
-        c.fillStyle =
-          b.development > 1.05
-            ? "#ffd166"
-            : winRoll < 0.28
-              ? pal.windowAlt
-              : pal.windowWarm;
-        c.fillRect(ax + 1, ay + 1, 1, 1);
-        if (isSky || winRoll < 0.42) {
-          c.fillRect(ax + 2, ay + 2, 1, 1);
+      if (!eSame) {
+        c.fillStyle = pal.neonEdge;
+        c.fillRect(ax + ART - 1, ay, 1, ART);
+        c.fillStyle = pal.neonCore;
+        c.fillRect(ax + ART - 1, ay + 1, 1, ART - 2);
+      }
+
+      // Inner setback neon circuit for stepped skyscrapers
+      if (inset === 1 && Math.min(b.w, b.h) >= 4) {
+        if (distT === 1) {
+          c.fillStyle = pal.neonEdge;
+          c.fillRect(ax, ay, ART, 1);
+        }
+        if (distL === 1) {
+          c.fillStyle = pal.neonEdge;
+          c.fillRect(ax, ay, 1, ART);
+        }
+        if (distB === 1) {
+          c.fillStyle = pal.neonEdge;
+          c.fillRect(ax, ay + ART - 1, ART, 1);
+        }
+        if (distR === 1) {
+          c.fillStyle = pal.neonEdge;
+          c.fillRect(ax + ART - 1, ay, 1, ART);
         }
       }
-    }
+
+      // Clean geometric Tron rooftop conduits (no scattered window dots!)
+      const centerX = b.x + Math.floor(b.w / 2);
+      const centerY = b.y + Math.floor(b.h / 2);
+      const isCenterCell = x === centerX && y === centerY;
+
+      if (inset >= 1) {
+        // Central circuit core on the rooftop
+        if (isCenterCell) {
+          c.fillStyle = pal.roofAccent;
+          c.fillRect(ax + 1, ay + 1, 2, 2);
+          c.fillStyle = "#ffffff";
+          c.fillRect(ax + 1, ay + 1, 1, 1);
+        } else if ((x === centerX || y === centerY) && inset === 1) {
+          // Bus line connecting roof edge to center core
+          c.fillStyle = pal.neonEdge;
+          if (x === centerX) {
+            c.fillRect(ax + 1, ay, 2, ART);
+            c.fillStyle = pal.neonCore;
+            c.fillRect(ax + 1, ay, 1, ART);
+          } else {
+            c.fillRect(ax, ay + 1, ART, 2);
+            c.fillStyle = pal.neonCore;
+            c.fillRect(ax, ay + 1, ART, 1);
+          }
+        }
+      } else if (b.development > 1.05 && (distL === 0 || distR === 0 || distT === 0 || distB === 0)) {
+        // Over-development upgrade: glowing corner accents
+        if ((distL === 0 || distR === 0) && (distT === 0 || distB === 0)) {
+          c.fillStyle = "#ffd685";
+          c.fillRect(ax + 1, ay + 1, 2, 2);
+        }
+      }
 
     // Shadow cast onto this building by even taller NW skyscrapers
     const shade = this.computeShadowAt(world, x, y, b.height);
@@ -1105,7 +1125,7 @@ export class VoidRenderer {
     }
     if (lx === b.w - 1 && ly === b.h - 1 && hpRatio > 0.3) {
       // Warm window spilling light at dusk
-      c.fillStyle = pal.windowWarm;
+      c.fillStyle = pal.neonCore;
       c.fillRect(ax + 1, ay + 1, 1, 1);
     }
     if (hpRatio < 0.75) {
@@ -1324,29 +1344,70 @@ export class VoidRenderer {
 
     lap("terrain");
 
-    // 2. Ambient metropolitan street traffic & evacuating vehicles along intact avenues (V3)
-    const { w, h } = world.grid;
-    const trafficCount = Math.min(64, Math.floor((w * h) / 900));
-    for (let i = 0; i < trafficCount; i++) {
-      const horiz = (i & 1) === 0;
-      const laneSeed = hash(world.seed, 710, i);
-      const speed = 4.5 + (laneSeed % 5) * 1.1;
-      const pos = ((laneSeed % 200) + animTime * speed * (i % 3 === 0 ? -1 : 1) + 4000) % (horiz ? w : h);
-      const fixedCoord = 4 + (laneSeed % Math.max(1, (horiz ? h : w) - 8));
-      const tx = horiz ? Math.floor(pos) : fixedCoord;
-      const ty = horiz ? fixedCoord : Math.floor(pos);
-      if (!world.grid.inBounds(tx, ty)) continue;
-      const tIdx = ty * w + tx;
-      if (world.material[tIdx] !== CellMaterial.STREET || world.streetTier[tIdx] === 4) continue;
+    // 1b. Soft Gaussian-like Tron ambient glow pass across city neon outlines
+    if (!this.reduceEffects && this.px * this.cam.s >= 1.5) {
+      const gw = Math.max(1, Math.floor(world.grid.w * 0.5));
+      const gh = Math.max(1, Math.floor(world.grid.h * 0.5));
+      if (this.glowCanvas.width !== gw || this.glowCanvas.height !== gh) {
+        this.glowCanvas.width = gw;
+        this.glowCanvas.height = gh;
+      }
+      this.gctx.imageSmoothingEnabled = true;
+      this.gctx.clearRect(0, 0, gw, gh);
+      this.gctx.drawImage(this.terrainLayer, 0, 0, gw, gh);
 
-      // 1x2 emergency / civilian shuttle with warm headlights
-      const isEmergency = i % 4 === 0;
-      c.fillStyle = isEmergency ? "#ff5436" : "#ffd166";
-      c.fillRect(tx + 0.15, ty + 0.15, horiz ? 0.9 : 0.55, horiz ? 0.55 : 0.9);
-      c.fillStyle = isEmergency && ((Math.floor(animTime * 8) + i) & 1) === 0 ? "#48e5ff" : "#ffffff";
-      c.fillRect(tx + 0.3, ty + 0.3, 0.35, 0.35);
+      c.save();
+      c.globalCompositeOperation = "screen";
+      c.globalAlpha = 0.42;
+      c.filter = "blur(3px)";
+      c.drawImage(this.glowCanvas, 0, 0, world.grid.w, world.grid.h);
+      c.restore();
     }
 
+    // 2. Tron Light Cycles & Stream Trails running along street corridors from building to building
+    this.syncCorridors(world);
+    const dt = this.lastTimeMs > 0 ? Math.min(0.08, (nowMs - this.lastTimeMs) * 0.001) : 0.016;
+    this.lastTimeMs = nowMs;
+
+    const TRAIL_LEN = 16;
+    for (const cyc of this.cycles) {
+      if (cyc.corridorIdx >= this.corridors.length) continue;
+      const corr = this.corridors[cyc.corridorIdx];
+      const pLen = corr.path.length;
+      if (pLen < 2) continue;
+
+      cyc.dist = (cyc.dist + cyc.speed * dt) % pLen;
+      const headIdx = Math.floor(cyc.dist);
+
+      // Draw fading Tron tail along corridor path
+      for (let t = TRAIL_LEN; t >= 0; t--) {
+        const segIdx = ((headIdx - t) % pLen + pLen) % pLen;
+        const pt = corr.path[segIdx];
+        if (!pt) continue;
+        if (world.material[world.grid.index(pt.x, pt.y)] !== CellMaterial.STREET) continue;
+
+        const age = t / TRAIL_LEN;
+        if (t === 0) {
+          // Brilliant white quantum head with orange halo
+          c.fillStyle = "#ffffff";
+          c.fillRect(pt.x + 0.1, pt.y + 0.1, 0.8, 0.8);
+        } else if (age < 0.25) {
+          c.fillStyle = "#ffe49e";
+          c.fillRect(pt.x + 0.2, pt.y + 0.2, 0.6, 0.6);
+        } else if (age < 0.55) {
+          c.fillStyle = cyc.color;
+          c.fillRect(pt.x + 0.25, pt.y + 0.25, 0.5, 0.5);
+        } else if (age < 0.8) {
+          c.fillStyle = "#cc440a";
+          c.fillRect(pt.x + 0.35, pt.y + 0.35, 0.3, 0.3);
+        } else {
+          c.fillStyle = "#661e05";
+          c.fillRect(pt.x + 0.4, pt.y + 0.4, 0.2, 0.2);
+        }
+      }
+    }
+
+    const { w, h } = world.grid;
     lap("traffic");
 
     // 3. Living frontier: a soft violet corona on threatened cells, matter sparks, and

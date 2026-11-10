@@ -1,6 +1,6 @@
 # Void Defense: Implementation Plan for AI Coding Agents
 
-**Repository:** https://github.com/sethrimer3/TowerDefense  
+**Repository:** https://github.com/sethrimer3/VoidDefense (never push Void Defense changes to `sethrimer3/TowerDefense`)  
 **New implementation roadmap:** `VoidDefensePlan.md`  
 **Original brainstorming transcript:** `VoidDefence.md`  
 **Visual reference gallery:** [`docs/void-defense/visual-references.md`](docs/void-defense/visual-references.md)  
