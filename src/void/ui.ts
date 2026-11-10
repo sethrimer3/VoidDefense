@@ -924,18 +924,30 @@ export class VoidApp {
       // Draw stylized metropolitan avenues & multi-hue skyscrapers
       for (let y = 4; y < 50; y += 10) {
         for (let x = 4; x < 92; x += 14) {
-          c.fillStyle = (x + y) % 3 === 0 ? "#2b4a6b" : "#4a3d33";
+          c.fillStyle = (x + y) % 3 === 0 ? "#36465a" : "#4a3d33";
           c.fillRect(x, y, 11, 7);
           c.fillStyle = "#ffbe55";
           c.fillRect(x + 2, y + 2, 2, 1);
           c.fillRect(x + 6, y + 4, 2, 1);
         }
       }
-      // Draw portal breach craters with prismatic rings
+      // Countryside band around each portal, then the breach crater with its event-horizon ring
+      const band = sc.countryside ?? { ruralCells: 30, suburbCells: 16 };
+      const scale = 96 / sc.worldW;
       for (const p of sc.portals) {
         const px = Math.round(p.xFrac * 96);
         const py = Math.round(p.yFrac * 54);
-        const r = Math.max(5, Math.round((p.radius / sc.worldW) * 96));
+        const r = Math.max(5, Math.round(p.radius * scale));
+        const rural = Math.round((p.radius + band.ruralCells) * scale);
+        c.fillStyle = "#4b7f2f";
+        c.beginPath();
+        c.arc(px, py, rural, 0, Math.PI * 2);
+        c.fill();
+        c.fillStyle = "#2f6b36";
+        for (let k = 0; k < 7; k++) {
+          const a = (k / 7) * Math.PI * 2 + p.xFrac * 5;
+          c.fillRect(px + Math.cos(a) * rural * 0.7 - 1, py + Math.sin(a) * rural * 0.7 - 1, 3, 2);
+        }
         c.fillStyle = p.activateAtSeconds > 0 ? "rgba(255, 120, 50, 0.35)" : "#04020a";
         c.beginPath();
         c.arc(px, py, r, 0, Math.PI * 2);
@@ -943,6 +955,13 @@ export class VoidApp {
         c.strokeStyle = p.activateAtSeconds > 0 ? "#ff8c29" : "#ff38b8";
         c.lineWidth = 1.4;
         c.stroke();
+        if (p.activateAtSeconds === 0) {
+          c.strokeStyle = "rgba(165, 80, 255, 0.5)";
+          c.lineWidth = 1;
+          c.beginPath();
+          c.arc(px, py, r + 3, 0, Math.PI * 2);
+          c.stroke();
+        }
       }
     });
 

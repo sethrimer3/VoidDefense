@@ -819,7 +819,22 @@ A surfaced worm head's chance to turn back toward the nearest city edge when it 
 An expanding cosmic expanse of darkness with a finite energy reservoir and a fixed expansion work budget per second, divided evenly across its exposed contact perimeter.
 
 **Void portal**:
-A rift that feeds the Void field; some open at the start of a scenario, while delayed portals warn on the metropolis map before rupturing.
+A rift that feeds the Void field; some open at the start of a scenario, while delayed portals warn on the metropolis map before rupturing. Drawn as a black hole: a lightless core, a thin photon ring, layered event-horizon rings and accretion arcs, with a spiral nebula and star field filling the Void around it.
+
+**Countryside**:
+The open land between each Void portal and the metropolis: grass and meadow, forest, a meandering river with bridges, winding dirt lanes continuing the city's avenues, crop fields and orchards, and hamlets of homesteads and barns with silos. The Void eats it before it reaches the city. Scored like parkland.
+
+**Suburb**:
+The leafy band of low-rise lots, lawns and garden trees between the countryside and the dense city.
+
+**Zone**:
+A cell's class along the city-to-Void gradient: rural (countryside), suburb or urban, set by its noise-warped distance to the nearest portal rim.
+
+**Land cover**:
+The surface drawn over a cell's material: grass, meadow, forest, field rows, orchard, dirt road, river, bridge or silo. It changes how a cell looks and what colour its torn-off slabs carry, not how it resists the Void.
+
+**Corruption band**:
+The eroding edge of the Void: land within six cells of it darkens toward violet, cracks with magenta veins and ends in a dark cliff with a glowing rim; lightning flickers from the frontier into the anomaly while torn-off slabs of land drift inward.
 
 **Void Node**:
 A crystalline coalesced mass of Void energy near the active frontier that infantry riflemen and mechs can attack to slow local erosion and ablate a bounded share of the Void reservoir.

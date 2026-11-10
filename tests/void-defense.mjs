@@ -12,7 +12,7 @@
  *    - `void-network-desktop.png` & `void-operations-desktop.png`.
  * 2. Zero HUD currency overlap and strict page visibility isolation (only `.void-page.active` visible).
  * 3. Save isolation (`voiddefense.v1` vs `towerdefense.v1`).
- * 4. Busy siege frame-time benchmark on `192x256` and `256x384` worlds. */
+ * 4. Busy siege frame-time benchmark on `384x512` and `512x768` worlds. */
 
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -33,6 +33,19 @@ function launchBrowser() {
 }
 
 const browser = await launchBrowser();
+
+/** Clicks a HUD control from inside the page. The battle HUD re-renders its buttons every
+ * half second of simulation time, so Playwright's own click can keep finding the element
+ * detached; a direct `element.click()` lands on whichever button is current. */
+async function clickNow(page, selector) {
+  const found = await page.evaluate((sel) => {
+    const el = document.querySelector(sel);
+    if (!el) return false;
+    el.click();
+    return true;
+  }, selector);
+  assert.ok(found, `Expected a control matching ${selector}`);
+}
 
 try {
   const viewports = [
@@ -158,13 +171,13 @@ try {
     for (const pl of placements) {
       const btn = page.locator(`[data-pick-tower="${pl.tower}"]`);
       if ((await btn.count()) > 0) {
-        await btn.click();
+        await clickNow(page, `[data-pick-tower="${pl.tower}"]`);
         await page.mouse.click(cx + pl.dx, cy + pl.dy);
       }
     }
 
     // Cast Landfall right on the portal edge to create a sacrificial island + shockwave
-    await page.click('[data-pick-strike="landfall"]');
+    await clickNow(page, '[data-pick-strike="landfall"]');
     await page.mouse.click(cx + 12, cy - 10);
 
     if (vp.name === "desktop") {
@@ -173,12 +186,12 @@ try {
     }
 
     // Set 3x speed and let battle run for 2.2 real seconds (~6.5 sim seconds of intense erosion, debris & fire)
-    await page.click("[data-cycle-speed]");
-    await page.click("[data-cycle-speed]");
+    await clickNow(page, "[data-cycle-speed]");
+    await clickNow(page, "[data-cycle-speed]");
     await page.waitForTimeout(2200);
 
     // Pause so before/after & close-up screenshots capture the exact same active tick
-    await page.click("[data-toggle-pause]");
+    await clickNow(page, "[data-toggle-pause]");
     await page.waitForTimeout(80);
 
     await page.screenshot({ path: path.join(OUT_DIR, `void-battle-${vp.name}.png`) });
@@ -246,7 +259,7 @@ try {
     await context.close();
   }
 
-  // Run busy-siege simulation & rendering benchmark on both 192x256 and 256x384 worlds
+  // Run busy-siege simulation & rendering benchmark on both 384x512 and 512x768 worlds
   const benchContext = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   const benchPage = await benchContext.newPage();
   await benchPage.goto(URL, { waitUntil: "networkidle" });

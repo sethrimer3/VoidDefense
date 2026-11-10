@@ -30,6 +30,19 @@ try {
       const renderer = new VoidRenderer(canvas);
       renderer.reduceEffects = true;
       const { world } = sim;
+      renderer.draw(sim, 0, null, null, null, false);
+      sim.startBattle();
+      sim.stepTicks(5);
+      renderer.draw(sim, 1000, null, null, null, false);
+      const evolved = renderer.tctx.getImageData(0, 0, world.grid.w, world.grid.h).data;
+      const cityReference = new VoidRenderer(document.createElement('canvas'));
+      cityReference.reduceEffects = true;
+      cityReference.draw(sim, 1000, null, null, null, false);
+      const cityFresh = cityReference.tctx.getImageData(0, 0, world.grid.w, world.grid.h).data;
+      const damagedCacheMatches = evolved.every((value, index) => value === cityFresh[index]);
+      const mismatch = [];
+      for (let q=0; q<evolved.length && mismatch.length<8; q+=4) if ([0,1,2].some(k=>evolved[q+k]!==cityFresh[q+k])) mismatch.push({i:q/4,mat:world.material[q/4],cached:renderer.paintedPixels[q/4],reference:cityReference.paintedPixels[q/4],hp:world.hp[q/4],cover:world.landCover[q/4],old:Array.from(evolved.slice(q,q+3)),fresh:Array.from(cityFresh.slice(q,q+3))});
+      world.grid.markAllDirty();
       world.material.fill(CellMaterial.STREET);
       world.hp.fill(16); world.maxHp.fill(16); world.buildingAt.fill(-1);
       world.buildings.length = 0; world.portals.length = 0;
@@ -38,13 +51,20 @@ try {
       const w = world.grid.w, h = world.grid.h;
       const x = 192, y = 256;
       const i = world.grid.index(x, y);
-      const before = renderer.tctx.getImageData(0, 0, w, h).data;
+      const before = world.material.slice();
       sim.physics.consumeCellIntoVoid(world, i, false);
       renderer.draw(sim, 0, null, null, null, false);
-      const after = renderer.tctx.getImageData(0, 0, w, h).data;
+      const after = world.material;
+      const incremental = renderer.tctx.getImageData(0, 0, w, h).data;
+      // The retained pixel cache must match painting the current world from scratch.
+      const reference = new VoidRenderer(document.createElement('canvas'));
+      reference.reduceEffects = true;
+      reference.draw(sim, 0, null, null, null, false);
+      const fresh = reference.tctx.getImageData(0, 0, w, h).data;
+      const cacheMatches = incremental.every((value, index) => value === fresh[index]);
       const changed = [];
       for (let n = 0; n < w * h; n++) {
-        if ([0, 1, 2].some(c => before[n * 4 + c] !== after[n * 4 + c])) changed.push(n);
+        if (before[n] !== after[n]) changed.push(n);
       }
       // Zoom exactly around the cell center, then hit-test its center and neighbor.
       const center = renderer.toClient(x + 0.5, y + 0.5);
@@ -54,15 +74,17 @@ try {
       const next = renderer.toClient(x + 1.5, y + 0.5);
       const hit = renderer.toCell(pt.x, pt.y);
       const neighbor = renderer.toCell(next.x, next.y);
-      return { changed, i, hit: [hit.cx, hit.cy], neighbor: [neighbor.cx, neighbor.cy],
+      return { changed, i, cacheMatches, damagedCacheMatches, mismatch, hit: [hit.cx, hit.cy], neighbor: [neighbor.cx, neighbor.cy],
         terrain: [renderer.terrainLayer.width, renderer.terrainLayer.height],
         scene: [renderer.sceneLayer.width, renderer.sceneLayer.height],
         world: [w, h], fits: renderer.px <= Math.min(canvas.width / w, canvas.height / h) + 0.001,
         overflow: document.documentElement.scrollWidth > innerWidth };
     });
-    assert.deepEqual(result.changed, [result.i], 'one consumed cell must change exactly one terrain raster pixel');
+    assert.deepEqual(result.changed, [result.i], 'one consumed pixel must leave all other terrain cells intact');
     assert.deepEqual(result.terrain, result.world);
     assert.deepEqual(result.scene, result.world);
+    assert.ok(result.damagedCacheMatches, "city/countryside erosion cache must match a fresh repaint: " + JSON.stringify(result.mismatch));
+    assert.ok(result.cacheMatches, "incremental terrain pixels must match a fresh repaint");
     assert.deepEqual(result.hit, [192, 256]);
     assert.deepEqual(result.neighbor, [193, 256]);
     assert.ok(result.fits, 'phone overview must fit the finer grid');

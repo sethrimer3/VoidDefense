@@ -71,6 +71,12 @@ Use for lensed star particles, orange/cyan/magenta/violet interplay, turbulent a
 
 **Do not mark the visual acceptance gate complete until the user reviews and approves representative screenshots.** Code passing tests and containing every planned feature is not sufficient.
 
+## E. Concept composition: city, countryside, black hole
+
+![Concept: dense neon city on the left, countryside with river, fields and winding roads in the middle, a violet black hole tearing the land apart on the right](references/concept-city-countryside-void.webp)
+
+User-supplied concept for the overall composition (generated image; drawn from the side rather than top-down, so read it for layout and feel only). The game renders it top-down: the metropolis far from each portal, a leafy suburb band, then countryside of grass, forest, a river with bridges, winding dirt lanes, crop fields and hamlets, then the corruption band where land darkens, cracks and breaks into slabs drifting into a black hole with a lightless core, thin photon ring and a spiral violet/magenta/cyan nebula. Warm human light on the city side, cold cosmic colour on the anomaly side.
+
 ## Asset provenance
 
-All seven images above were supplied in the conversation and converted to compact WebP documentation previews. Game screenshots are comparisons, not a specification to copy another game's intellectual property. The four cinematic film stills remain copyright of their respective owners; use for private design study/reference and do not use as in-game sprites, textures or promotional assets. If the repository is made public, review whether these third-party previews should remain committed.
+All images above were supplied in the conversation and converted to compact WebP documentation previews. Game screenshots are comparisons, not a specification to copy another game's intellectual property. The four cinematic film stills remain copyright of their respective owners; use for private design study/reference and do not use as in-game sprites, textures or promotional assets. If the repository is made public, review whether these third-party previews should remain committed.

@@ -24,6 +24,8 @@ export const LARGE_WORLD_H = pixels(384);
 
 /** Spatial chunk size in cells for dirty-region terrain & rooftop rendering. */
 export const CHUNK_SIZE = 16;
+/** Corruption visuals and terrain-cache invalidation must use the same reach. */
+export const CORRUPTION_REACH = pixels(6);
 
 /** Micro-work fixed-point scale so fractional frontier work is conserved
  * deterministically across any perimeter length without floating-point drift. */

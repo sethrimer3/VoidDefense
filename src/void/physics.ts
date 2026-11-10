@@ -1,13 +1,14 @@
-import { PIXEL_AREA, pixels } from "./config.ts";
+import { CORRUPTION_REACH, PIXEL_AREA, pixels } from "./config.ts";
 /** Destructible terrain, structural support connectivity, detached debris
  * clusters, prismatic inward debris streams, and matter restoration/reinforcement
  * for Void Defense. */
 
 import { dist } from "../exact.ts";
 import { hash01, ORTHO } from "./grid.ts";
-import { CellMaterial, type DebrisFragment, type ShockwaveEffect } from "./model.ts";
+import { CellMaterial, type DebrisFragment, LandCover, type ShockwaveEffect } from "./model.ts";
 import type { VoidWorld } from "./world.ts";
 
+/** Prismatic spark colours for small fast fragments. */
 const DEBRIS_PALETTES: readonly { color: string; glow: string }[] = [
   { color: "#ff8c29", glow: "rgba(255, 140, 41, 0.45)" },
   { color: "#ffd15c", glow: "rgba(255, 209, 92, 0.45)" },
@@ -16,6 +17,32 @@ const DEBRIS_PALETTES: readonly { color: string; glow: string }[] = [
   { color: "#b967ff", glow: "rgba(185, 103, 255, 0.45)" },
   { color: "#a4b6cc", glow: "rgba(164, 182, 204, 0.35)" },
 ];
+
+/** Slab colours for torn-off terrain: a fragment keeps the colour of the land it was,
+ * so grass, crops, forest canopy, pavement and lit masonry visibly stream into the anomaly. */
+const SLAB_COLORS: Record<number, readonly string[]> = {
+  [LandCover.GRASS]: ["#5e9a3c", "#4f8a34", "#6fae46"],
+  [LandCover.MEADOW]: ["#8fb45a", "#a7c46a"],
+  [LandCover.FOREST]: ["#2f6b3a", "#3c7d46"],
+  [LandCover.FIELD_H]: ["#d9a63a", "#e8c050"],
+  [LandCover.FIELD_V]: ["#d9a63a", "#e8c050"],
+  [LandCover.ORCHARD]: ["#5e9a3c", "#3c7d46"],
+  [LandCover.DIRT_ROAD]: ["#b08a5a", "#9a7549"],
+  [LandCover.BRIDGE]: ["#8a6a48"],
+  [LandCover.RIVER]: ["#2f78b8", "#58b0e6"],
+  [LandCover.SILO]: ["#b8c0cc"],
+};
+const SLAB_URBAN: Record<number, readonly string[]> = {
+  [CellMaterial.STREET]: ["#3a414c", "#4a525e", "#2c323b"],
+  [CellMaterial.PARK]: ["#2e6b4e", "#38414f"],
+  [CellMaterial.BUILDING]: ["#6e5846", "#4a5568", "#8c6d61"],
+  [CellMaterial.SKYSCRAPER]: ["#3b6691", "#5c7894", "#465375"],
+  [CellMaterial.RECLAIMED]: ["#7a4d30", "#485669"],
+  [CellMaterial.SALVAGE]: ["#6e472b"],
+  [CellMaterial.WALL]: ["#5c6d85"],
+  [CellMaterial.BARRIER]: ["#48e5ff"],
+  [CellMaterial.UNCLAIMED]: ["#153956"],
+};
 
 export class VoidPhysics {
   readonly debris: DebrisFragment[] = [];
@@ -27,10 +54,12 @@ export class VoidPhysics {
   consumeCellIntoVoid(world: VoidWorld, idx: number, spawnDebris = true): void {
     const bId = world.buildingAt[idx];
     const prevMat = world.material[idx];
+    const prevCover = world.landCover[idx];
     world.material[idx] = CellMaterial.VOID;
     world.hp[idx] = 0;
     world.buildingAt[idx] = -1;
-    world.grid.markIndexDirty(idx);
+    // The corruption band tints land up to CORRUPTION_REACH pixels from the Void, so repaint that neighbourhood
+    world.grid.markRadiusDirty(idx, CORRUPTION_REACH);
 
     if (bId >= 0) {
       this.damagedBuildings.add(bId);
@@ -71,16 +100,27 @@ export class VoidPhysics {
       const d = Math.max(0.5, dist(dx, dy));
       const nx = dx / d;
       const ny = dy / d;
-      // Add tangential swirl + inward pull for cinematic curved streamlines
-      const swirl = (hash01(world.seed, 612, idx, this.debris.length) - 0.5) * 9.5;
-      const speed = pixels(5.5 + hash01(world.seed, 613, idx) * 6.0);
-      const palIdx =
-        prevMat === CellMaterial.SKYSCRAPER
-          ? (idx + this.debris.length) % 4
-          : prevMat === CellMaterial.BUILDING
-            ? (idx + this.debris.length) % 5
-            : (idx + this.debris.length) % DEBRIS_PALETTES.length;
-      const pal = DEBRIS_PALETTES[palIdx];
+      // Two kinds of fragment: slow heavy slabs of the torn land (keeping its colour) and
+      // fast prismatic sparks. Both swirl tangentially while being pulled inward.
+      const isSlab = hash01(world.seed, 611, idx, this.debris.length) < 0.55;
+      const swirl = (hash01(world.seed, 612, idx, this.debris.length) - 0.5) * (isSlab ? 5.5 : 9.5);
+      const speed = pixels(isSlab ? 2.2 + hash01(world.seed, 613, idx) * 3.0 : 5.5 + hash01(world.seed, 613, idx) * 6.0);
+      let color: string;
+      let glow: string;
+      if (isSlab) {
+        const slabs = SLAB_COLORS[prevCover] ?? SLAB_URBAN[prevMat] ?? SLAB_URBAN[CellMaterial.STREET];
+        color = slabs[(idx + this.debris.length) % slabs.length];
+        glow = "rgba(190, 80, 255, 0.35)";
+      } else {
+        const palIdx =
+          prevMat === CellMaterial.SKYSCRAPER
+            ? (idx + this.debris.length) % 4
+            : prevMat === CellMaterial.BUILDING
+              ? (idx + this.debris.length) % 5
+              : (idx + this.debris.length) % DEBRIS_PALETTES.length;
+        color = DEBRIS_PALETTES[palIdx].color;
+        glow = DEBRIS_PALETTES[palIdx].glow;
+      }
 
       this.debris.push({
         x,
@@ -91,11 +131,15 @@ export class VoidPhysics {
         vy: ny * speed + nx * swirl,
         portalX,
         portalY,
-        color: pal.color,
-        glowColor: pal.glow,
-        size: prevMat === CellMaterial.SKYSCRAPER ? 1.15 : 0.85,
+        color,
+        glowColor: glow,
+        size: isSlab
+          ? 1.0 + hash01(world.seed, 614, idx) * 0.55
+          : prevMat === CellMaterial.SKYSCRAPER
+            ? 1.15
+            : 0.85,
         life: 0,
-        maxLife: Math.min(1.45, Math.max(0.45, d / 14)),
+        maxLife: isSlab ? Math.min(2.8, Math.max(0.9, d / 7)) : Math.min(1.45, Math.max(0.45, d / 14)),
       });
     }
   }
@@ -174,9 +218,11 @@ export class VoidPhysics {
       const dy = d.portalY - d.y;
       const distToPortal = dist(dx, dy);
       if (distToPortal > 0.6) {
-        const pull = pixels(18) * dt;
-        d.vx += (dx / distToPortal) * pull - (dy / distToPortal) * (4.5 * dt);
-        d.vy += (dy / distToPortal) * pull + (dx / distToPortal) * (4.5 * dt);
+        const heavy = d.size >= 1.0 && d.maxLife > 1.5;
+        const pull = pixels(heavy ? 9 : 18) * dt;
+        const spin = (heavy ? 3.2 : 4.5) * dt;
+        d.vx += (dx / distToPortal) * pull - (dy / distToPortal) * spin;
+        d.vy += (dy / distToPortal) * pull + (dx / distToPortal) * spin;
       }
       d.x += d.vx * dt;
       d.y += d.vy * dt;
@@ -248,17 +294,17 @@ export class VoidPhysics {
             world.maxHp[idx] = islandHp;
             world.buildingAt[idx] = -1;
           }
-          world.grid.markIndexDirty(idx);
+          world.grid.markRadiusDirty(idx, CORRUPTION_REACH);
         } else if (world.hp[idx] < world.maxHp[idx]) {
           world.hp[idx] = Math.min(world.maxHp[idx], world.hp[idx] + Math.round(35 * hpBoost));
-          world.grid.markIndexDirty(idx);
+          world.grid.markRadiusDirty(idx, CORRUPTION_REACH);
           restoredCells++;
         } else if (asWall && mat === CellMaterial.STREET && world.towerAt[idx] < 0) {
           world.material[idx] = CellMaterial.WALL;
           const wallHp = Math.min(255, Math.round(150 * hpBoost));
           world.hp[idx] = wallHp;
           world.maxHp[idx] = wallHp;
-          world.grid.markIndexDirty(idx);
+          world.grid.markRadiusDirty(idx, CORRUPTION_REACH);
         }
       }
     }
