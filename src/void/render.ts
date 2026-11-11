@@ -17,6 +17,7 @@
  * - Reuses camera math from `src/defend/render.ts` and `Loupe` from `src/defend/loupe.ts`. */
 
 import { dist } from "../exact.ts";
+import { pixelPainter } from "./pixel-painter.ts";
 import { Loupe } from "../defend/loupe.ts";
 import { CHUNK_SIZE, CORRUPTION_REACH, PIXEL_AREA, pixels } from "./config.ts";
 import { hash, hash01 } from "./grid.ts";
@@ -32,10 +33,6 @@ import {
 import type { VoidSim } from "./sim.ts";
 import { STRIKE_SPECS, TOWER_SPECS } from "./towers.ts";
 import type { VoidWorld } from "./world.ts";
-
-// Normalized vector paint coordinates, rasterized directly into ONE world pixel.
-// These are drawing units, not a second art-pixel or simulation grid.
-const PAINT_UNITS = 4;
 
 /** Side of the local window a chunk's distance-to-Void transform runs on (chunk plus margin). */
 const DIST_WINDOW = CHUNK_SIZE + CORRUPTION_REACH * 2;
@@ -242,6 +239,7 @@ export class VoidRenderer {
   private readonly terrainLayer: HTMLCanvasElement;
   private readonly sceneLayer: HTMLCanvasElement;
   private readonly sceneCtx: CanvasRenderingContext2D;
+  private readonly pixelCtx: CanvasRenderingContext2D;
   private readonly tctx: CanvasRenderingContext2D;
   private renderedWorld: VoidWorld | null = null;
   /** Last painted state of each world pixel, including neighboring corrosion/shadow. */
@@ -266,10 +264,6 @@ export class VoidRenderer {
   private corridorsWorld: VoidWorld | null = null;
   private lastTimeMs = 0;
 
-  // Offscreen bloom/soft-glow canvas for lightweight Gaussian-blur-like Tron neon passes
-  private glowCanvas: HTMLCanvasElement = document.createElement("canvas");
-  private gctx: CanvasRenderingContext2D = this.glowCanvas.getContext("2d")!;
-
   /** Camera state: `s` = zoom multiplier (1 = fit board), `x, y` = canvas pixel pan. */
   readonly cam = { s: 1, x: 0, y: 0 };
   px = 4; // device pixels per cell at zoom 1
@@ -280,6 +274,7 @@ export class VoidRenderer {
     this.ctx = canvas.getContext("2d", { alpha: false })!;
     this.sceneLayer = document.createElement("canvas");
     this.sceneCtx = this.sceneLayer.getContext("2d", { alpha: false })!;
+    this.pixelCtx = pixelPainter(this.sceneCtx);
     this.terrainLayer = document.createElement("canvas");
     this.tctx = this.terrainLayer.getContext("2d", { alpha: false })!;
   }
@@ -301,19 +296,25 @@ export class VoidRenderer {
     }
   }
 
+  private pixelScale(zoom = this.cam.s): number {
+    const scale = zoom * this.px;
+    // Keep the full-city overview fitted; close zoom uses uniform device-pixel blocks.
+    return zoom > 1 && scale >= 1 ? Math.max(1, Math.round(scale)) : scale;
+  }
+
   toCell(clientX: number, clientY: number): { fx: number; fy: number; cx: number; cy: number } {
     const r = this.canvas.getBoundingClientRect();
     const x = ((clientX - r.left) / Math.max(1, r.width)) * this.canvas.width;
     const y = ((clientY - r.top) / Math.max(1, r.height)) * this.canvas.height;
-    const fx = (x - this.cam.x) / (this.cam.s * this.px);
-    const fy = (y - this.cam.y) / (this.cam.s * this.px);
+    const fx = (x - this.cam.x) / this.pixelScale();
+    const fy = (y - this.cam.y) / this.pixelScale();
     return { fx, fy, cx: Math.floor(fx), cy: Math.floor(fy) };
   }
 
   toClient(fx: number, fy: number): { x: number; y: number } {
     const r = this.canvas.getBoundingClientRect();
-    const x = fx * this.px * this.cam.s + this.cam.x;
-    const y = fy * this.px * this.cam.s + this.cam.y;
+    const x = fx * this.pixelScale() + this.cam.x;
+    const y = fy * this.pixelScale() + this.cam.y;
     return {
       x: r.left + (x / Math.max(1, this.canvas.width)) * r.width,
       y: r.top + (y / Math.max(1, this.canvas.height)) * r.height,
@@ -332,7 +333,7 @@ export class VoidRenderer {
     const px = ((clientX - r.left) / Math.max(1, r.width)) * this.canvas.width;
     const py = ((clientY - r.top) / Math.max(1, r.height)) * this.canvas.height;
     const nextS = Math.max(0.85, Math.min(VoidRenderer.MAX_ZOOM, this.cam.s * factor));
-    const k = nextS / this.cam.s;
+    const k = this.pixelScale(nextS) / this.pixelScale();
     this.cam.x = px - (px - this.cam.x) * k;
     this.cam.y = py - (py - this.cam.y) * k;
     this.cam.s = nextS;
@@ -347,12 +348,14 @@ export class VoidRenderer {
   }
 
   private clampCam(worldW: number, worldH: number): void {
-    const bw = worldW * this.px * this.cam.s;
-    const bh = worldH * this.px * this.cam.s;
+    const bw = worldW * this.pixelScale();
+    const bh = worldH * this.pixelScale();
     const cw = this.canvas.width;
     const ch = this.canvas.height;
     this.cam.x = bw <= cw ? (cw - bw) * 0.5 : Math.min(60, Math.max(cw - bw - 60, this.cam.x));
     this.cam.y = bh <= ch ? (ch - bh) * 0.5 : Math.min(60, Math.max(ch - bh - 60, this.cam.y));
+    this.cam.x = Math.round(this.cam.x);
+    this.cam.y = Math.round(this.cam.y);
   }
 
   /** Builds orthogonal street circuit corridors connecting nearby buildings for Tron light trails. */
@@ -484,7 +487,7 @@ export class VoidRenderer {
 
     const c = this.tctx;
     c.imageSmoothingEnabled = false;
-    c.setTransform(1 / PAINT_UNITS, 0, 0, 1 / PAINT_UNITS, 0, 0);
+    c.setTransform(1, 0, 0, 1, 0, 0);
 
     for (let cy = 0; cy < chunksH; cy++) {
       for (let cx = 0; cx < chunksW; cx++) {
@@ -587,7 +590,7 @@ export class VoidRenderer {
         const b = bId >= 0 ? world.buildings[bId] : undefined;
         const hp = world.maxHp[idx] > 0 ? world.hp[idx] / world.maxHp[idx] : 1;
         const damage = hp <= 0.3 ? 3 : hp < 0.4 ? 2 : hp < 0.75 ? 1 : 0;
-        const shadow = mat === CellMaterial.STREET || mat === CellMaterial.PARK || b
+        const shadow = mat !== CellMaterial.VOID
           ? Math.round(this.computeShadowAt(world, x, y, b?.height ?? 0) * 100) : 0;
         const distance = nearVoid
           ? Math.min(127, this.distWindow[(y - this.distOy) * DIST_WINDOW + x - this.distOx]) : 127;
@@ -614,16 +617,7 @@ export class VoidRenderer {
         }
         neighbors += sameBuilding * factor;
         if (this.paintedPixels[idx] === signature && this.paintedNeighbors[idx] === neighbors) continue;
-        // Fractional authored strokes blend into one pixel. Start from an opaque
-        // base so repainting never accumulates color from a previous frame.
-        c.save();
-        c.beginPath();
-        c.rect(x * PAINT_UNITS, y * PAINT_UNITS, PAINT_UNITS, PAINT_UNITS);
-        c.clip();
-        c.fillStyle = "#000000";
-        c.fillRect(x * PAINT_UNITS, y * PAINT_UNITS, PAINT_UNITS, PAINT_UNITS);
         this.paintCell(c, world, x, y, nearVoid);
-        c.restore();
         this.paintedPixels[idx] = signature;
         this.paintedNeighbors[idx] = neighbors;
       }
@@ -690,642 +684,106 @@ export class VoidRenderer {
     return true;
   }
 
-  /** Rasterizes the authored cell colors directly into one terrain pixel. */
+  /** Native world-pixel art: every detail selects a whole simulation cell. */
   private paintCell(c: CanvasRenderingContext2D, world: VoidWorld, x: number, y: number, nearVoid: boolean): void {
     const { w, h } = world.grid;
     const idx = y * w + x;
-    const mat = world.material[idx];
-    const cover = world.landCover[idx];
-    const ax = x * PAINT_UNITS;
-    const ay = y * PAINT_UNITS;
-    const seed = world.seed;
-
-    if (mat === CellMaterial.VOID) {
-      this.paintVoidCell(c, world, x, y, ax, ay);
-      return;
-    }
-
-    if (mat === CellMaterial.UNCLAIMED) {
-      if (cover === LandCover.RIVER) {
-        // Country river: bright moving water with sun glints and darker eddies
-        const wave = Math.sin(x * 0.55 + y * 0.9) * 0.5 + 0.5;
-        c.fillStyle = wave > 0.62 ? "#3584c6" : wave > 0.3 ? "#2f78b8" : "#2868a4";
-        c.fillRect(ax, ay, PAINT_UNITS, PAINT_UNITS);
-        const r = hash01(seed, 931, x, y);
-        if (r < 0.38) {
-          c.fillStyle = "#58b0e6";
-          c.fillRect(ax + (hash(seed, 932, x, y) & 1), ay + (hash(seed, 933, x, y) & 3), 2, 1);
-        } else if (r < 0.46) {
-          c.fillStyle = "#cfefff";
-          c.fillRect(ax + (hash(seed, 934, x, y) & 3), ay + (hash(seed, 935, x, y) & 3), 1, 1);
-        } else if (r > 0.8) {
-          c.fillStyle = "#255f96";
-          c.fillRect(ax + (hash(seed, 936, x, y) & 3), ay + 2, 1, 2);
-        }
-      } else {
-        // East River / Archipelago deep reflective water channel
-        const wave = Math.sin(x * 0.35 + y * 0.2) * 0.5 + 0.5;
-        c.fillStyle = wave > 0.6 ? "#153956" : wave > 0.3 ? "#0f2c44" : "#0a2033";
-        c.fillRect(ax, ay, PAINT_UNITS, PAINT_UNITS);
-        if (((x + y * 3) & 3) === 0) {
-          c.fillStyle = "#2b678f";
-          c.fillRect(ax + 1, ay + 2, 2, 1);
-        }
-      }
-      this.paintCorruption(c, world, x, y, ax, ay, nearVoid);
-      return;
-    }
-
-    if (mat === CellMaterial.STREET) {
-      if (world.streetTier[idx] === 8) {
-        if (cover === LandCover.BRIDGE) {
-          // Timber bridge: planks across, dark rails along the long edges
-          c.fillStyle = "#8a6a48";
-          c.fillRect(ax, ay, PAINT_UNITS, PAINT_UNITS);
-          c.fillStyle = "#6b5036";
-          c.fillRect(ax, ay + 1, PAINT_UNITS, 1);
-          c.fillRect(ax, ay + 3, PAINT_UNITS, 1);
-          c.fillStyle = "#4a3422";
-          const horizontal =
-            (x > 0 && world.landCover[idx - 1] === LandCover.BRIDGE) ||
-            (x + 1 < w && world.landCover[idx + 1] === LandCover.BRIDGE);
-          if (horizontal) {
-            c.fillRect(ax, ay, PAINT_UNITS, 1);
-            c.fillRect(ax, ay + PAINT_UNITS - 1, PAINT_UNITS, 1);
-          } else {
-            c.fillRect(ax, ay, 1, PAINT_UNITS);
-            c.fillRect(ax + PAINT_UNITS - 1, ay, 1, PAINT_UNITS);
-          }
-        } else {
-          // Dirt country lane: packed earth with wheel ruts and pale dust
-          c.fillStyle = "#b08a5a";
-          c.fillRect(ax, ay, PAINT_UNITS, PAINT_UNITS);
-          const r = hash01(seed, 941, x, y);
-          c.fillStyle = "#9a7549";
-          c.fillRect(ax + (hash(seed, 942, x, y) & 3), ay + (hash(seed, 943, x, y) & 3), 1, 1);
-          if (r < 0.45) {
-            c.fillStyle = "#c9a66f";
-            c.fillRect(ax + (hash(seed, 944, x, y) & 3), ay + (hash(seed, 945, x, y) & 3), 1, 1);
-          }
-          // Grass verge where the lane meets open country
-          c.fillStyle = "#6a8c3a";
-          if (y > 0 && world.landCover[idx - w] !== LandCover.DIRT_ROAD && world.material[idx - w] === CellMaterial.PARK) {
-            c.fillRect(ax + (hash(seed, 946, x, y) & 3), ay, 1, 1);
-          }
-        }
-        this.paintCorruption(c, world, x, y, ax, ay, nearVoid);
-        return;
-      }
-
-      const isAlley = world.streetTier[idx] === 4;
-      // Deep carbon asphalt streetbed
-      c.fillStyle = isAlley ? "#050608" : "#040507";
-      c.fillRect(ax, ay, PAINT_UNITS, PAINT_UNITS);
-
-      const shade = this.computeShadowAt(world, x, y, 0);
-      if (shade > 0) {
-        c.fillStyle = `rgba(2, 3, 5, ${shade * 0.9})`;
-        c.fillRect(ax, ay, PAINT_UNITS, PAINT_UNITS);
-      }
-      this.paintCorruption(c, world, x, y, ax, ay, nearVoid);
-      return;
-    }
-
-    if (mat === CellMaterial.PARK) {
-      if (cover !== LandCover.NONE) {
-        this.paintCountryCell(c, world, x, y, ax, ay, cover);
-      } else {
-        // Dark obsidian civic plaza with geometric neon grid lines
-        c.fillStyle = "#090d12";
-        c.fillRect(ax, ay, PAINT_UNITS, PAINT_UNITS);
-        if ((x + y) % 4 === 0) {
-          c.fillStyle = "#1b332b";
-          c.fillRect(ax, ay, PAINT_UNITS, 1);
-        }
-      }
-      const shade = this.computeShadowAt(world, x, y, 0);
-      if (shade > 0) {
-        c.fillStyle = `rgba(3, 4, 8, ${shade * 0.85})`;
-        c.fillRect(ax, ay, PAINT_UNITS, PAINT_UNITS);
-      }
-      this.paintCorruption(c, world, x, y, ax, ay, nearVoid);
-      return;
-    }
-
-    if (mat === CellMaterial.RECLAIMED) {
-      // Sacrificial Landfall island vs reclaimed city street
-      if (!world.isBaselineCell[idx]) {
-        c.fillStyle = "#4f3220";
-        c.fillRect(ax, ay, PAINT_UNITS, PAINT_UNITS);
-        c.fillStyle = "#7a4d30";
-        c.fillRect(ax, ay, PAINT_UNITS - 1, PAINT_UNITS - 1);
-        c.fillStyle = "#ff9e38";
-        c.fillRect(ax + 1, ay + 1, 2, 1);
-        if (((x + y) & 1) === 0) {
-          c.fillStyle = "#ffd166";
-          c.fillRect(ax + 2, ay + 2, 1, 1);
-        }
-      } else {
-        c.fillStyle = "#333d4b";
-        c.fillRect(ax, ay, PAINT_UNITS, PAINT_UNITS);
-        c.fillStyle = "#485669";
-        c.fillRect(ax + 1, ay + 1, 2, 2);
-        c.fillStyle = "#e69238";
-        c.fillRect(ax + 1, ay + 1, 1, 1);
-      }
-      this.paintCorruption(c, world, x, y, ax, ay, nearVoid);
-      return;
-    }
-
-    if (mat === CellMaterial.SALVAGE) {
-      const r = hash01(seed, 961, x, y);
-      if (cover !== LandCover.NONE) {
-        // Scorched, Void-stained earth with a few embers where the countryside tore open
-        c.fillStyle = r < 0.5 ? "#2a1a2e" : "#33203a";
-        c.fillRect(ax, ay, PAINT_UNITS, PAINT_UNITS);
-        c.fillStyle = "#4a2f3f";
-        c.fillRect(ax + (hash(seed, 962, x, y) & 3), ay + (hash(seed, 963, x, y) & 3), 2, 1);
-        if (r > 0.72) {
-          c.fillStyle = r > 0.9 ? "#ff8c29" : "#b44dff";
-          c.fillRect(ax + (hash(seed, 964, x, y) & 3), ay + (hash(seed, 965, x, y) & 3), 1, 1);
-        }
-      } else {
-        c.fillStyle = "#26232b";
-        c.fillRect(ax, ay, PAINT_UNITS, PAINT_UNITS);
-        c.fillStyle = "#6e472b";
-        c.fillRect(ax, ay + 1, 3, 2);
-        if (r > 0.4) {
-          c.fillStyle = r > 0.85 ? "#48e5ff" : "#ff8c29";
-          c.fillRect(ax + 1, ay + 1, 1, 1);
-        }
-      }
-      this.paintCorruption(c, world, x, y, ax, ay, nearVoid);
-      return;
-    }
-
-    if (mat === CellMaterial.WALL || mat === CellMaterial.BARRIER) {
-      c.fillStyle = "#374252";
-      c.fillRect(ax, ay, PAINT_UNITS, PAINT_UNITS);
-      c.fillStyle = "#5c6d85";
-      c.fillRect(ax, ay, PAINT_UNITS - 1, PAINT_UNITS - 1);
-      c.fillStyle = mat === CellMaterial.BARRIER ? "#48e5ff" : "#ff922b";
-      c.fillRect(ax + 1, ay + 1, 2, 2);
-      c.fillStyle = "#ffffff";
-      c.fillRect(ax + 1, ay + 1, 1, 1);
-      // Engineered matter resists the stain: only the cliff edge shows
-      this.paintCorruption(c, world, x, y, ax, ay, nearVoid, true);
-      return;
-    }
-
-    // Building or Skyscraper cell with stepped setbacks, architectural palettes, and rooftop features
+    const mat = world.material[idx], cover = world.landCover[idx];
     const bId = world.buildingAt[idx];
     const b = bId >= 0 ? world.buildings[bId] : undefined;
-    const hpRatio = world.maxHp[idx] > 0 ? world.hp[idx] / world.maxHp[idx] : 1;
-    const isSky = mat === CellMaterial.SKYSCRAPER;
-
-    if (!b) {
-      c.fillStyle = isSky ? "#2f3d52" : "#283242";
-      c.fillRect(ax, ay, PAINT_UNITS, PAINT_UNITS);
-      this.paintCorruption(c, world, x, y, ax, ay, nearVoid);
-      return;
-    }
-
-    const stylePalettes = ARCH_PALETTES[b.archStyle] ?? ARCH_PALETTES.glassTower;
-    const pal = stylePalettes[b.variant % stylePalettes.length];
-
-    if (b.archStyle === "homestead" || b.archStyle === "barn") {
-      this.paintRuralBuilding(c, world, b, pal, x, y, ax, ay, hpRatio);
-      this.paintCorruption(c, world, x, y, ax, ay, nearVoid);
-      return;
-    }
-
-    const distL = x - b.x;
-    const distR = b.x + b.w - 1 - x;
-    const distT = y - b.y;
-    const distB = b.y + b.h - 1 - y;
-    const inset = Math.min(distL, distR, distT, distB);
-
-    // Select tier base color by setback inset
-    c.fillStyle = inset >= 2 ? pal.crown : inset === 1 ? pal.mid : pal.podium;
-    c.fillRect(ax, ay, PAINT_UNITS, PAINT_UNITS);
-
-      // Outer building bevels: high-contrast Tron neon edge ribbons
-      const nSame = y > 0 && world.buildingAt[idx - w] === bId;
-      const wSame = x > 0 && world.buildingAt[idx - 1] === bId;
-      const sSame = y + 1 < h && world.buildingAt[idx + w] === bId;
-      const eSame = x + 1 < w && world.buildingAt[idx + 1] === bId;
-
-      // Outer neon perimeter trace
-      if (!nSame) {
-        c.fillStyle = pal.neonEdge;
-        c.fillRect(ax, ay, PAINT_UNITS, 1);
-        c.fillStyle = pal.neonCore;
-        c.fillRect(ax + 1, ay, PAINT_UNITS - 2, 1);
+    const r = hash01(world.seed, 951, x, y);
+    const hp = world.maxHp[idx] ? world.hp[idx] / world.maxHp[idx] : 1;
+    let color = "#040507";
+    if (mat === CellMaterial.VOID) {
+      const np = this.nearestPortal(world, x, y);
+      const radius = np.p?.radius ?? 12;
+      const core = Math.max(3.6, radius * 0.42);
+      if (np.d < core) color = "#000000";
+      else if (np.d < core + 1) color = "#ff4fd8";
+      else {
+        const phase = hash01(world.seed, 989) * Math.PI * 2;
+        const fall = Math.max(0, 1 - ((np.d - core) / (radius * 3.8)) ** 2);
+        const arm = 0.5 + 0.5 * Math.sin(np.ang * 2 + Math.log(np.d + 1) * 5.2 + phase);
+        color = nebulaColor(arm * (0.4 + fall * 0.6) * (0.7 + r * 0.3));
+        if (r > 0.997) color = "#eaf6ff";
+        else if (arm > 0.92 && r > 0.82) color = "#6fe3ff";
       }
-      if (!wSame) {
-        c.fillStyle = pal.neonEdge;
-        c.fillRect(ax, ay, 1, PAINT_UNITS);
-        c.fillStyle = pal.neonCore;
-        c.fillRect(ax, ay + 1, 1, PAINT_UNITS - 2);
-      }
-      if (!sSame) {
-        c.fillStyle = pal.neonEdge;
-        c.fillRect(ax, ay + PAINT_UNITS - 1, PAINT_UNITS, 1);
-        c.fillStyle = pal.neonCore;
-        c.fillRect(ax + 1, ay + PAINT_UNITS - 1, PAINT_UNITS - 2, 1);
-      }
-      if (!eSame) {
-        c.fillStyle = pal.neonEdge;
-        c.fillRect(ax + PAINT_UNITS - 1, ay, 1, PAINT_UNITS);
-        c.fillStyle = pal.neonCore;
-        c.fillRect(ax + PAINT_UNITS - 1, ay + 1, 1, PAINT_UNITS - 2);
-      }
-
-      // Inner setback neon circuit for stepped skyscrapers
-      if (inset === 1 && Math.min(b.w, b.h) >= 4) {
-        if (distT === 1) {
-          c.fillStyle = pal.neonEdge;
-          c.fillRect(ax, ay, PAINT_UNITS, 1);
-        }
-        if (distL === 1) {
-          c.fillStyle = pal.neonEdge;
-          c.fillRect(ax, ay, 1, PAINT_UNITS);
-        }
-        if (distB === 1) {
-          c.fillStyle = pal.neonEdge;
-          c.fillRect(ax, ay + PAINT_UNITS - 1, PAINT_UNITS, 1);
-        }
-        if (distR === 1) {
-          c.fillStyle = pal.neonEdge;
-          c.fillRect(ax + PAINT_UNITS - 1, ay, 1, PAINT_UNITS);
-        }
-      }
-
-      // Clean geometric Tron rooftop conduits (no scattered window dots!)
-      const centerX = b.x + Math.floor(b.w / 2);
-      const centerY = b.y + Math.floor(b.h / 2);
-      const isCenterCell = x === centerX && y === centerY;
-
-      if (inset >= 1) {
-        // Central circuit core on the rooftop
-        if (isCenterCell) {
-          c.fillStyle = pal.roofAccent;
-          c.fillRect(ax + 1, ay + 1, 2, 2);
-          c.fillStyle = "#ffffff";
-          c.fillRect(ax + 1, ay + 1, 1, 1);
-        } else if ((x === centerX || y === centerY) && inset === 1) {
-          // Bus line connecting roof edge to center core
-          c.fillStyle = pal.neonEdge;
-          if (x === centerX) {
-            c.fillRect(ax + 1, ay, 2, PAINT_UNITS);
-            c.fillStyle = pal.neonCore;
-            c.fillRect(ax + 1, ay, 1, PAINT_UNITS);
-          } else {
-            c.fillRect(ax, ay + 1, PAINT_UNITS, 2);
-            c.fillStyle = pal.neonCore;
-            c.fillRect(ax, ay + 1, PAINT_UNITS, 1);
-          }
-        }
-      } else if (b.development > 1.05 && (distL === 0 || distR === 0 || distT === 0 || distB === 0)) {
-        // Over-development upgrade: glowing corner accents
-        if ((distL === 0 || distR === 0) && (distT === 0 || distB === 0)) {
-          c.fillStyle = "#ffd685";
-          c.fillRect(ax + 1, ay + 1, 2, 2);
-        }
-      }
-
-    // Shadow cast onto this building by even taller NW skyscrapers
-    const shade = this.computeShadowAt(world, x, y, b.height);
-    if (shade > 0) {
-      c.fillStyle = `rgba(5, 8, 16, ${shade * 0.75})`;
-      c.fillRect(ax, ay, PAINT_UNITS, PAINT_UNITS);
-    }
-
-    // Visual damage fractures & glowing ember cracks when eroded
-    if (hpRatio < 0.75) {
-      c.fillStyle = "#12091c";
-      c.fillRect(ax + 1, ay + 2, 2, 1);
-      c.fillStyle = hpRatio < 0.4 ? "#ff42b8" : "#ff8c29";
-      c.fillRect(ax + 2, ay + 1, 1, 1);
-    }
-
-    this.paintCorruption(c, world, x, y, ax, ay, nearVoid);
-  }
-
-  /** Countryside surfaces: grass, meadow, forest canopy, crop rows, orchards and silos. */
-  private paintCountryCell(
-    c: CanvasRenderingContext2D,
-    world: VoidWorld,
-    x: number,
-    y: number,
-    ax: number,
-    ay: number,
-    cover: number,
-  ): void {
-    const seed = world.seed;
-    const r = hash01(seed, 951, x, y);
-    const ox = hash(seed, 952, x, y) & 3;
-    const oy = hash(seed, 953, x, y) & 3;
-
-    switch (cover) {
-      case LandCover.MEADOW: {
-        c.fillStyle = r < 0.5 ? "#7aa348" : "#82ab4f";
-        c.fillRect(ax, ay, PAINT_UNITS, PAINT_UNITS);
-        c.fillStyle = r < 0.6 ? "#9cc05c" : "#6b9640";
-        c.fillRect(ax + ox, ay + oy, 1, 1);
-        if (r > 0.93) {
-          c.fillStyle = r > 0.97 ? "#f6f1e4" : "#ffd15c";
-          c.fillRect(ax + ((ox + 2) & 3), ay + ((oy + 1) & 3), 1, 1);
-        }
-        return;
-      }
-      case LandCover.FOREST: {
-        // Dense canopy: shaded forest floor, round tree crowns with a sunlit NW highlight
-        c.fillStyle = "#24502a";
-        c.fillRect(ax, ay, PAINT_UNITS, PAINT_UNITS);
-        if (r < 0.92) {
-          const tx = hash(seed, 954, x, y) & 1;
-          const ty = hash(seed, 955, x, y) & 1;
-          c.fillStyle = r < 0.45 ? "#2f6b36" : "#357542";
-          c.fillRect(ax + tx, ay + ty, 3, 3);
-          c.fillStyle = "#1a3d22";
-          c.fillRect(ax + tx + 1, ay + ty + 2, 2, 1);
-          c.fillRect(ax + tx + 2, ay + ty + 1, 1, 1);
-          c.fillStyle = r < 0.3 ? "#5fae5a" : "#4f9a4e";
-          c.fillRect(ax + tx, ay + ty, 1, 1);
-          if (r > 0.84) {
-            c.fillStyle = "#7cc868";
-            c.fillRect(ax + tx + 1, ay + ty, 1, 1);
-          }
-        } else {
-          c.fillStyle = "#3a6a25";
-          c.fillRect(ax + ox, ay + oy, 1, 1);
-        }
-        return;
-      }
-      case LandCover.FIELD_H:
-      case LandCover.FIELD_V: {
-        // Crop rows in gold and ochre with soil between; a few cells left as stubble
-        const ripe = hash01(seed, 956, x >> 3, y >> 3) < 0.7;
-        const rowA = ripe ? "#dfab3c" : "#b7c24a";
-        const rowB = ripe ? "#b8862a" : "#8fa33a";
-        const soil = "#8c6a3a";
-        for (let k = 0; k < PAINT_UNITS; k++) {
-          c.fillStyle = k === 3 ? soil : (k & 1) === 0 ? rowA : rowB;
-          if (cover === LandCover.FIELD_H) c.fillRect(ax, ay + k, PAINT_UNITS, 1);
-          else c.fillRect(ax + k, ay, 1, PAINT_UNITS);
-        }
-        if (r > 0.86) {
-          c.fillStyle = ripe ? "#f2c65a" : "#d5dd6a";
-          c.fillRect(ax + ox, ay + oy, 1, 1);
-        }
-        return;
-      }
-      case LandCover.ORCHARD: {
-        c.fillStyle = "#4f8a33";
-        c.fillRect(ax, ay, PAINT_UNITS, PAINT_UNITS);
-        c.fillStyle = "#3d8a48";
-        c.fillRect(ax + 1, ay + 1, 2, 2);
-        c.fillStyle = "#5fae5a";
-        c.fillRect(ax + 1, ay + 1, 1, 1);
-        c.fillStyle = "#2a5c33";
-        c.fillRect(ax + 2, ay + 3, 1, 1);
-        if (r < 0.35) {
-          c.fillStyle = "#ff7a3a";
-          c.fillRect(ax + 2, ay + 2, 1, 1);
-        }
-        return;
-      }
-      case LandCover.SILO: {
-        c.fillStyle = "#4b7f2f";
-        c.fillRect(ax, ay, PAINT_UNITS, PAINT_UNITS);
-        c.fillStyle = "#6b7684";
-        c.fillRect(ax + 1, ay, 2, 4);
-        c.fillStyle = "#b8c0cc";
-        c.fillRect(ax + 1, ay, 2, 3);
-        c.fillStyle = "#e2e8f0";
-        c.fillRect(ax + 1, ay, 1, 1);
-        c.fillStyle = "#ff3b30";
-        c.fillRect(ax + 2, ay + 1, 1, 1);
-        return;
-      }
-      default: {
-        // Open grass: varied mid greens with tufts, rare wildflowers
-        c.fillStyle = r < 0.33 ? "#4b7f2f" : r < 0.66 ? "#518434" : "#467a2c";
-        c.fillRect(ax, ay, PAINT_UNITS, PAINT_UNITS);
-        if (r < 0.55) {
-          c.fillStyle = "#3a6a25";
-          c.fillRect(ax + ox, ay + oy, 1, 1);
-        } else if (r < 0.8) {
-          c.fillStyle = "#639c3f";
-          c.fillRect(ax + ox, ay + oy, 1, 1);
-        }
-        if (r > 0.965) {
-          c.fillStyle = r > 0.985 ? "#f6f1e4" : "#ffd15c";
-          c.fillRect(ax + ((ox + 2) & 3), ay + ((oy + 2) & 3), 1, 1);
-        }
-      }
-    }
-  }
-
-  /** Homesteads and barns: a pitched roof seen from above with a ridge highlight,
-   * eave shadow, a chimney and one warm lit window. */
-  private paintRuralBuilding(
-    c: CanvasRenderingContext2D,
-    world: VoidWorld,
-    b: MetroBuilding,
-    pal: ArchPalette,
-    x: number,
-    y: number,
-    ax: number,
-    ay: number,
-    hpRatio: number,
-  ): void {
-    const lx = x - b.x;
-    const ly = y - b.y;
-    const ridgeAlongX = b.w >= b.h;
-    c.fillStyle = pal.mid;
-    c.fillRect(ax, ay, PAINT_UNITS, PAINT_UNITS);
-    // Sunlit NW slope vs shaded SE slope
-    c.fillStyle = pal.crown;
-    if (ridgeAlongX) c.fillRect(ax, ay, PAINT_UNITS, 2);
-    else c.fillRect(ax, ay, 2, PAINT_UNITS);
-    c.fillStyle = pal.podium;
-    if (ridgeAlongX) c.fillRect(ax, ay + 2, PAINT_UNITS, 2);
-    else c.fillRect(ax + 2, ay, 2, PAINT_UNITS);
-    // Ridge line
-    c.fillStyle = pal.litEdge;
-    if (ridgeAlongX) c.fillRect(ax, ay + 2, PAINT_UNITS, 1);
-    else c.fillRect(ax + 2, ay, 1, PAINT_UNITS);
-    // Eave shadow on the S and E edges of the footprint
-    c.fillStyle = pal.shadeEdge;
-    if (ly === b.h - 1) c.fillRect(ax, ay + PAINT_UNITS - 1, PAINT_UNITS, 1);
-    if (lx === b.w - 1) c.fillRect(ax + PAINT_UNITS - 1, ay, 1, PAINT_UNITS);
-    if (b.archStyle === "barn") {
-      // White trim and a hayloft door
-      c.fillStyle = "#f2e8d8";
-      if (lx === 0 && ly === 0) c.fillRect(ax, ay, 1, 1);
-      if (lx === b.w - 1 && ly === 0) c.fillRect(ax + PAINT_UNITS - 2, ay, 1, 1);
-      if (lx === 0 && ly === b.h - 1) {
-        c.fillStyle = "#3a100c";
-        c.fillRect(ax + 1, ay + 2, 1, 1);
-      }
-    }
-    if (lx === 0 && ly === 0) {
-      // Chimney
-      c.fillStyle = "#3a3a3a";
-      c.fillRect(ax + 1, ay + 1, 1, 1);
-    }
-    if (lx === b.w - 1 && ly === b.h - 1 && hpRatio > 0.3) {
-      // Warm window spilling light at dusk
-      c.fillStyle = pal.neonCore;
-      c.fillRect(ax + 1, ay + 1, 1, 1);
-    }
-    if (hpRatio < 0.75) {
-      c.fillStyle = "#12091c";
-      c.fillRect(ax + 1, ay + 2, 2, 1);
-      c.fillStyle = hpRatio < 0.4 ? "#ff42b8" : "#ff8c29";
-      c.fillRect(ax + 2, ay + 1, 1, 1);
-    }
-  }
-
-  /** The anomaly itself. Around the nearest portal: a lightless core, a thin hot rim, then a
-   * two-armed spiral nebula fading into deep indigo space with lensed stars and cyan filaments. */
-  private paintVoidCell(c: CanvasRenderingContext2D, world: VoidWorld, x: number, y: number, ax: number, ay: number): void {
-    const seed = world.seed;
-    const np = this.nearestPortal(world, x, y);
-    const radius = np.p ? np.p.radius : 12;
-    const coreR = Math.max(3.6, radius * 0.42);
-    const d = np.d;
-    const grain = hash01(seed, 990, x, y);
-
-    if (d < coreR - 0.4) {
-      c.fillStyle = "#000000";
-      c.fillRect(ax, ay, PAINT_UNITS, PAINT_UNITS);
-      return;
-    }
-    if (d < coreR + 2.4) {
-      // Event-horizon rim: white-pink photon ring, magenta, then violet fading outward
-      const t = (d - (coreR - 0.4)) / 2.8;
-      c.fillStyle = t < 0.16 ? "#ffe9ff" : t < 0.36 ? "#ff4fd8" : t < 0.6 ? "#9a2fe6" : t < 0.82 ? "#5a1fa8" : "#3a1a7a";
-      c.fillRect(ax, ay, PAINT_UNITS, PAINT_UNITS);
-      if (t >= 0.36 && grain > 0.78) {
-        c.fillStyle = "#6fe3ff";
-        c.fillRect(ax + (hash(seed, 996, x, y) & 3), ay + (hash(seed, 997, x, y) & 3), 1, 1);
-      }
-      return;
-    }
-
-    const ph = hash01(seed, 989) * Math.PI * 2;
-    const rel = (d - coreR) / Math.max(1, radius * 3.8);
-    const fall = Math.max(0, 1 - rel * rel);
-    const lnD = Math.log(d + 1);
-    const arm1 = 0.5 + 0.5 * Math.sin(np.ang * 2 + lnD * 5.2 + ph);
-    const arm2 = 0.5 + 0.5 * Math.sin(np.ang * 3 - lnD * 7.5 + ph * 1.7);
-    const dust = 0.5 + 0.5 * Math.sin(x * 0.21 + ph) * Math.cos(y * 0.17 - ph);
-    const intensity = (arm1 * 0.7 + arm2 * 0.3) * (0.4 + 0.6 * fall) * (0.72 + grain * 0.36) * (0.8 + dust * 0.3);
-
-    c.fillStyle = nebulaColor(intensity);
-    c.fillRect(ax, ay, PAINT_UNITS, PAINT_UNITS);
-    // Sub-cell nebula texture: a lighter 2x2 knot or a darker dust lane
-    if (grain > 0.68) {
-      c.fillStyle = nebulaColor(Math.min(1, intensity + 0.13));
-      c.fillRect(ax + ((hash(seed, 998, x, y) & 1) << 1), ay + ((hash(seed, 999, x, y) & 1) << 1), 2, 2);
-    } else if (grain < 0.18) {
-      c.fillStyle = nebulaColor(Math.max(0, intensity - 0.12));
-      c.fillRect(ax + ((hash(seed, 998, x, y) & 1) << 1), ay, 2, PAINT_UNITS);
-    }
-    // Cyan filaments threading the magenta arms
-    if (arm2 > 0.92 && fall > 0.22 && fall < 0.85 && grain > 0.55) {
-      c.fillStyle = grain > 0.8 ? "#6fe3ff" : "#3aa8e8";
-      c.fillRect(ax + (hash(seed, 996, x, y) & 3), ay + (hash(seed, 997, x, y) & 2), 1, 2);
-    }
-    // Lensed star field: denser in the deep space far from the glow
-    const starRoll = hash01(seed, 991, x, y);
-    const starThreshold = 0.02 + 0.09 * (1 - fall);
-    if (starRoll < starThreshold) {
-      const sx = hash(seed, 992, x, y) & 3;
-      const sy = hash(seed, 993, x, y) & 3;
-      if (starRoll < 0.012) {
-        c.fillStyle = "#ffffff";
-        c.fillRect(ax + sx, ay + sy, 1, 1);
-        c.fillStyle = starRoll < 0.006 ? "#7afcff" : "#ff85e4";
-        c.fillRect(ax + Math.min(3, sx + 1), ay + sy, 1, 1);
-        c.fillRect(ax + sx, ay + Math.min(3, sy + 1), 1, 1);
+    } else if (mat === CellMaterial.UNCLAIMED) {
+      color = cover === LandCover.RIVER ? (r < 0.2 ? "#58b0e6" : "#2f78b8") : "#0f2c44";
+    } else if (mat === CellMaterial.WALL || mat === CellMaterial.BARRIER) {
+      color = mat === CellMaterial.BARRIER ? "#48e5ff" : (x + y) % 3 === 0 ? "#ff922b" : "#5c6d85";
+    } else if (mat === CellMaterial.RECLAIMED) {
+      color = r < 0.3 ? "#b08b54" : "#80643e";
+    } else if (mat === CellMaterial.SALVAGE) {
+      color = r < 0.25 ? "#ff8c29" : r < 0.6 ? "#6e472b" : "#463b43";
+    } else if (b) {
+      const palettes = ARCH_PALETTES[b.archStyle] ?? ARCH_PALETTES.glassTower;
+      const pal = palettes[b.variant % palettes.length];
+      const lx = x - b.x, ly = y - b.y;
+      const right = b.x + b.w - 1 - x, bottom = b.y + b.h - 1 - y;
+      const inset = Math.min(lx, ly, right, bottom);
+      const cx = Math.floor(b.x + b.w / 2), cy = Math.floor(b.y + b.h / 2);
+      if (b.archStyle === "homestead" || b.archStyle === "barn") {
+        const horizontal = b.w >= b.h;
+        color = (horizontal ? y < cy : x < cx) ? pal.crown : pal.podium;
+        if (horizontal ? y === cy : x === cx) color = pal.litEdge;
+        if (right === 0 || bottom === 0) color = pal.shadeEdge;
+        if (lx === 1 && ly === 1) color = "#3a3a3a";
+        if (right === 1 && bottom === 1 && hp > 0.3) color = pal.neonCore;
       } else {
-        c.fillStyle =
-          starRoll < 0.03 ? "#eaf6ff" : starRoll < 0.05 ? "#7afcff" : starRoll < 0.07 ? "#ff94e8" : starRoll < 0.085 ? "#ffd27d" : "#8a68d6";
-        c.fillRect(ax + sx, ay + sy, 1, 1);
+        color = inset >= pixels(2) ? pal.crown : inset >= pixels(1) ? pal.mid : pal.podium;
+        const edge = x === 0 || y === 0 || x + 1 === w || y + 1 === h
+          || world.buildingAt[idx - 1] !== bId || world.buildingAt[idx + 1] !== bId
+          || world.buildingAt[idx - w] !== bId || world.buildingAt[idx + w] !== bId;
+        if (edge) color = (x + y) % 4 === 0 ? pal.neonCore : pal.neonEdge;
+        else if (inset === pixels(1) && Math.min(b.w, b.h) >= pixels(4)) color = pal.neonEdge;
+        else if (x === cx || y === cy) color = pal.roofAccent;
+        // Roof equipment is authored across cells instead of squeezed into each cell.
+        if (inset >= pixels(1)) {
+          const dx = x - cx, dy = y - cy;
+          if (b.roofFeature === "helipad" && Math.abs(dx) <= 2 && Math.abs(dy) <= 2) {
+            color = Math.abs(dx) === 2 || dy === 0 ? "#ffd166" : pal.crown;
+          } else if (b.roofFeature === "skyGarden" && (lx + ly) % 3 !== 0) color = "#357542";
+          else if (b.roofFeature === "solarArray" && ly % 3 === 0) color = "#48a8dc";
+          else if (dx === 0 && dy === 0) color = "#ffffff";
+        }
+        if (b.development > 1.05 && inset === 0 && (x + y) % 3 === 0) color = pal.neonCore;
+      }
+      if (hp < 0.4) color = r < 0.3 ? "#ff42b8" : "#12091c";
+      else if (hp < 0.75 && r < 0.35) color = "#ff8c29";
+    } else if (mat === CellMaterial.STREET) {
+      if (world.streetTier[idx] === 8) color = cover === LandCover.BRIDGE
+        ? (x + y) % 3 === 0 ? "#4a3422" : "#8a6a48"
+        : r < 0.25 ? "#c9a66f" : "#9a7549";
+      else color = world.streetTier[idx] === 4 ? "#050608" : "#040507";
+    } else if (mat === CellMaterial.PARK) {
+      switch (cover) {
+        case LandCover.NONE: color = (x + y) % 4 === 0 ? "#1b332b" : "#090d12"; break;
+        case LandCover.FOREST: color = r < 0.2 ? "#5fae5a" : r < 0.7 ? "#2f6b36" : "#1a3d22"; break;
+        case LandCover.FIELD_H: color = y % 3 === 0 ? "#8c6a3a" : "#dfab3c"; break;
+        case LandCover.FIELD_V: color = x % 3 === 0 ? "#8c6a3a" : "#b7c24a"; break;
+        case LandCover.ORCHARD: color = x % 3 === 0 && y % 3 === 0 ? "#ff7a3a" : "#3d8a48"; break;
+        case LandCover.SILO: color = x % 3 === 0 ? "#e2e8f0" : "#6b7684"; break;
+        default: color = r < 0.2 ? "#639c3f" : r < 0.6 ? "#4b7f2f" : "#467a2c";
       }
     }
-  }
-
-  /** The eroding frontier band: land within `CORRUPTION_REACH` of the Void darkens toward
-   * violet, cracks open with magenta veins, and ends in a dark cliff with a glowing rim on
-   * every side that touches the Void, so the ground reads as breaking off into the anomaly. */
-  private paintCorruption(
-    c: CanvasRenderingContext2D,
-    world: VoidWorld,
-    x: number,
-    y: number,
-    ax: number,
-    ay: number,
-    nearVoid: boolean,
-    edgeOnly = false,
-  ): void {
+    c.fillStyle = color;
+    c.fillRect(x, y, 1, 1);
+    if (mat === CellMaterial.VOID) return;
+    const shade = this.computeShadowAt(world, x, y, b?.height ?? 0);
+    if (shade > 0) {
+      c.fillStyle = `rgba(2, 3, 5, ${shade * 0.75})`;
+      c.fillRect(x, y, 1, 1);
+    }
     if (!nearVoid) return;
-    const { w, h } = world.grid;
-    const mat = world.material;
-    const chamfer = this.distWindow[(y - this.distOy) * DIST_WINDOW + (x - this.distOx)];
-    const dv = chamfer / 3;
-    if (dv > CORRUPTION_REACH) return;
-
-    const seed = world.seed;
-    const cr = hash01(seed, 977, x, y);
-    if (!edgeOnly) {
-      c.fillStyle = CORRUPTION_TINTS[chamfer];
-      c.fillRect(ax, ay, PAINT_UNITS, PAINT_UNITS);
-      // Magenta veins and dark pits close to the frontier
-      if (dv <= 3.2 && cr < 0.45 * (1 - dv / 4.2)) {
-        c.fillStyle = cr < 0.12 ? "#ff8df0" : cr < 0.3 ? "#ff3fd0" : "#b44dff";
-        const vx = hash(seed, 978, x, y) & 3;
-        const vy = hash(seed, 979, x, y) & 3;
-        c.fillRect(ax + vx, ay + vy, 1, 1);
-        if (dv <= 1.6) c.fillRect(ax + ((vx + 1) & 3), ay + ((vy + 1) & 3), 1, 1);
-      } else if (dv <= 2.2 && cr > 0.88) {
-        c.fillStyle = "#0b0314";
-        c.fillRect(ax + (hash(seed, 978, x, y) & 2), ay + (hash(seed, 979, x, y) & 3), 2, 1);
-      }
+    const distance = this.distWindow[(y - this.distOy) * DIST_WINDOW + x - this.distOx];
+    if (distance <= CORRUPTION_REACH * 3 && mat !== CellMaterial.WALL && mat !== CellMaterial.BARRIER) {
+      c.fillStyle = CORRUPTION_TINTS[distance];
+      c.fillRect(x, y, 1, 1);
     }
-    if (dv <= 1) {
-      // Cliff edge: dark drop plus a glowing rim along each side touching the Void; the rim is
-      // mostly dim violet with hotter magenta and white-pink breaks so it reads as cracked light
-      const idx = y * w + x;
-      const rim = cr < 0.55 ? "#6a1fb0" : cr < 0.85 ? "#b23fe6" : cr < 0.95 ? "#ff4fd8" : "#ffd6ff";
-      if (x > 0 && mat[idx - 1] === CellMaterial.VOID) {
-        c.fillStyle = "#05010c";
-        c.fillRect(ax, ay, 1, PAINT_UNITS);
-        c.fillStyle = rim;
-        c.fillRect(ax + 1, ay, 1, PAINT_UNITS);
-      }
-      if (x + 1 < w && mat[idx + 1] === CellMaterial.VOID) {
-        c.fillStyle = "#05010c";
-        c.fillRect(ax + PAINT_UNITS - 1, ay, 1, PAINT_UNITS);
-        c.fillStyle = rim;
-        c.fillRect(ax + PAINT_UNITS - 2, ay, 1, PAINT_UNITS);
-      }
-      if (y > 0 && mat[idx - w] === CellMaterial.VOID) {
-        c.fillStyle = "#05010c";
-        c.fillRect(ax, ay, PAINT_UNITS, 1);
-        c.fillStyle = rim;
-        c.fillRect(ax, ay + 1, PAINT_UNITS, 1);
-      }
-      if (y + 1 < h && mat[idx + w] === CellMaterial.VOID) {
-        c.fillStyle = "#05010c";
-        c.fillRect(ax, ay + PAINT_UNITS - 1, PAINT_UNITS, 1);
-        c.fillStyle = rim;
-        c.fillRect(ax, ay + PAINT_UNITS - 2, PAINT_UNITS, 1);
-      }
+    if (distance <= 3) {
+      c.fillStyle = r < 0.15 ? "#ffd6ff" : r < 0.5 ? "#b23fe6" : "#6a1fb0";
+      c.fillRect(x, y, 1, 1);
     }
   }
 
@@ -1385,7 +843,7 @@ export class VoidRenderer {
       this.sceneLayer.width = world.grid.w;
       this.sceneLayer.height = world.grid.h;
     }
-    const c = this.sceneCtx;
+    const c = this.pixelCtx;
     c.setTransform(1, 0, 0, 1, 0, 0);
     c.imageSmoothingEnabled = false;
 
@@ -1396,26 +854,6 @@ export class VoidRenderer {
     const pulse = this.reduceEffects ? 0.75 : 0.65 + 0.35 * Math.sin(animTime * 5.2);
 
     lap("terrain");
-
-    // 1b. Soft Gaussian-like Tron ambient glow pass across city neon outlines
-    if (!this.reduceEffects && this.px * this.cam.s >= 1.5) {
-      const gw = Math.max(1, Math.floor(world.grid.w * 0.5));
-      const gh = Math.max(1, Math.floor(world.grid.h * 0.5));
-      if (this.glowCanvas.width !== gw || this.glowCanvas.height !== gh) {
-        this.glowCanvas.width = gw;
-        this.glowCanvas.height = gh;
-      }
-      this.gctx.imageSmoothingEnabled = true;
-      this.gctx.clearRect(0, 0, gw, gh);
-      this.gctx.drawImage(this.terrainLayer, 0, 0, gw, gh);
-
-      c.save();
-      c.globalCompositeOperation = "screen";
-      c.globalAlpha = 0.42;
-      c.filter = "blur(3px)";
-      c.drawImage(this.glowCanvas, 0, 0, world.grid.w, world.grid.h);
-      c.restore();
-    }
 
     // 2. Tron Light Cycles & Stream Trails running along street corridors from building to building
     this.syncCorridors(world);
@@ -1988,7 +1426,7 @@ export class VoidRenderer {
     const output = this.ctx;
     output.setTransform(1, 0, 0, 1, 0, 0);
     output.drawImage(this.backdropFor(this.canvas.width, this.canvas.height, world.seed), 0, 0);
-    const scale = this.cam.s * this.px;
+    const scale = this.pixelScale();
     output.imageSmoothingEnabled = false;
     output.setTransform(scale, 0, 0, scale, this.cam.x, this.cam.y);
     output.drawImage(this.sceneLayer, 0, 0);

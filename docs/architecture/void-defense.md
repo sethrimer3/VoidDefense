@@ -18,6 +18,7 @@ Void Defense is built as a clean, isolated namespace (`src/void/`) alongside the
 | `src/void/tech/catalog.ts` & `wallet.ts` | Single global technology DAG across 6 sectors, logical `AND`/`OR` prerequisites, cascading 100% refunds, and the shared-per-map Sparks entitlement ledger (`recordScenarioResult`). |
 | `src/void/tech/tech-ui.ts` | `VoidTechTreeView`: wraps `UpgradeGraph` (`spatialCulling: true` and `setSecondaryEdges`) and `MagicCircle` for the global technology screen. |
 | `src/void/operations/scene.ts` | `ResistanceOperationsView`: cosmetic ambient Engineering Bay (enormous evolving turret prototype + 1x2 welders) and Research Lab (captured Void nebula chambers + 1x2 researchers) with zero offline/idle resource farming. |
+| `src/void/pixel-painter.ts` | Hard-edged world-pixel rectangle, line, polygon, circle and ellipse rasterization for moving objects and effects. |
 | `src/void/render.ts` & `ui.ts` | `VoidRenderer` (dirty-chunk offscreen layer + multi-scale LOD + `Loupe` integration) and `VoidApp` shell. See "Rendering the concept composition" below. |
 | `src/void/save.ts` & `main.ts` | Defensive `voiddefense.v1` persistence and isolated bootstrap entrypoint (never invokes `MinePage`, `LibraryPage`, or `away.ts`). Classic TowerDefense remains accessible via `?classic=1`. |
 
@@ -34,14 +35,19 @@ coordinates and cell indices use current pixels.
 
 Terrain caching and the complete scene raster each contain exactly one raster pixel
 per simulation cell. Building windows, roof equipment, damage, ground and Void share
-that lattice. Camera zoom uses nearest-neighbor scaling of the scene, including on
-phones; a display/device pixel is not a world unit. Authored vector paths and color accents are rasterized into that single pixel;
-no finer art grid is retained. Existing neon city, countryside, corruption and
-black-hole passes share the final scene raster. The dirty chunks remain 16×16
-simulation pixels and are only cache regions, never destruction units. A per-pixel paint signature includes material,
-land cover, damage stage, development, building identity, shadow and frontier
-distance/edges, so broad dirty regions skip unchanged pixels. Browser regression
-checks compare incremental terrain with a fresh repaint.
+that lattice. Native terrain colors occupy whole cells; no 4×4 artwork is downsampled
+into a cell, and there is no terrain blur/bloom pass. `pixel-painter.ts` rasterizes
+moving objects, fractional rectangles, lines, circles and rotated ellipses with hard
+pixel edges; Canvas `imageSmoothingEnabled = false` alone does not disable path
+antialiasing. Translucent effects still color whole pixels.
+
+Camera zoom uses nearest-neighbor scaling. Overview/zoom-out fits the board, while
+close zoom uses whole device-pixel steps and rounded pan. Rendering and hit testing
+use the same snapped transform. A display/device pixel is not a world unit. Dirty
+chunks remain 16×16 simulation pixels and are only cache regions. Per-pixel paint
+signatures include material, cover, damage, development, building identity, neighboring
+surfaces, shadow and frontier distance/edges; browser checks compare retained pixels
+with a fresh repaint.
 
 Per-pixel erosion costs represent one quarter the former area. `PIXEL_WORK_SCALE`
 keeps that conversion in integer fixed-point arithmetic, including shields and
@@ -56,15 +62,21 @@ coordinates, single-pixel destruction at close zoom, desktop/phone layout and
 browser errors. Screenshots go to `test-results/void-pixels/`.
 ## Rendering the concept composition
 
-The target look (`docs/void-defense/visual-references.md`, section E) is a top-down map that runs from a warm, dense year-3000 city through countryside into a huge cosmic black hole that is tearing the terrain apart. `VoidRenderer` splits that into a cached layer and per-frame passes.
+The target look (`docs/void-defense/visual-references.md`, section E) runs from a warm,
+dense neon city through countryside into a cosmic black hole. `paintCell` authors
+whole-pixel neon building perimeters, stepped roof rings, conduits, helipads, solar
+arrays and gardens across building footprints. Rural roofs, field rows, trees, river,
+bridges and silos likewise choose whole-cell colors. The Void uses a discrete nebula
+palette with pixel stars and a hot event-horizon rim. Whole-cell shadow and corruption
+colors follow erosion, using the shared 12-pixel corruption reach for invalidation.
 
-**Cached terrain layer (`paintChunk` → `paintCell`).** Each 16×16-cell chunk is repainted only when dirty. `paintCell` dispatches on material and `world.landCover`:
+Dynamic passes preserve street light cycles, frontier lightning, portal arcs,
+shockwaves, tower silhouettes, agents, shells, lasers and inward debris, drawn through
+`pixelPainter` into the world raster before nearest-neighbor display scaling. The
+canvas backdrop remains cosmetic. `reduceEffects` suppresses extra animation; sharp
+world pixels are the default in both effects modes.
 
-- City: Tron-style neon circuitry. Carbon-black streets and obsidian plazas with faint grid lines; dark rooftops traced by an orange neon perimeter (`neonEdge` with a brighter `neonCore`), an inner neon ring on stepped setbacks, and rooftop bus lines feeding a glowing centre core (`roofAccent`); directional shadows from taller neighbours (`computeShadowAt`).
-- Countryside (`paintCountryCell`): grass and meadow with tufts and wildflowers, forest canopy (shaded floor, round crowns with a sunlit highlight), crop rows in gold and ochre with soil between, orchards, silos; dirt lanes with ruts and a grass verge, timber bridges, bright river water with glints. `paintRuralBuilding` draws homesteads and barns as pitched roofs seen from above (ridge highlight, eave shadow, chimney, one warm window).
-- The anomaly (`paintVoidCell`): every Void cell is coloured by its distance and angle to the nearest portal (`nearestPortal`, preferring active ones): a lightless core, a photon-ring rim (white-pink → magenta → violet), then a two-armed logarithmic spiral nebula on the `NEBULA_RAMP` fading into deep indigo, with pixel-scale knots and dust lanes, cyan filaments on the arms and a lensed star field that thickens in deep space.
-- The corruption band (`paintCorruption`): for chunks with Void within `CORRUPTION_REACH` (12 pixels), each land cell finds its distance to the nearest Void cell with a local chamfer distance transform. It is stained violet by distance, cracked with magenta veins and dark pits near the frontier, and every side touching the Void gets a dark cliff line with a glowing violet/magenta rim. Walls and barriers only take the cliff edge. `VoidPhysics` marks a 12-pixel radius dirty whenever a cell is consumed or restored so the band follows the frontier.
-
-**Per-frame passes (`draw`).** A cached deep-space backdrop (stars and a faint violet wash, rebuilt on resize) fills the canvas behind the board. Then: a soft bloom (the terrain layer downsampled, blurred and screen-blended so neon edges glow; skipped under `reduceEffects`); Tron light cycles with fading trails on breadth-first street corridors between nearby buildings (`syncCorridors`, city streets only, never the dirt lanes); a soft violet corona on frontier cells with warm/cyan/pink matter sparks; up to twelve lightning veins per 110 ms slot, jagged polylines from hashed frontier cells toward the nearest active portal; forty twinkling stars sampled inside the Void's bounding box; the black hole overlay per active portal (breathing halo rings, eighteen lensed light arcs at hashed radii and speeds, the lightless core, photon ring, magenta event horizon, violet glow ring, counter-rotating cyan and gold accretion ellipses, and twenty-six orbiting sparkles spiralling inward); then nodes, blueprints, towers, agents, organisms, shells, shockwaves, lasers, debris (slabs with a dark underside and violet rim shrinking as they fall, sparks with glow trails), previews and the loupe. `reduceEffects` keeps the rings and core but drops halos, streaks, lightning, twinkles and sparkles.
-
-Scoring and physics are untouched by the composition: countryside cells are parkland (`PARK`, value 1) with higher HP than urban parks so the band is not eaten in seconds; rivers are `UNCLAIMED` water; dirt lanes and bridges are baseline streets; hamlets are ordinary `BUILDING` cells.
+`node tests/void-crisp.mjs` checks native palette colors, opaque pixel masks without
+antialiased fringes for small rectangles, lines, circles and rotated ellipses, whole
+close-zoom device-pixel steps, pan/input agreement and absence of the terrain filter
+on desktop DPR 1 and phone DPR 2. Screenshots go to `test-results/void-crisp/`.
