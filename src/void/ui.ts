@@ -212,22 +212,37 @@ export class VoidApp {
         </header>
 
         <section id="void-page-battle" class="void-page active">
-          <div class="void-battle-status" data-battle-status></div>
           <div class="void-board-stage">
             <canvas id="void-board-canvas"></canvas>
-            <div class="void-inspector" data-tower-inspector hidden></div>
-            <div class="void-outcome-banner" data-outcome-banner hidden></div>
-          </div>
-          <div class="void-battle-dock" role="toolbar" aria-label="Tactical Deployment Console">
-            <div class="void-dock-group">
-              <span class="void-dock-label">TOWERS</span>
-              <div class="void-palette" data-tower-palette></div>
+
+            <!-- Ultra-clean HUD Overlays directly floating over battle canvas -->
+            <div class="void-battle-hud" data-battle-hud>
+              <div class="void-hud-top">
+                <div class="void-hud-bar-wrap" title="Metropolitan Survival & Void Reservoir">
+                  <div class="void-hud-bar void-hud-bar--city">
+                    <div class="void-hud-bar-fill" data-hud-city-bar></div>
+                    <span class="void-hud-bar-label" data-hud-city-text>100%</span>
+                  </div>
+                </div>
+                <div class="void-hud-stats" data-hud-stats-pills></div>
+              </div>
+
+              <div class="void-hud-top-right">
+                <div class="void-run-controls" data-run-controls></div>
+              </div>
+
+              <div class="void-inspector" data-tower-inspector hidden></div>
+              <div class="void-outcome-banner" data-outcome-banner hidden></div>
+
+              <!-- Ultra-clean dock tray centered at bottom -->
+              <div class="void-hud-bottom" role="toolbar" aria-label="Tactical Action Bar">
+                <div class="void-hud-tray">
+                  <div class="void-palette" data-tower-palette></div>
+                  <div class="void-hud-tray-divider" aria-hidden="true"></div>
+                  <div class="void-strikes" data-strike-palette></div>
+                </div>
+              </div>
             </div>
-            <div class="void-dock-group">
-              <span class="void-dock-label">ORBITAL STRIKES</span>
-              <div class="void-strikes" data-strike-palette></div>
-            </div>
-            <div class="void-run-controls" data-run-controls></div>
           </div>
         </section>
 
@@ -673,30 +688,30 @@ export class VoidApp {
     profBar.querySelector<HTMLButtonElement>("[data-edit-profile]")!.onclick = () =>
       this.openProfileDialog(false);
 
-    // Tactical Telemetry Bar with visual progress gauges
+    // Tactical Telemetry Bar with sleek top-center health/integrity bar and minimal badges
     const { preservedPercent } = this.sim.world.computePreservedBaseline();
     const isFiniteVoid = Number.isFinite(this.sim.voidField.energyRemaining);
     const energyPct = isFiniteVoid
       ? Math.max(0, Math.min(100, (this.sim.voidField.energyRemaining / Math.max(1, this.sim.voidField.initialEnergy)) * 100))
       : 100;
     const energyText = isFiniteVoid
-      ? `${Math.ceil(this.sim.voidField.energyRemaining)} / ${this.sim.voidField.initialEnergy}`
-      : "Endless";
-    const statusEl = this.root.querySelector<HTMLElement>("[data-battle-status]")!;
-    statusEl.innerHTML = `
-      <div class="void-stat-module">
-        <span>City Preserved: <b>${preservedPercent.toFixed(1)}%</b></span>
-        <span class="void-gauge"><i style="width:${preservedPercent.toFixed(1)}%"></i></span>
-      </div>
-      <div class="void-stat-module">
-        <span>Void Reservoir: <b>${energyText}</b></span>
-        <span class="void-gauge void-gauge--void"><i style="width:${energyPct.toFixed(1)}%"></i></span>
-      </div>
-      <div class="void-stat-pill">Frontier Contacts: <b>${this.sim.voidField.totalContactEdges()}</b></div>
-      <div class="void-stat-pill">Void Nodes: <b>${this.sim.voidField.nodes.length}</b></div>
-      <div class="void-stat-pill">Units: <b>${this.sim.combat.agents.length}</b></div>
-      <div class="void-stat-pill">Time: <b>${this.sim.elapsedSeconds.toFixed(1)}s</b></div>
-    `;
+      ? `${Math.ceil(this.sim.voidField.energyRemaining)}`
+      : "∞";
+
+    const cityBarFill = this.root.querySelector<HTMLElement>("[data-hud-city-bar]");
+    if (cityBarFill) cityBarFill.style.width = `${preservedPercent.toFixed(1)}%`;
+    const cityText = this.root.querySelector<HTMLElement>("[data-hud-city-text]");
+    if (cityText) cityText.textContent = `${preservedPercent.toFixed(1)}%`;
+
+    const statsPills = this.root.querySelector<HTMLElement>("[data-hud-stats-pills]");
+    if (statsPills) {
+      statsPills.innerHTML = `
+        <span class="void-hud-pill" title="Void Energy Remaining">Void <b>${energyText}</b></span>
+        <span class="void-hud-pill" title="Active Frontier Contacts">Contacts <b>${this.sim.voidField.totalContactEdges()}</b></span>
+        <span class="void-hud-pill" title="Active Units">Units <b>${this.sim.combat.agents.length}</b></span>
+        <span class="void-hud-pill" title="Elapsed Battle Time">Time <b>${this.sim.elapsedSeconds.toFixed(1)}s</b></span>
+      `;
+    }
 
     // Run controls
     const ctrlEl = this.root.querySelector<HTMLElement>("[data-run-controls]")!;

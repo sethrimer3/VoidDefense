@@ -306,44 +306,14 @@
   position: relative;
   flex: 1;
   min-height: 0;
-  margin: 0.4rem 0.65rem;
+  margin: 0;
+  width: 100%;
+  height: 100%;
   background: #020306;
-  border: 1px solid #252f40;
-  box-shadow:
-    inset 0 0 20px rgba(0, 0, 0, 0.95),
-    0 0 1px 1px #090d14,
-    0 4px 20px rgba(0, 0, 0, 0.9);
-  border-radius: 2px;
+  border: none;
+  box-shadow: none;
+  border-radius: 0;
   overflow: hidden;
-}
-
-/* Sleek TRON corner accents for the tactical viewport */
-.void-board-stage::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 14px;
-  height: 14px;
-  border-top: 2px solid var(--void-neon-orange);
-  border-left: 2px solid var(--void-neon-orange);
-  pointer-events: none;
-  z-index: 2;
-  box-shadow: 0 0 6px var(--void-neon-orange);
-}
-
-.void-board-stage::after {
-  content: "";
-  position: absolute;
-  bottom: 0;
-  right: 0;
-  width: 14px;
-  height: 14px;
-  border-bottom: 2px solid var(--void-neon-orange);
-  border-right: 2px solid var(--void-neon-orange);
-  pointer-events: none;
-  z-index: 2;
-  box-shadow: 0 0 6px var(--void-neon-orange);
 }
 
 #void-board-canvas {
@@ -354,233 +324,263 @@
   cursor: crosshair;
 }
 
-/* ── Inspector & Overlays ── */
-.void-inspector {
+/* ── Ultra-Clean Minimal In-Game HUD Overlays (Inspired by Reference) ── */
+.void-battle-hud {
   position: absolute;
-  top: 0.65rem;
-  right: 0.65rem;
+  inset: 0;
+  pointer-events: none;
   display: flex;
-  align-items: center;
-  gap: 0.55rem;
-  padding: 0.45rem 0.8rem;
-  background: rgba(10, 14, 20, 0.96);
-  border: 1px solid var(--void-neon-orange);
-  box-shadow:
-    0 0 12px rgba(255, 119, 0, 0.35),
-    0 6px 18px rgba(0, 0, 0, 0.9);
-  border-radius: 2px;
-  font-size: 0.78rem;
-  z-index: 5;
-  backdrop-filter: blur(4px);
-}
-
-.void-inspector strong {
-  color: #ff9d00;
-  text-shadow: 0 0 6px rgba(255, 157, 0, 0.6);
-}
-
-.void-inspector button {
-  min-height: 28px;
-  padding: 0.22rem 0.6rem;
-  font-size: 0.72rem;
-  background: linear-gradient(180deg, #1f2735 0%, #111620 100%);
-  border: 1px solid #3e4e68;
-  color: #e6edf5;
-  border-radius: 2px;
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
-
-.void-inspector button:hover {
-  border-color: var(--void-neon-orange);
-  color: #fff;
-}
-
-.void-outcome-banner {
-  position: absolute;
-  inset: auto 1.2rem 1.2rem 1.2rem;
-  max-width: 560px;
-  margin: 0 auto;
-  padding: 1.1rem 1.4rem;
-  background:
-    linear-gradient(180deg, rgba(16, 21, 30, 0.98) 0%, rgba(8, 10, 16, 0.99) 100%);
-  border: 2px solid var(--void-neon-orange);
-  box-shadow:
-    0 0 20px rgba(255, 119, 0, 0.5),
-    0 10px 40px rgba(0, 0, 0, 0.95);
-  border-radius: 2px;
-  text-align: center;
-  z-index: 10;
-  backdrop-filter: blur(6px);
-}
-
-.void-outcome-banner h2 {
-  margin: 0 0 0.4rem;
-  color: #fff;
-  font-size: 1.15rem;
-  letter-spacing: 0.1em;
-  text-shadow: 0 0 10px rgba(255, 148, 0, 0.9);
-}
-
-.void-outcome-banner p {
-  margin: 0.35rem 0;
-  font-size: 0.84rem;
-  color: #cbd8e8;
-}
-
-.void-outcome-banner b {
-  color: #ff9d00;
-  text-shadow: 0 0 6px rgba(255, 157, 0, 0.7);
-}
-
-.void-warn {
-  display: block;
-  margin-top: 0.4rem;
-  color: #ff4757;
-  font-size: 0.76rem;
-  text-shadow: 0 0 5px rgba(255, 71, 87, 0.5);
-}
-
-.void-outcome-actions {
-  display: flex;
-  justify-content: center;
-  gap: 0.75rem;
-  margin-top: 0.85rem;
-}
-
-/* ── Tactical Deployment Console (Dock) ── */
-.void-battle-dock {
-  position: relative;
-  z-index: 2;
-  display: flex;
-  align-items: center;
+  flex-direction: column;
   justify-content: space-between;
-  gap: 0.75rem;
-  padding: 0.45rem 1rem;
-  background:
-    linear-gradient(180deg, #151a24 0%, #0d1017 65%, #07090e 100%);
-  border-top: 2px solid #2d384d;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.08),
-    0 -2px 10px rgba(0, 0, 0, 0.8);
-  flex-shrink: 0;
-  flex-wrap: wrap;
+  z-index: 5;
 }
 
-.void-dock-group {
+/* Allow interaction on child widgets inside the floating HUD */
+.void-battle-hud > * {
+  pointer-events: auto;
+}
+
+/* Top Center Status Bar */
+.void-hud-top {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  padding-top: 0.5rem;
+}
+
+.void-hud-bar-wrap {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  flex-wrap: wrap;
+  justify-content: center;
 }
 
-.void-dock-label {
-  font-size: 0.66rem;
-  color: #7b8ea8;
-  letter-spacing: 0.12em;
-  font-weight: 700;
-  writing-mode: horizontal-tb;
-  padding-right: 0.25rem;
-  text-shadow: 0 1px 2px #000;
-}
-
-.void-palette,
-.void-strikes,
-.void-run-controls {
-  display: flex;
-  align-items: center;
-  gap: 0.38rem;
-  flex-wrap: wrap;
-}
-
-/* Run Control Buttons (Pause, Speed, Retry) */
-.void-run-controls button {
-  min-height: 38px;
-  padding: 0.32rem 0.75rem;
-  font-size: 0.76rem;
-  font-weight: 600;
-  letter-spacing: 0.05em;
-  background:
-    linear-gradient(180deg, #1c2330 0%, #0e1219 100%);
+.void-hud-bar {
+  position: relative;
+  width: 280px;
+  max-width: 65vw;
+  height: 14px;
+  background: rgba(10, 14, 20, 0.85);
   border: 1px solid #38465e;
-  border-top-color: #526585;
-  color: #dce4f0;
   border-radius: 2px;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.9), 0 0 6px rgba(0, 0, 0, 0.8);
+}
+
+.void-hud-bar-fill {
+  height: 100%;
+  width: 100%;
+  background: linear-gradient(90deg, #ff5500, #ffaa00);
+  box-shadow: 0 0 8px rgba(255, 148, 0, 0.85);
+  transition: width 0.2s ease;
+}
+
+.void-hud-bar-label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: 0.05em;
+  text-shadow: 0 0 4px #000, 0 1px 2px #000;
+}
+
+.void-hud-stats {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: rgba(6, 9, 14, 0.75);
+  padding: 0.15rem 0.6rem;
+  border-radius: 12px;
+  border: 1px solid rgba(56, 70, 94, 0.5);
+  backdrop-filter: blur(4px);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.8);
+}
+
+.void-hud-pill {
+  font-size: 0.68rem;
+  color: #9cb1cb;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+.void-hud-pill b {
+  color: #ff9d00;
+  font-weight: 700;
+  text-shadow: 0 0 6px rgba(255, 157, 0, 0.8);
+}
+
+/* Top Right Speed & Pause Controls */
+.void-hud-top-right {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.75rem;
+}
+
+.void-hud-top-right .void-run-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.void-hud-top-right .void-run-controls button {
+  min-height: 28px;
+  padding: 0.2rem 0.55rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  background: rgba(15, 20, 28, 0.88);
+  border: 1px solid #3c4b63;
+  color: #dce4f0;
+  border-radius: 3px;
   cursor: pointer;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.8);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.8);
+  backdrop-filter: blur(4px);
   transition: all 0.15s ease;
 }
 
-.void-run-controls button:hover {
+.void-hud-top-right .void-run-controls button:hover {
   border-color: var(--void-neon-orange);
   color: #fff;
   box-shadow: 0 0 8px rgba(255, 119, 0, 0.4);
 }
 
-.void-run-controls button:active {
-  transform: translateY(1px);
+/* Bottom Floating Dock Tray */
+.void-hud-bottom {
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+  padding-bottom: 0.65rem;
 }
 
-/* Palette Card Buttons: Sleek Gunmetal Plates with Neon Orange Numbers */
+.void-hud-tray {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.55rem;
+  background: rgba(10, 14, 20, 0.9);
+  border: 1px solid #334157;
+  border-top: 1px solid #ff7700;
+  border-radius: 4px;
+  box-shadow:
+    0 0 12px rgba(0, 0, 0, 0.95),
+    0 0 8px rgba(255, 119, 0, 0.25);
+  backdrop-filter: blur(6px);
+  max-width: 95vw;
+  overflow-x: auto;
+}
+
+.void-hud-tray-divider {
+  width: 1px;
+  height: 28px;
+  background: linear-gradient(180deg, transparent, #4a5c7a, transparent);
+  margin: 0 0.15rem;
+  flex-shrink: 0;
+}
+
+.void-palette,
+.void-strikes {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-wrap: nowrap;
+}
+
+/* Minimal Sleek Palette Buttons */
 .void-pal-btn {
   position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  min-width: 4.1rem;
-  min-height: 46px;
-  padding: 0.25rem 0.45rem;
+  min-width: 3.4rem;
+  height: 42px;
+  padding: 0.18rem 0.35rem;
   background:
-    linear-gradient(180deg, #19202c 0%, #0d1118 70%, #07090e 100%);
-  border: 1px solid #334057;
-  border-top-color: #4b5d7d;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.08),
-    0 2px 4px rgba(0, 0, 0, 0.85);
+    linear-gradient(180deg, #181f2b 0%, #0d1118 100%);
+  border: 1px solid #2e3a4e;
+  border-radius: 3px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
   color: #dce4f0;
   cursor: pointer;
   font-family: inherit;
-  font-size: 0.72rem;
-  border-radius: 2px;
-  transition: all 0.15s ease;
+  font-size: 0.68rem;
+  transition: all 0.12s ease;
+  flex-shrink: 0;
 }
 
 .void-pal-btn:hover:not(:disabled) {
   border-color: var(--void-neon-orange);
-  background:
-    linear-gradient(180deg, #222c3c 0%, #121721 100%);
-  box-shadow:
-    0 0 8px rgba(255, 119, 0, 0.35),
-    inset 0 1px 0 rgba(255, 255, 255, 0.15);
+  background: linear-gradient(180deg, #222b3b 0%, #121722 100%);
+  box-shadow: 0 0 6px rgba(255, 119, 0, 0.35);
 }
 
 .void-pal-btn b {
-  font-size: 0.72rem;
-  color: #f0f4f8;
-  line-height: 1.15;
-  letter-spacing: 0.04em;
-  margin-top: 2px;
+  font-size: 0.66rem;
+  color: #e2eaf4;
+  line-height: 1.1;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
 }
 
-/* Orange Neon Numbers */
 .void-pal-btn small {
-  font-size: 0.65rem;
+  font-size: 0.62rem;
   font-weight: 700;
   color: #ff9d00;
-  line-height: 1.15;
-  letter-spacing: 0.05em;
-  text-shadow: 0 0 6px rgba(255, 157, 0, 0.85);
+  line-height: 1.1;
+  letter-spacing: 0.04em;
+  text-shadow: 0 0 5px rgba(255, 157, 0, 0.85);
+  white-space: nowrap;
 }
 
 .void-pal-btn.selected {
   border-color: var(--void-neon-orange);
-  border-top-color: #ffb833;
   box-shadow:
     var(--void-glow-orange-intense),
     0 2px 8px rgba(0, 0, 0, 0.9);
-  background:
-    linear-gradient(180deg, #2a1f14 0%, #17110c 100%);
+  background: linear-gradient(180deg, #2c1f14 0%, #17100b 100%);
+}
+
+.void-pal-btn.selected b {
+  color: #fff;
+}
+
+.void-pal-btn--strike {
+  border-color: #4b366e;
+  background: linear-gradient(180deg, #1b1429 0%, #0d0a14 100%);
+}
+
+.void-pal-btn--strike:hover:not(:disabled) {
+  border-color: var(--void-neon-purple);
+  box-shadow: 0 0 6px rgba(192, 64, 255, 0.4);
+}
+
+.void-pal-btn--strike.selected {
+  border-color: var(--void-neon-cyan);
+  box-shadow:
+    var(--void-glow-cyan),
+    inset 0 0 6px rgba(0, 229, 255, 0.35);
+  background: linear-gradient(180deg, #132433 0%, #0a131b 100%);
+}
+
+.void-pal-btn--strike small {
+  color: #38e5ff;
+  text-shadow: 0 0 5px rgba(56, 229, 255, 0.85);
+}
+
+.void-pal-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  filter: grayscale(0.5);
+}
+
+.void-card-icon {
+  width: 18px;
+  height: 18px;
+  image-rendering: pixelated;
+  margin-bottom: 1px;
 }
 
 .void-pal-btn.selected b {
