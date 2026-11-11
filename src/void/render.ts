@@ -18,6 +18,13 @@
 
 import { dist } from "../exact.ts";
 import { paintVoidLedge } from "./ledge.ts";
+import { computeOrganismContour, computeNodeContour } from "./contour.ts";
+import {
+  generateWispsForPortals,
+  computeVoidInterior,
+  paintVoidInterior,
+  type SeededWisp,
+} from "./interior.ts";
 import { pixelPainter } from "./pixel-painter.ts";
 import { Loupe } from "../defend/loupe.ts";
 import { CHUNK_SIZE, CORRUPTION_REACH, PIXEL_AREA, pixels } from "./config.ts";
@@ -264,6 +271,10 @@ export class VoidRenderer {
   private cycles: TronCycle[] = [];
   private corridorsWorld: VoidWorld | null = null;
   private lastTimeMs = 0;
+
+  // Cached seeded spiral wisps for living Void interior
+  private interiorWisps: SeededWisp[] = [];
+  private wispsWorld: VoidWorld | null = null;
 
   /** Camera state: `s` = zoom multiplier (1 = fit board), `x, y` = canvas pixel pan. */
   readonly cam = { s: 1, x: 0, y: 0 };
@@ -1099,12 +1110,26 @@ export class VoidRenderer {
 
     lap("portals");
 
-    // Exposed strata and undercuts sit in front of the nebula, below the ground lip.
+    // Living, moving Void interior: inward-flowing spiral wisps & traveling bands
+    if (this.wispsWorld !== world) {
+      this.wispsWorld = world;
+      this.interiorWisps = generateWispsForPortals(world);
+    }
+    const interiorWisps = computeVoidInterior(world, this.interiorWisps, animTime, this.reduceEffects);
+    paintVoidInterior(c, interiorWisps);
+    lap("interior");
+
+    // Exposed strata and undercuts sit in front of the nebula and interior wisps, below the ground lip.
     paintVoidLedge(c, world, voidField.frontierCells);
     lap("ledge");
 
-    // 5. Draw crystalline Void Nodes (Phase 6+ infantry targets)
+    // 5. Draw crystalline Void Nodes (Phase 6+ infantry targets) with organic nebula contours
     for (const node of voidField.nodes) {
+      const contour = computeNodeContour(node, animTime, this.reduceEffects);
+      for (const pt of contour) {
+        c.fillStyle = pt.color;
+        c.fillRect(pt.x, pt.y, 1, 1);
+      }
       c.fillStyle = "#59127a";
       c.fillRect(node.x - 1.2, node.y - 1.2, 2.4, 2.4);
       c.fillStyle = "#e056fd";
@@ -1217,8 +1242,15 @@ export class VoidRenderer {
       }
     }
 
-    // 10. Draw cosmic Void organisms
+    // 10. Draw cosmic Void organisms with nebula contours
     for (const o of combat.organisms) {
+      // Nebula-colored organic contour around organism silhouette
+      const contour = computeOrganismContour(o, animTime, this.reduceEffects);
+      for (const pt of contour) {
+        c.fillStyle = pt.color;
+        c.fillRect(pt.x, pt.y, 1, 1);
+      }
+
       if (o.trail) {
         c.fillStyle = "rgba(195, 92, 255, 0.55)";
         for (const pt of o.trail) {

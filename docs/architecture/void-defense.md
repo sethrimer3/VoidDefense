@@ -19,6 +19,8 @@ Void Defense is built as a clean, isolated namespace (`src/void/`) alongside the
 | `src/void/tech/tech-ui.ts` | `VoidTechTreeView`: wraps `UpgradeGraph` (`spatialCulling: true` and `setSecondaryEdges`) and `MagicCircle` for the global technology screen. |
 | `src/void/operations/scene.ts` | `ResistanceOperationsView`: cosmetic ambient Engineering Bay (enormous evolving turret prototype + 1x2 welders) and Research Lab (captured Void nebula chambers + 1x2 researchers) with zero offline/idle resource farming. |
 | `src/void/ledge.ts` | Cosmetic exposed strata, irregular undersides and narrow side faces projected into existing Void cells below the terrain edge. |
+| `src/void/contour.ts` | Nebula-colored organic enemy contours (`computeOrganismContour`, `computeNodeContour`): thin violet/magenta boundary with cyan highlights driven by classic 2D value noise. |
+| `src/void/interior.ts` | Living Void interior (`computeVoidInterior`, `paintVoidInterior`): seeded inward-flowing logarithmic spiral wisps and traveling brightness/color bands occluded behind ledges. |
 | `src/void/pixel-painter.ts` | Hard-edged world-pixel rectangle, line, polygon, circle and ellipse rasterization for moving objects and effects. |
 | `src/void/render.ts` & `ui.ts` | `VoidRenderer` (dirty-chunk offscreen layer + multi-scale LOD + `Loupe` integration) and `VoidApp` shell. See "Rendering the concept composition" below. |
 | `src/void/save.ts` & `main.ts` | Defensive `voiddefense.v1` persistence and isolated bootstrap entrypoint (never invokes `MinePage`, `LibraryPage`, or `away.ts`). Classic TowerDefense remains accessible via `?classic=1`. |
@@ -100,3 +102,27 @@ the same static geometry. All face details are whole world pixels.
 material palettes and simulation isolation. `node tests/void-ledge.mjs` checks the
 real city's scene-layer visibility after portal compositing, reduced effects and
 desktop/phone screenshots in `test-results/void-ledge/` (needs the dev server).
+
+## Living Void interior and enemy contours
+
+`src/void/contour.ts` paints thin 1-pixel organic silhouettes for cosmic Void organisms
+(Nebula Worms, Constellation Spiders, Void Blooms, Nebula Queens, Honeycomb Crystals,
+Nexus Crystals, and Void Bees) and crystalline Void Nodes. The contour samples the
+classic portal noise tile (`portalNoiseTile()`, verified as smooth 2D cubic Value
+Noise with ridged multifractal octaves rather than gradient Perlin noise). Noise
+coordinates evolve slowly across space and time to produce shifting violet/magenta
+boundaries with occasional cyan highlights while preserving crisp pixel-art silhouettes.
+
+`src/void/interior.ts` renders dynamic inward-flowing spiral wisps and traveling
+color/brightness waves across active anomaly regions. The motion uses pre-seeded
+spiral streams accelerated non-linearly toward the event horizon, strictly confined
+to `CellMaterial.VOID` cells and rendered behind the exposed earth/rock ledges.
+Both systems adhere strictly to the 1 cell = 1 world pixel lattice, respect
+Reduce Motion / Reduced Effects by switching to stable, static visuals, and maintain
+complete simulation isolation.
+
+Validation: `tests/void-visuals.test.ts` tests noise algorithm verification, thin
+contour silhouettes, color mapping, living wisp flows, clipping, and simulation
+isolation. `node tests/void-visuals.mjs` verifies browser rendering, ledge occlusion,
+black hole core preservation, reduced motion stability, and captures screenshots
+and frame recordings in `test-results/void-visuals/`.

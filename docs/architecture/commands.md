@@ -3,6 +3,7 @@
 Per-feature browser checks (`.mjs`, need `npm run dev` running unless noted), focused Node tests, benchmarks and tools. Moved from `AGENTS.md`; the topic docs in this folder name the checks for each feature too.
 
 ```sh
+node tests/void-visuals.mjs # Nebula-colored enemy contours, living Void interior wisps, ledge occlusion, reduced effects (needs dev server)
 node tests/void-ledge.mjs # Exposed earth/rock cutaways, Void-space clipping, reduced effects and desktop/phone close-ups (needs dev server)
 node tests/void-crisp.mjs # Void native pixel art, non-antialiased shapes, close zoom and camera input at desktop/phone DPR (needs dev server)
 node tests/void-pixels.mjs # Void Defense: one raster pixel per simulation cell, independent destruction, desktop/phone camera hit tests (needs dev server)
