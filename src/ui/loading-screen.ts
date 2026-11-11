@@ -2,17 +2,15 @@
  * Fully self-contained: zero dependencies on retired medieval game systems.
  * Never consumes a game random stream or changes player state. */
 
-import { BRICKS, W, TOP, COURSE, paintBrick, paintBrickBed } from "./brick-wall.ts";
+import { BAR_WIDTH, BAR_HEIGHT, paintLoadingBar } from "./farmland-bar.ts";
 
-const DROP = 16, BRICK_MS = 90, SETTLE_MS = 100;
-const ORDER = [...BRICKS].sort((a, b) => b.y - a.y || a.x - b.x);
-const target = (ready: boolean) => ready ? ORDER.length : ORDER.length - 1;
-const HANDOFF_MS = ORDER.length * BRICK_MS + SETTLE_MS + 1500;
+const LOAD_DURATION_MS = 1200;
+const SETTLE_MS = 150;
+const HANDOFF_MS = LOAD_DURATION_MS + SETTLE_MS + 1500;
 
 export class LoadingScreen {
   private readonly stones: HTMLCanvasElement;
-  private readonly torch: HTMLCanvasElement;
-  private readonly bricks: HTMLCanvasElement;
+  private readonly bar: HTMLCanvasElement;
   private last = performance.now();
   private elapsed = 0;
   private frame = 0;
@@ -22,11 +20,10 @@ export class LoadingScreen {
 
   constructor(private root: HTMLElement, private reduced: () => boolean) {
     this.stones = root.querySelector<HTMLCanvasElement>(".loading-stones")!;
-    this.torch = root.querySelector<HTMLCanvasElement>(".loading-torch")!;
-    this.bricks = root.querySelector<HTMLCanvasElement>(".loading-bricks")!;
-    if (this.bricks) {
-      this.bricks.width = W;
-      this.bricks.height = DROP + TOP + COURSE * 2 + 1;
+    this.bar = root.querySelector<HTMLCanvasElement>(".loading-bar")!;
+    if (this.bar) {
+      this.bar.width = BAR_WIDTH;
+      this.bar.height = BAR_HEIGHT;
     }
     this.fitCanvases();
     this.draw();
@@ -41,10 +38,6 @@ export class LoadingScreen {
       this.stones.width = w;
       this.stones.height = h;
     }
-    if (this.torch) {
-      this.torch.width = 33;
-      this.torch.height = 72;
-    }
   }
 
   private draw = () => {
@@ -55,7 +48,7 @@ export class LoadingScreen {
       if (!this.paintFailed) console.error("Loading screen paint failed", error);
       this.paintFailed = true;
     }
-    if (this.ready && (this.reduced() || this.elapsed >= ORDER.length * BRICK_MS + SETTLE_MS)) {
+    if (this.ready && (this.reduced() || this.elapsed >= LOAD_DURATION_MS + SETTLE_MS)) {
       this.finish?.();
       return;
     }
@@ -66,74 +59,34 @@ export class LoadingScreen {
     const now = performance.now(), reduced = this.reduced();
     this.fitCanvases();
 
-    // 1. Paint background stones / vignette
+    // 1. Paint background cosmic void / vignette
     if (this.stones) {
       const c = this.stones.getContext("2d");
       if (c) {
         const w = this.stones.width, h = this.stones.height;
         c.clearRect(0, 0, w, h);
-        c.fillStyle = "#121110";
+        c.fillStyle = "#0c0a09";
         c.fillRect(0, 0, w, h);
 
-        // Torch glow / flicker
-        const flicker = reduced ? 0.8 : 0.75 + 0.1 * Math.sin(now * 0.007) + 0.05 * Math.cos(now * 0.019);
-        const grad = c.createRadialGradient(w * 0.12, h * 0.35, 10, w * 0.12, h * 0.35, Math.max(w, h) * 0.85);
-        grad.addColorStop(0, `rgba(255, 160, 50, ${0.28 * flicker})`);
-        grad.addColorStop(0.3, `rgba(180, 80, 20, ${0.12 * flicker})`);
-        grad.addColorStop(1, "rgba(0, 0, 0, 0.75)");
+        // Cosmic nebula vignette
+        const pulse = reduced ? 0.8 : 0.75 + 0.08 * Math.sin(now * 0.002);
+        const grad = c.createRadialGradient(w * 0.5, h * 0.5, 10, w * 0.5, h * 0.5, Math.max(w, h) * 0.85);
+        grad.addColorStop(0, `rgba(45, 10, 65, ${0.45 * pulse})`);
+        grad.addColorStop(0.4, `rgba(18, 5, 30, ${0.3 * pulse})`);
+        grad.addColorStop(1, "rgba(5, 2, 8, 0.92)");
         c.fillStyle = grad;
         c.fillRect(0, 0, w, h);
       }
     }
 
-    // 2. Paint torch sconce & flame
-    if (this.torch) {
-      const c = this.torch.getContext("2d");
+    // 2. Paint farmland void-eaten progress bar
+    if (this.bar) {
+      const progress = reduced
+        ? (this.ready ? 1.0 : 0.9)
+        : Math.min(this.ready ? 1.0 : 0.92, this.elapsed / LOAD_DURATION_MS);
+      const c = this.bar.getContext("2d");
       if (c) {
-        c.clearRect(0, 0, this.torch.width, this.torch.height);
-        // Bracket
-        c.fillStyle = "#2c2824";
-        c.fillRect(14, 30, 5, 32);
-        c.fillStyle = "#3d3732";
-        c.fillRect(10, 24, 13, 6);
-
-        // Flame
-        const flameH = reduced ? 18 : 16 + 4 * Math.sin(now * 0.012);
-        const flameW = reduced ? 10 : 9 + 2 * Math.cos(now * 0.015);
-        c.fillStyle = "#ff5500";
-        c.beginPath();
-        c.ellipse(16.5, 20, flameW / 2, flameH / 2, 0, 0, Math.PI * 2);
-        c.fill();
-
-        c.fillStyle = "#ffcc00";
-        c.beginPath();
-        c.ellipse(16.5, 21, flameW / 3, flameH / 3, 0, 0, Math.PI * 2);
-        c.fill();
-
-        c.fillStyle = "#ffffff";
-        c.beginPath();
-        c.ellipse(16.5, 22, flameW / 5, flameH / 5, 0, 0, Math.PI * 2);
-        c.fill();
-      }
-    }
-
-    // 3. Paint brick progress bar
-    if (this.bricks) {
-      const elapsed = this.elapsed;
-      const laid = reduced ? target(this.ready) : Math.min(target(this.ready), Math.floor(elapsed / BRICK_MS));
-      const c = this.bricks.getContext("2d");
-      if (c) {
-        c.clearRect(0, 0, this.bricks.width, this.bricks.height);
-        c.save();
-        c.translate(0, DROP);
-        paintBrickBed(c);
-        for (let i = 0; i < laid; i++) paintBrick(c, ORDER[i]);
-        if (!reduced && laid < target(this.ready)) {
-          const fall = (elapsed % BRICK_MS) / BRICK_MS;
-          const b = ORDER[laid];
-          paintBrick(c, { ...b, y: b.y - Math.round((1 - fall * fall) * (DROP + b.y)) });
-        }
-        c.restore();
+        paintLoadingBar(c, progress, now);
       }
     }
   }
@@ -142,7 +95,7 @@ export class LoadingScreen {
     const time = performance.now();
     this.elapsed += Math.min(50, time - this.last);
     this.last = time;
-    if (!this.ready) this.elapsed = Math.min(this.elapsed, target(false) * BRICK_MS);
+    if (!this.ready) this.elapsed = Math.min(this.elapsed, LOAD_DURATION_MS * 0.92);
   }
 
   complete(): Promise<void> {
@@ -178,7 +131,7 @@ export class LoadingScreen {
     this.root.setAttribute("aria-label", "Unable to load the game. Try again.");
     const label = this.root.querySelector<HTMLElement>(".loading-label");
     if (label) label.textContent = "Unable to load game";
-    if (this.bricks) this.bricks.hidden = true;
+    if (this.bar) this.bar.hidden = true;
     this.showRetry();
   }
 

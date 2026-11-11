@@ -5,7 +5,7 @@ Void Defense UI architecture, sole-game bootstrap, HUD controls, audio, profile,
 ## Sole-Game Bootstrap & Loading Screen
 
 - **Entry Point:** `index.html` loads `src/boot.ts`.
-- **Loading Screen (`src/ui/loading-screen.ts`):** Lightweight, self-contained canvas animation showing a stone backdrop, animated torch sconce, sequenced loading dots, and falling brick health meter. Automatically detects Reduced Motion preferences from localStorage or media queries.
+- **Loading Screen (`src/ui/loading-screen.ts`):** Lightweight, self-contained canvas animation showing a cosmic nebula backdrop, sequenced loading dots, and a farmland loading bar progressively consumed from the left by the cosmic void (`src/ui/farmland-bar.ts`). Automatically detects Reduced Motion preferences from localStorage or media queries.
 - **Boot Guard (`src/ui/boot-guard.ts`):** Ensures resilient startup with strict timeout protections:
   - Font loading completes within 3 seconds or falls back to system fonts.
   - The loading screen automatically uncovers the game upon initialization.
