@@ -28,9 +28,11 @@ Cosmic organisms (such as the Queen Bee, Bee Swarms, Nebula Worms, and Constella
 
 ## Living Void Interior
 
-`src/void/interior.ts` renders the living dynamics inside the Void field:
-- Bounded inward-flowing spiral wisps and traveling brightness bands sweep toward the Void's gravitational center.
-- Wisps are occluded by intact ground and exposed subterranean strata.
+`src/void/interior.ts` renders the living fluid dynamics inside the Void field:
+- Continuous vortex streamlines driven by domain-warped fractal Brownian motion (fBM) with smooth cubic Hermite value noise and Keplerian differential rotation.
+- Seeded inward-flowing logarithmic spiral wisps modulated by 2D fluid curl advection.
+- Radial color gradients transitioning from brilliant cyan and hot magenta near the photon horizon to rich violet and deep cosmos tones in the outer accretion reaches.
+- Wisps and fluid streams are occluded by intact ground and exposed subterranean strata.
 - Inward motion halts under Reduced Motion settings, freezing the wisps in place without visual artifacts.
 
 ## Tech DAG & Magic Circles

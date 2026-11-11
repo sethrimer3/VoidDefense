@@ -111,13 +111,14 @@ Noise with ridged multifractal octaves rather than gradient Perlin noise). Noise
 coordinates evolve slowly across space and time to produce shifting violet/magenta
 boundaries with occasional cyan highlights while preserving crisp pixel-art silhouettes.
 
-`src/void/interior.ts` renders dynamic inward-flowing spiral wisps and traveling
-color/brightness waves across active anomaly regions. The motion uses pre-seeded
-spiral streams accelerated non-linearly toward the event horizon, strictly confined
-to `CellMaterial.VOID` cells and rendered behind the exposed earth/rock ledges.
-Both systems adhere strictly to the 1 cell = 1 world pixel lattice, respect
-Reduce Motion / Reduced Effects by switching to stable, static visuals, and maintain
-complete simulation isolation.
+`src/void/interior.ts` renders dynamic fluid vortex dynamics and inward-flowing
+spiral wisps across active anomaly regions. The motion uses continuous streamlines
+driven by domain-warped fractal Brownian motion (fBM) with Keplerian differential
+rotation, paired with pre-seeded spiral streams accelerated non-linearly toward the
+event horizon, strictly confined to `CellMaterial.VOID` cells and rendered behind
+the exposed earth/rock ledges. Both systems adhere strictly to the 1 cell = 1 world
+pixel lattice, respect Reduce Motion / Reduced Effects by switching to stable, static
+visuals, and maintain complete simulation isolation.
 
 Validation: `tests/void-visuals.test.ts` tests noise algorithm verification, thin
 contour silhouettes, color mapping, living wisp flows, clipping, and simulation

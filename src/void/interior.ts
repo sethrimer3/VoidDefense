@@ -22,20 +22,41 @@ export type WispPixel = {
   color: string;
 };
 
-// Colors for traveling brightness/color bands and inward spiral wisps
-const WISP_RAMP = [
-  "#2f176f", // Deep violet wisp tail
-  "#4a1f93", // Violet wisp body
-  "#6e2bb4", // Rich purple
-  "#9a36cf", // Vibrant magenta
-  "#c746dd", // Hot magenta
-  "#e066ff", // Bright crest
-  "#7afcff", // Cyan wisp sparkle
-  "#d8fbff", // White-cyan core
-] as const;
+// Smooth cubic Hermite interpolation
+function smooth(t: number): number {
+  return t * t * (3 - 2 * t);
+}
+
+// 2D smooth value noise with continuous spatial coordinates
+function fluidNoise2D(x: number, y: number): number {
+  const x0 = Math.floor(x);
+  const y0 = Math.floor(y);
+  const fx = smooth(x - x0);
+  const fy = smooth(y - y0);
+
+  const h00 = hash01(1337, x0, y0);
+  const h10 = hash01(1337, x0 + 1, y0);
+  const h01 = hash01(1337, x0, y0 + 1);
+  const h11 = hash01(1337, x0 + 1, y0 + 1);
+
+  return (h00 * (1 - fx) + h10 * fx) * (1 - fy) + (h01 * (1 - fx) + h11 * fx) * fy;
+}
+
+// Fractal Brownian Motion (fBM) with 3 octaves for fluid density & curl
+function fluidFbm(x: number, y: number): number {
+  let sum = 0;
+  let amp = 0.55;
+  let freq = 1.0;
+  for (let i = 0; i < 3; i++) {
+    sum += fluidNoise2D(x * freq, y * freq) * amp;
+    freq *= 2.02;
+    amp *= 0.5;
+  }
+  return sum;
+}
 
 /** Pre-computed seeded spiral wisp parameters for each portal.
- * Kept bounded (e.g. 32 streams per portal) to avoid per-frame cell loops.
+ * Kept bounded to avoid per-frame cell loops.
  */
 export interface SeededWisp {
   id: number;
@@ -76,6 +97,11 @@ export function generateWispsForPortals(world: VoidInteriorWorld): SeededWisp[] 
   return wisps;
 }
 
+/** Palette ramps for coherent cosmic fluid waves */
+const FLUID_PALETTE_DEEP = ["#32115a", "#4a187a", "#631fa3", "#7e28cf"] as const;
+const FLUID_PALETTE_MID = ["#7a22bb", "#9d2edb", "#c73ef5", "#df56ff"] as const;
+const FLUID_PALETTE_HIGH = ["#ff5ee8", "#7afcff", "#b8fdff", "#d8fbff"] as const;
+
 /** Computes the living Void interior pixels for a given frame.
  * All pixels are clamped strictly inside CellMaterial.VOID, outside black-hole cores.
  */
@@ -99,35 +125,48 @@ export function computeVoidInterior(
     const coreR = Math.max(3.6, p.radius * 0.42);
     const maxReach = p.radius * 2.8;
 
-    // 1. Traveling concentric brightness/color waves (expanding/contracting ripple bands)
-    const bandCount = 4;
-    for (let b = 0; b < bandCount; b++) {
-      // Evolving traveling wave phase
-      const wavePhase = (animTime * 0.22 + b / bandCount) % 1.0;
-      // Inward traveling band radius
-      const r = coreR + 1.2 + (1.0 - wavePhase) * (maxReach - coreR - 1.2);
-      const segments = Math.max(16, Math.floor(r * 2.8));
-      
-      // Gradually vary the band shape with multi-frequency modulation so it feels evolving
-      const wobbleSpeed = animTime * 0.45;
+    // 1. Continuous organic vortex streamlines: fluid curl advection
+    const streamlineCount = 5;
+    for (let b = 0; b < streamlineCount; b++) {
+      // Continuous inward phase
+      const wavePhase = (animTime * 0.14 + b / streamlineCount) % 1.0;
+      const baseR = coreR + 1.2 + (1.0 - wavePhase) * (maxReach - coreR - 1.2);
+      const segments = Math.max(20, Math.floor(baseR * 3.2));
+
       for (let s = 0; s < segments; s++) {
         const theta = (s / segments) * Math.PI * 2;
-        // Radial perturbation gives organic, fluid contours to the traveling band
-        const dr = Math.sin(theta * 3 + wobbleSpeed + b) * 0.9 + Math.cos(theta * 5 - wobbleSpeed * 0.7) * 0.5;
-        const currentR = r + dr;
+
+        // Fluid noise domain warping: sample fbm along logarithmic spiral coordinates
+        const logR = Math.log(baseR + 1.0);
+        const spiralU = (theta * 2.0 + logR * 3.5 - animTime * 0.45) * 0.4;
+        const spiralV = (baseR * 0.15 + animTime * 0.25) * 0.4;
+        const fluidPerturb = fluidFbm(spiralU + b * 2.1, spiralV) * 2.2 - 1.1;
+
+        const currentR = baseR + fluidPerturb;
         if (currentR <= coreR + 0.8 || currentR >= maxReach) continue;
 
-        const px = Math.floor(p.x + Math.cos(theta) * currentR);
-        const py = Math.floor(p.y + Math.sin(theta) * currentR);
+        // Smooth vortex rotation with Keplerian-like differential rotation (faster near core)
+        const swirlOffset = (animTime * (1.6 / (0.8 + currentR * 0.12))) + Math.sin(theta * 3 + animTime * 0.5) * 0.15;
+        const finalTheta = theta + swirlOffset;
+
+        const px = Math.floor(p.x + Math.cos(finalTheta) * currentR);
+        const py = Math.floor(p.y + Math.sin(finalTheta) * currentR);
 
         if (px < 0 || py < 0 || px >= w || py >= h) continue;
         const idx = py * w + px;
         if (world.material[idx] !== CellMaterial.VOID) continue;
         if (occupied.has(idx)) continue;
 
-        // Color shifts from magenta on the rim to cyan on harmonic peaks
-        const colorIdx = (b + Math.floor(theta * 2 + animTime * 0.6)) % 4;
-        const col = colorIdx === 0 ? "#7a22bb" : colorIdx === 1 ? "#ad32d9" : colorIdx === 2 ? "#e052eb" : "#5ce1ff";
+        // Color mapped along radial gradient: cyan crests near core, vibrant magenta mid, deep purple outer
+        const normDist = (currentR - coreR) / (maxReach - coreR);
+        let col: string;
+        if (normDist < 0.28 && (s + b) % 3 === 0) {
+          col = FLUID_PALETTE_HIGH[(s + b) % FLUID_PALETTE_HIGH.length];
+        } else if (normDist < 0.65) {
+          col = FLUID_PALETTE_MID[(s + b) % FLUID_PALETTE_MID.length];
+        } else {
+          col = FLUID_PALETTE_DEEP[(s + b) % FLUID_PALETTE_DEEP.length];
+        }
 
         occupied.add(idx);
         pixels.push({ x: px, y: py, color: col });
@@ -149,9 +188,11 @@ export function computeVoidInterior(
     const progress = 1.0 - cycle; // 1 (far outside) to 0 (core horizon)
     const smoothR = coreR + 1.2 + Math.pow(progress, 1.35) * travelRange;
 
-    // Logarithmic spiral angle + dynamic swirling evolution
-    const swirlEvolve = Math.sin(animTime * 0.3 + wisp.id) * 0.4;
-    const baseAngle = wisp.armAngleOffset + Math.log(smoothR + 1.0) * wisp.spiralTightness + animTime * 0.4 + swirlEvolve;
+    // Fluid-advected swirl: combine logarithmic spiral angle with smooth continuous noise
+    const curlX = Math.cos(wisp.armAngleOffset) * (smoothR * 0.1);
+    const curlY = Math.sin(wisp.armAngleOffset) * (smoothR * 0.1);
+    const fluidCurl = (fluidNoise2D(curlX + animTime * 0.15, curlY - animTime * 0.15) - 0.5) * 0.6;
+    const baseAngle = wisp.armAngleOffset + Math.log(smoothR + 1.0) * wisp.spiralTightness + animTime * 0.35 + fluidCurl;
 
     // Draw wisp head and trailing segments
     for (let seg = 0; seg < wisp.length; seg++) {
@@ -197,3 +238,4 @@ export function paintVoidInterior(c: Painter, wisps: readonly WispPixel[]): void
     c.fillRect(p.x, p.y, 1, 1);
   }
 }
+
