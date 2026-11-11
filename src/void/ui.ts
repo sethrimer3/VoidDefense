@@ -780,9 +780,9 @@ export class VoidApp {
     insp.innerHTML = `
       <strong>${spec.name} #${t.uid}</strong>
       <span>HP: ${Math.ceil(t.hp)}/${t.maxHp}</span>
-      <button type="button" data-insp-reticle>Set Focus Reticle</button>
+      <button type="button" data-insp-reticle class="secondary-btn">Set Focus Reticle</button>
       <button type="button" data-insp-sell class="danger-btn" ${canModify ? "" : "disabled"}>Sell (+${refund} SUP)</button>
-      <button type="button" data-insp-close>X</button>
+      <button type="button" data-insp-close class="secondary-btn">X</button>
     `;
     insp.querySelector<HTMLButtonElement>("[data-insp-reticle]")!.onclick = () => {
       this.activeTool = { kind: "setReticle", towerUid: t.uid };
@@ -818,7 +818,7 @@ export class VoidApp {
       }
       <div class="void-outcome-actions">
         <button type="button" class="primary-btn" data-out-retry>Deploy Again</button>
-        <button type="button" data-out-tech>Spend Upgrades in Global Network</button>
+        <button type="button" class="secondary-btn" data-out-tech>Spend Upgrades in Global Network</button>
       </div>
     `;
     banner.querySelector<HTMLButtonElement>("[data-out-retry]")!.onclick = () =>

@@ -38,7 +38,7 @@ export class ResistanceOperationsView {
           <strong>Resistance Operations: Engineering Bay & Void Research Lab</strong>
           <small>Live prototype assembly and containment telemetry. Reflects your unlocked global technologies (cosmetic ambient scene; zero offline/idle farming).</small>
         </div>
-        <button type="button" data-ops-tech>Open Global Tech Network</button>
+        <button type="button" class="secondary-btn" data-ops-tech>Open Global Tech Network</button>
       </header>
       <div class="void-ops-canvas-wrap">
         <canvas class="void-ops-canvas" width="320" height="160"></canvas>

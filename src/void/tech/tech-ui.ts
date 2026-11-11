@@ -62,7 +62,7 @@ export class VoidTechTreeView {
             </select>
           </label>
           <input type="search" data-tech-search placeholder="Search tech..." aria-label="Search technology nodes" />
-          <button type="button" data-tech-fit>Fit View</button>
+          <button type="button" class="secondary-btn" data-tech-fit>Fit View</button>
           <button type="button" data-tech-respec class="danger-btn">Refund All</button>
         </div>
       </header>
@@ -246,12 +246,12 @@ export class VoidTechTreeView {
       <div class="void-card-actions">
         ${
           node.id !== "commandCore" && rank < maxRank
-            ? `<button type="button" data-card-buy ${
+            ? `<button type="button" class="primary-btn" data-card-buy ${
                 inBattle || !met || !canAfford ? "disabled" : ""
               }>Research Rank ${rank + 1} (${nextCost} ${
                 node.currency === "sparks" ? "Sparks" : "Essence"
               })</button>`
-            : `<button type="button" disabled>Max Rank Reached</button>`
+            : `<button type="button" class="secondary-btn" disabled>Max Rank Reached</button>`
         }
         ${
           node.id !== "commandCore" && rank > 0
