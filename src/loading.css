@@ -17,17 +17,6 @@
   height: 100%;
   image-rendering: pixelated;
 }
-.loading-torch {
-  position: absolute;
-  /* Off the left pier's inner side (`--pier` wide, set by hall-art.ts),
-     the backplate over the pier's outline. */
-  left: calc(var(--pier, 36px) - 3px);
-  /* Put the flame, rather than the foot of its bracket, two thirds up. */
-  top: calc(100% / 3 - 22px);
-  width: 33px;
-  height: 72px;
-  image-rendering: pixelated;
-}
 .loading-corner {
   position: absolute;
   right: calc(24px + env(safe-area-inset-right, 0px));
@@ -61,9 +50,9 @@
   0%, 100% { visibility: hidden; }
   75% { visibility: visible; }
 }
-.loading-bricks {
-  width: 111px;
-  height: 84px;
+.loading-bar {
+  width: 160px;
+  height: 24px;
   image-rendering: pixelated;
 }
 .loading-retry {
