@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { decode, defaults, SAVE_KEY } from "../src/save.ts";
 import { pixels, VOID_BALANCE, VOID_SAVE_KEY } from "../src/void/config.ts";
 import { getScenario, SCENARIOS } from "../src/void/maps.ts";
 import { CellMaterial } from "../src/void/model.ts";
@@ -420,7 +419,8 @@ test("8. Live tower placement, Landfall strike, and Build & Watch vs Under Siege
 });
 
 test("9. Save isolation: voiddefense.v1 round-trips cleanly and never touches towerdefense.v1", () => {
-  assert.notEqual(VOID_SAVE_KEY, SAVE_KEY);
+  const LEGACY_SAVE_KEY = "towerdefense.v1";
+  assert.notEqual(VOID_SAVE_KEY, LEGACY_SAVE_KEY);
   const vSave = defaultVoidSave();
   vSave.profile = { name: "Commander Shepard", flag: { base: 15, layers: [] }, mode: "underSiege" };
   recordScenarioResult(vSave.wallet, "tutorialBreach", "underSiege", true, 82.5, 2, 120);
@@ -432,11 +432,6 @@ test("9. Save isolation: voiddefense.v1 round-trips cleanly and never touches to
   assert.equal(restored.wallet.lifetimeEssence, 120);
   assert.equal(restored.wallet.ranks.supplyDrop, 1);
   assert.equal(totalEarnedSparks(restored.wallet), 2);
-
-  // Original TowerDefense save decoder still works independently
-  const tdDefault = defaults();
-  const tdRestored = decode(JSON.stringify(tdDefault));
-  assert.equal(tdRestored.version, tdDefault.version);
 });
 
 test("10. Advanced towers, Wall Serpent trail, Matter Synthesis, and Cosmic Organisms (Honeycomb & Nexus Crystals)", () => {

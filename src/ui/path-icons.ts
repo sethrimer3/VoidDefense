@@ -2,7 +2,19 @@
  * painted in its path's colours (`PathHue`), the evolution's crown in gold.
  * Rows read `o` outline, `d` dark, `m` mid, `l` light, `w` highlight, `.`
  * clear. */
-import type { PathHue, PathIcon } from "../knowledge-paths.ts";
+export type PathIcon =
+  | "flame" | "tongue" | "inferno" | "snowflake" | "shard" | "iceBlock" | "bolt" | "fork" | "thunderhead"
+  | "mail" | "heart" | "cross" | "boot" | "dagger" | "skull" | "crown"
+  | "arrow" | "fireArrow" | "volley" | "eye" | "crosshair" | "gear" | "grape" | "cannonball" | "blast" | "bow" | "leaf"
+  | "spyglass" | "beacon" | "crate" | "fireball" | "embers" | "stake" | "spring"
+  | "bone" | "scales" | "tombstone" | "hand"
+  | "meteor" | "stars" | "crater"
+  | "shards" | "whirl" | "frostShield"
+  | "hammer" | "helm" | "oath"
+  | "hood" | "vial" | "drop"
+  | "cloud" | "wing" | "halo";
+
+export type PathHue = "ember" | "frost" | "storm" | "steel" | "shadow" | "verdant" | "grave";
 
 export const ICON_SIZE = 11;
 

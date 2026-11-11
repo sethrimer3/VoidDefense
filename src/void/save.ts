@@ -120,10 +120,23 @@ export function decodeVoidSave(raw: string | null): VoidSave {
 
 export function loadVoidSave(): VoidSave {
   try {
-    return decodeVoidSave(localStorage.getItem(VOID_SAVE_KEY));
+    const raw = localStorage.getItem(VOID_SAVE_KEY);
+    if (raw) return decodeVoidSave(raw);
+    const legacyRaw = localStorage.getItem("towerdefense.v1");
+    if (legacyRaw) {
+      const legacy = JSON.parse(legacyRaw);
+      const seeded = defaultVoidSave();
+      if (legacy && typeof legacy === "object") {
+        if (legacy.settings) seeded.settings = decodeSettings(legacy.settings);
+        const profile = decodeVoidProfile(legacy.profile);
+        if (profile) seeded.profile = profile;
+        return seeded;
+      }
+    }
   } catch {
     return defaultVoidSave();
   }
+  return defaultVoidSave();
 }
 
 export function persistVoidSave(save: VoidSave): boolean {

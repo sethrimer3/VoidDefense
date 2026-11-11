@@ -167,7 +167,6 @@ export class VoidApp {
     private readonly root: HTMLElement,
     private readonly save: VoidSave,
     private readonly persist: () => void,
-    private readonly onSwitchToClassic?: () => void,
   ) {
     const mode: PlayStyleMode = this.save.profile?.mode ?? "underSiege";
     this.sim = new VoidSim(
@@ -889,11 +888,6 @@ export class VoidApp {
             <label><input type="checkbox" data-set-dev ${this.save.settings.devMode ? "checked" : ""} /> Developer Mode (Unlock All Towers/Strikes & Unlimited Supplies)</label>
           </div>
         </section>
-        ${
-          this.onSwitchToClassic
-            ? `<div class="void-classic-switch"><button type="button" data-open-classic>Switch to Classic Medieval TowerDefense (Legacy Save Intact)</button></div>`
-            : ""
-        }
       </div>
     `;
 
@@ -981,11 +975,6 @@ export class VoidApp {
         }
       }
     });
-
-    const classicBtn = secPage.querySelector<HTMLButtonElement>("[data-open-classic]");
-    if (classicBtn && this.onSwitchToClassic) {
-      classicBtn.onclick = () => this.onSwitchToClassic!();
-    }
   }
 
   private openProfileDialog(firstTime: boolean): void {

@@ -3,12 +3,51 @@
  * painters while presenting all 6 Resistance sectors on one zoomable/pannable
  * screen with multi-parent cross-links and full no-fee respec. */
 
-import { paintIcon, type IconItem } from "../../defend/structure-art.ts";
-import type { PathHue, PathIcon } from "../../knowledge-paths.ts";
 import { MagicCircle } from "../../magic-circle/render.ts";
-import { paintPathIcon } from "../../ui/path-icons.ts";
+import { paintPathIcon, type PathHue, type PathIcon } from "../../ui/path-icons.ts";
 import { UpgradeGraph, type GraphNode } from "../../ui/upgrade-graph.ts";
 import { TECH_BY_ID, TECH_NODES, type TechSector } from "./catalog.ts";
+
+/** Paints a crisp 32x32 Command Core / Keep icon for the root tech node. */
+export function paintCommandCoreIcon(canvas: HTMLCanvasElement): void {
+  const c = canvas.getContext("2d")!;
+  const n = canvas.width;
+  c.clearRect(0, 0, n, n);
+  c.imageSmoothingEnabled = false;
+
+  // Base armored platform
+  c.fillStyle = "#161d29";
+  c.fillRect(2, 2, n - 4, n - 4);
+  c.strokeStyle = "#48586e";
+  c.lineWidth = 1;
+  c.strokeRect(2.5, 2.5, n - 5, n - 5);
+
+  // Outer keep battlements / bastion blocks
+  c.fillStyle = "#3d4b60";
+  c.fillRect(4, 4, 6, 6);
+  c.fillRect(n - 10, 4, 6, 6);
+  c.fillRect(4, n - 10, 6, 6);
+  c.fillRect(n - 10, n - 10, 6, 6);
+
+  // Central Command Core spire
+  c.fillStyle = "#5a6f8c";
+  c.fillRect(9, 9, 14, 14);
+
+  // Core energy emitter (glowing cyan / amber)
+  c.fillStyle = "#0c1420";
+  c.fillRect(12, 12, 8, 8);
+  c.fillStyle = "#48e5ff";
+  c.fillRect(13, 13, 6, 6);
+  c.fillStyle = "#ffffff";
+  c.fillRect(15, 15, 2, 2);
+
+  // Cross reinforcement lines
+  c.fillStyle = "#ffbe3b";
+  c.fillRect(10, 15, 2, 2);
+  c.fillRect(20, 15, 2, 2);
+  c.fillRect(15, 10, 2, 2);
+  c.fillRect(15, 20, 2, 2);
+}
 import {
   allocatedCurrencies,
   availableCurrencies,
@@ -85,7 +124,7 @@ export class VoidTechTreeView {
       },
       paint: (el) => {
         el.querySelectorAll<HTMLCanvasElement>("[data-icon]").forEach((c) =>
-          paintIcon(c, c.dataset.icon as IconItem),
+          paintCommandCoreIcon(c),
         );
         el.querySelectorAll<HTMLCanvasElement>("[data-path-icon]").forEach((c) => {
           const [icon, hue] = c.dataset.pathIcon!.split(":");

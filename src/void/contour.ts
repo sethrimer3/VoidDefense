@@ -8,7 +8,7 @@
  * All coordinates and output pixels adhere to the 1 simulation cell = 1 world pixel
  * discrete integer grid.
  */
-import { portalNoiseTile } from "../defend/portal-noise.ts";
+import { portalNoiseTile } from "./portal-noise.ts";
 import type { VoidOrganism, VoidNode } from "./model.ts";
 
 export type PixelPoint = { x: number; y: number; color: string };

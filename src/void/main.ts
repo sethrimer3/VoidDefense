@@ -28,12 +28,12 @@ function loop(now: number): void {
   rafId = requestAnimationFrame(loop);
 }
 
-export function startVoidGame(onSwitchToClassic?: () => void): void {
+export function startVoidGame(): void {
   fitViewport();
   soundEnabledBy(() => !save.settings.soundOff);
   const root = document.querySelector<HTMLDivElement>("#app")!;
   cancelAnimationFrame(rafId);
-  app = new VoidApp(root, save, store, onSwitchToClassic);
+  app = new VoidApp(root, save, store);
 
   document.addEventListener("visibilitychange", () => app?.resetClockOnVisibility());
   window.addEventListener("pagehide", () => app?.resetClockOnVisibility());

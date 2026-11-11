@@ -13,6 +13,7 @@
  */
 
 import { audioGraph, soundOn } from "../sound.ts";
+import { stream } from "../random.ts";
 
 export class VoidSoundEngine {
   private active = false;
@@ -169,11 +170,12 @@ export class VoidSoundEngine {
     const noiseDuration = 3.0; // 3 second looping buffer
     const bufSize = Math.floor(sampleRate * noiseDuration);
     const noiseBuffer = ctx.createBuffer(2, bufSize, sampleRate);
+    const rand = stream("effects");
     for (let ch = 0; ch < 2; ch++) {
       const data = noiseBuffer.getChannelData(ch);
       let lastOut = 0.0;
       for (let i = 0; i < bufSize; i++) {
-        const white = Math.random() * 2 - 1;
+        const white = rand() * 2 - 1;
         // Brown noise one-pole filter integration for heavy earth-shaking rumble
         lastOut = (lastOut + 0.03 * white) / 1.03;
         data[i] = lastOut * 3.5;

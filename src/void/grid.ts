@@ -2,10 +2,45 @@
  * chunk tracking for Void Defense's metropolitan boards (384x512, 512x768, etc.).
  * Reuses deterministic hashing from `src/defend/grid.ts`. */
 
-import { hash, hash01, ORTHO, rng, type Rect } from "../defend/grid.ts";
 import { CHUNK_SIZE } from "./config.ts";
 
-export { hash, hash01, ORTHO, rng, type Rect };
+export type Rect = { x: number; y: number; w: number; h: number };
+
+export const ORTHO: readonly [number, number][] = [
+  [1, 0],
+  [-1, 0],
+  [0, 1],
+  [0, -1],
+];
+
+/** Stable 32-bit hash of a few integers — used instead of a sequential RNG
+ * stream wherever generation should stay put when unrelated parts of the
+ * city change. */
+export function hash(...n: number[]): number {
+  let h = 0x811c9dc5;
+  for (const v of n) {
+    h = Math.imul(h ^ (v | 0), 0x01000193);
+    h ^= h >>> 13;
+    h = Math.imul(h, 0x5bd1e995);
+    h ^= h >>> 15;
+  }
+  return h >>> 0;
+}
+
+/** `hash` mapped onto [0, 1). */
+export const hash01 = (...n: number[]) => hash(...n) / 4294967296;
+
+/** Small seeded PRNG (mulberry32) for the simulation, where a stream is fine. */
+export function rng(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
 
 export class VoidGrid {
   readonly w: number;

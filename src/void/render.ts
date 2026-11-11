@@ -26,7 +26,7 @@ import {
   type SeededWisp,
 } from "./interior.ts";
 import { pixelPainter } from "./pixel-painter.ts";
-import { Loupe } from "../defend/loupe.ts";
+import { Loupe } from "./loupe.ts";
 import { CHUNK_SIZE, CORRUPTION_REACH, PIXEL_AREA, pixels } from "./config.ts";
 import { hash, hash01 } from "./grid.ts";
 import {
@@ -1280,27 +1280,31 @@ export class VoidRenderer {
         c.fillStyle = "#6ef3ff";
         c.fillRect(o.x - 0.5, o.y - 0.5, 1.0, 1.0);
       } else if (o.kind === "nebulaQueen") {
+        const cx = Math.round(o.x), cy = Math.round(o.y);
         c.fillStyle = "#9d4edd";
-        c.fillRect(o.x - 1.8, o.y - 1.8, 3.6, 3.6);
+        c.fillRect(cx - 2, cy - 2, 4, 4);
         c.fillStyle = "#7afcff";
-        c.fillRect(o.x - 0.9, o.y - 0.9, 1.8, 1.8);
+        c.fillRect(cx - 1, cy - 1, 2, 2);
       } else if (o.kind === "honeycombCrystal") {
+        const cx = Math.round(o.x), cy = Math.round(o.y);
         c.fillStyle = "#c77dff";
-        c.fillRect(o.x - 1.3, o.y - 1.3, 2.6, 2.6);
+        c.fillRect(cx - 1, cy - 1, 3, 3);
         c.fillStyle = "#ff9ebb";
-        c.fillRect(o.x - 0.6, o.y - 0.6, 1.2, 1.2);
+        c.fillRect(cx, cy, 1, 1);
       } else if (o.kind === "nexusCrystal") {
+        const cx = Math.round(o.x), cy = Math.round(o.y);
         c.strokeStyle = "#48cae4";
-        c.lineWidth = 0.4;
-        c.strokeRect(o.x - 1.7, o.y - 1.7, 3.4, 3.4);
+        c.lineWidth = 1;
+        c.strokeRect(cx - 2, cy - 2, 4, 4);
         c.fillStyle = "#7209b7";
-        c.fillRect(o.x - 1.2, o.y - 1.2, 2.4, 2.4);
+        c.fillRect(cx - 1, cy - 1, 2, 2);
         c.fillStyle = "#90e0ef";
-        c.fillRect(o.x - 0.5, o.y - 0.5, 1.0, 1.0);
+        c.fillRect(cx, cy, 1, 1);
       } else {
         // 1-pixel Void bee
+        const cx = Math.round(o.x), cy = Math.round(o.y);
         c.fillStyle = "#e0aaff";
-        c.fillRect(o.x - 0.4, o.y - 0.4, 0.8, 0.8);
+        c.fillRect(cx, cy, 1, 1);
       }
     }
 

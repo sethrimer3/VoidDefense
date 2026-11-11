@@ -83,6 +83,74 @@ test("2. Nebula-colored enemy contours: thin 1-pixel organic boundary preserving
   assert.deepEqual(reduced1, reduced2, "Reduced motion contour must remain static and stable");
 });
 
+test("2b. Cosmic Queen Bee and Bee Swarm organic noise-based outlines", () => {
+  const queen: VoidOrganism = {
+    id: 101,
+    kind: "nebulaQueen",
+    x: 50,
+    y: 60,
+    vx: 0,
+    vy: 0,
+    hp: 400,
+    maxHp: 400,
+    targetX: 50,
+    targetY: 60,
+    cooldown: 0,
+  };
+
+  const bee: VoidOrganism = {
+    id: 102,
+    kind: "voidBee",
+    x: 52,
+    y: 60,
+    vx: 0,
+    vy: 0,
+    hp: 25,
+    maxHp: 25,
+    targetX: 50,
+    targetY: 60,
+    cooldown: 0,
+    parentId: 101,
+  };
+
+  // Queen footprint: 4x4 discrete cells
+  const queenFootprint = organismFootprint(queen);
+  assert.equal(queenFootprint.length, 16, "Queen footprint must be exactly 4x4 = 16 cells");
+  const queenOccupied = new Set(queenFootprint.map((p) => `${p.x},${p.y}`));
+
+  // Queen contour
+  const queenContour = computeOrganismContour(queen, 1.0, false);
+  assert.ok(queenContour.length >= 12, "Queen contour must rim exterior cells");
+  for (const pt of queenContour) {
+    assert.ok(Number.isInteger(pt.x) && Number.isInteger(pt.y), "Coordinates must be discrete world pixels");
+    assert.equal(queenOccupied.has(`${pt.x},${pt.y}`), false, "Contour cannot overlap queen body");
+    assert.match(pt.color, /^#(8425d9|a832e8|df42d1|ff62e2|6ef3ff|d8fbff)$/);
+  }
+
+  // Bee footprint: 1 discrete cell
+  const beeFootprint = organismFootprint(bee);
+  assert.equal(beeFootprint.length, 1, "Bee footprint must be exactly 1 cell");
+  assert.deepEqual(beeFootprint[0], { x: 52, y: 60 });
+
+  // Bee contour: 4-connected surrounding rim (up, down, left, right)
+  const beeContour = computeOrganismContour(bee, 1.0, false);
+  assert.ok(beeContour.length >= 3 && beeContour.length <= 4, "Bee contour must be 1-pixel rim around single cell");
+  for (const pt of beeContour) {
+    assert.ok(Number.isInteger(pt.x) && Number.isInteger(pt.y));
+    assert.notEqual(`${pt.x},${pt.y}`, "52,60", "Bee contour must not overlap bee center");
+    assert.equal(Math.abs(pt.x - 52) + Math.abs(pt.y - 60), 1, "Contour must be immediate orthogonal neighbor");
+  }
+
+  // Reduced motion: stable and deterministic
+  const queenReduced1 = computeOrganismContour(queen, 0, true);
+  const queenReduced2 = computeOrganismContour(queen, 100, true);
+  assert.deepEqual(queenReduced1, queenReduced2, "Queen contour under reduced motion must be static");
+
+  const beeReduced1 = computeOrganismContour(bee, 0, true);
+  const beeReduced2 = computeOrganismContour(bee, 100, true);
+  assert.deepEqual(beeReduced1, beeReduced2, "Bee swarm contour under reduced motion must be static");
+});
+
 test("3. Void Nodes (spires) have thin evolving contours", () => {
   const dummyNode: VoidNode = {
     id: 7,
