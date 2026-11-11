@@ -18,6 +18,7 @@ Void Defense is built as a clean, isolated namespace (`src/void/`) alongside the
 | `src/void/tech/catalog.ts` & `wallet.ts` | Single global technology DAG across 6 sectors, logical `AND`/`OR` prerequisites, cascading 100% refunds, and the shared-per-map Sparks entitlement ledger (`recordScenarioResult`). |
 | `src/void/tech/tech-ui.ts` | `VoidTechTreeView`: wraps `UpgradeGraph` (`spatialCulling: true` and `setSecondaryEdges`) and `MagicCircle` for the global technology screen. |
 | `src/void/operations/scene.ts` | `ResistanceOperationsView`: cosmetic ambient Engineering Bay (enormous evolving turret prototype + 1x2 welders) and Research Lab (captured Void nebula chambers + 1x2 researchers) with zero offline/idle resource farming. |
+| `src/void/ledge.ts` | Cosmetic exposed strata, irregular undersides and narrow side faces projected into existing Void cells below the terrain edge. |
 | `src/void/pixel-painter.ts` | Hard-edged world-pixel rectangle, line, polygon, circle and ellipse rasterization for moving objects and effects. |
 | `src/void/render.ts` & `ui.ts` | `VoidRenderer` (dirty-chunk offscreen layer + multi-scale LOD + `Loupe` integration) and `VoidApp` shell. See "Rendering the concept composition" below. |
 | `src/void/save.ts` & `main.ts` | Defensive `voiddefense.v1` persistence and isolated bootstrap entrypoint (never invokes `MinePage`, `LibraryPage`, or `away.ts`). Classic TowerDefense remains accessible via `?classic=1`. |
@@ -80,3 +81,22 @@ world pixels are the default in both effects modes.
 antialiased fringes for small rectangles, lines, circles and rotated ellipses, whole
 close-zoom device-pixel steps, pan/input agreement and absence of the terrain filter
 on desktop DPR 1 and phone DPR 2. Screenshots go to `test-results/void-crisp/`.
+
+## Exposed ground above the Void
+
+`paintVoidLedge` draws a cutaway after the portal/nebula pass, before structures,
+agents and drifting debris. The slightly elevated view exposes the down-screen face
+most clearly: a broken soil/rock lip, seeded 3–6-pixel strata, jagged dark undercuts,
+a contact shadow and occasional violet-lit lower facets. Narrow darker side cuts
+reinforce thickness without outlining the whole hole with a uniform border.
+Parkland/dirt expose earth; city and engineered terrain expose rock. Unclaimed water
+has no soil face. Every projected pixel must already be Void, with front and side
+faces stopping at solid ground or islands. The function never mutates terrain,
+health, collision, placement, scoring or saves. It uses the current frontier each
+frame, so erosion/reclamation updates the cutaway immediately; reduced effects keep
+the same static geometry. All face details are whole world pixels.
+
+`tests/void-ledge.test.ts` covers seeded irregular depth, strata, clipping, water,
+material palettes and simulation isolation. `node tests/void-ledge.mjs` checks the
+real city's scene-layer visibility after portal compositing, reduced effects and
+desktop/phone screenshots in `test-results/void-ledge/` (needs the dev server).

@@ -17,6 +17,7 @@
  * - Reuses camera math from `src/defend/render.ts` and `Loupe` from `src/defend/loupe.ts`. */
 
 import { dist } from "../exact.ts";
+import { paintVoidLedge } from "./ledge.ts";
 import { pixelPainter } from "./pixel-painter.ts";
 import { Loupe } from "../defend/loupe.ts";
 import { CHUNK_SIZE, CORRUPTION_REACH, PIXEL_AREA, pixels } from "./config.ts";
@@ -1097,6 +1098,10 @@ export class VoidRenderer {
     }
 
     lap("portals");
+
+    // Exposed strata and undercuts sit in front of the nebula, below the ground lip.
+    paintVoidLedge(c, world, voidField.frontierCells);
+    lap("ledge");
 
     // 5. Draw crystalline Void Nodes (Phase 6+ infantry targets)
     for (const node of voidField.nodes) {
