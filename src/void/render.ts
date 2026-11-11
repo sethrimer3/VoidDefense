@@ -14,7 +14,7 @@
  *   light streaks and orbiting sparkles, twinkling stars, torn-off land slabs drifting
  *   inward with prismatic sparks, traffic, towers, 1x1 riflemen, 1x2 engineers, 2x2
  *   mechs, shells, shockwaves and lasers.
- * - Reuses camera math from `src/defend/render.ts` and `Loupe` from `src/defend/loupe.ts`. */
+ * - Integer camera zoom/pan math and precision placement Loupe. */
 
 import { dist } from "../exact.ts";
 import { paintVoidLedge } from "./ledge.ts";

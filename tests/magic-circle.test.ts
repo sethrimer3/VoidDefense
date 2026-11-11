@@ -1,10 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { boundary, CircleTransition, formation, growingVoronoi, mix, nestedTriangles, TESSERACT_EDGES, tesseract, voronoi, type CircleState } from '../src/magic-circle/formation.ts';
-import { studyCircle } from '../src/magic-circle/progression.ts';
-import { specialtyCircle } from '../src/ui/specialty.ts';
-import { defaults, decode } from '../src/save.ts';
-import { SUBJECTS } from '../src/upgrade-subjects.ts';
 
 const base: CircleState = { topic: 'study:meteor', upgrades: [] };
 test('completed Knowledge steadily increases every complexity layer across paths', () => {
@@ -31,27 +27,6 @@ test('identity and equipped choices shape circles without granting extra Knowled
   const ranks = [...equipped, { id: 'path:starfall', rank: 2 }, { id: 'path:starfall', rank: 1 }];
   assert.equal(formation({ ...base, upgrades: ranks }).knowledge, 2);
   assert.deepEqual(formation({ ...base, upgrades: ranks }), formation({ ...base, upgrades: [...ranks].reverse() }));
-  const save = defaults(), topic = SUBJECTS.flatMap(s => s.topics).find(t => t.id === 'meteor')!;
-  save.pathResearch.starfall = { rank: 2, spent: 10 };
-  const learned = formation(studyCircle(save, topic));
-  save.spellPaths.meteor = 'starfall';
-  assert.equal(formation(studyCircle(save, topic)).knowledge, learned.knowledge);
-});
-test('buildings retain all earlier Knowledge through transformations and merges', () => {
-  const mage = formation(specialtyCircle('stormTower', { path: 'storm', rank: 3 }));
-  const crown = formation(specialtyCircle('darkKeep'));
-  assert.equal(mage.knowledge, 5); // Two tower transformations and three path ranks.
-  assert.equal(crown.knowledge, mage.knowledge + 9); // All three Wizard towers' branches, merged.
-  assert.ok(crown.rings > mage.rings && crown.siteCount >= mage.siteCount);
-  const early = formation(specialtyCircle('meleeGuild'));
-  const barracks = formation(specialtyCircle('barracks'));
-  const trained = formation(specialtyCircle('chapterHouse', { path: 'crusaders', rank: 3 }));
-  assert.equal(early.knowledge, 0); assert.equal(barracks.knowledge, 1); assert.equal(trained.knowledge, 5);
-  const plain = formation(specialtyCircle('revolutionary'));
-  const shared = formation(specialtyCircle('revolutionary', undefined, undefined, undefined, undefined, undefined, { chain: 2, squad: 1 }));
-  assert.equal(shared.knowledge, plain.knowledge + 3);
-  assert.ok(shared.rings > plain.rings);
-  assert.deepEqual(formation(specialtyCircle('meleeGuild')), early);
 });
 test('formations are deterministic, order independent, and undo restores exact geometry', () => {
   const initial = formation(base);
@@ -108,40 +83,6 @@ test('large, malformed and unusual ranks remain bounded without exceptions', () 
   assert.ok(d.rings >= 3 && d.rings <= 7 && d.symmetry >= 4 && d.symmetry <= 12);
   for (const p of d.sites) assert.ok(Number.isFinite(p.x + p.y) && Math.hypot(p.x, p.y) < 0.881);
   for (const poly of voronoi(d.sites)) for (const p of poly) assert.ok(Number.isFinite(p.x + p.y));
-});
-test('Study adapter uses only displayed completed Knowledge; save format is unchanged', () => {
-  const save = defaults(), topic = SUBJECTS.flatMap(s => s.topics).find(t => t.id === 'meteor')!;
-  const before = formation(studyCircle(save, topic));
-  save.knowledge = 999999; save.skills.masonry = 2;
-  assert.deepEqual(formation(studyCircle(save, topic)), before);
-  save.pathResearch.starfall = { rank: 2, spent: 10 };
-  const changed = formation(studyCircle(save, topic)); assert.notDeepEqual(changed, before);
-  assert.deepEqual(formation(studyCircle(decode(JSON.stringify(save)), topic)), changed);
-  delete save.pathResearch.starfall;
-  assert.deepEqual(formation(studyCircle(save, topic)), before);
-});
-test('building and keep identity reflects its own paths, reverses respec, and separates families', () => {
-  const plain = formation(specialtyCircle('wizardTower'));
-  const fire = formation(specialtyCircle('pyreTower', { path: 'pyromancy', rank: 2 }));
-  assert.notDeepEqual(plain, fire);
-  assert.notDeepEqual(fire, formation(specialtyCircle('frostTower', { path: 'rime', rank: 2 })));
-  assert.deepEqual(plain, formation(specialtyCircle('wizardTower', undefined)));
-  assert.notDeepEqual(plain, formation(specialtyCircle('barracks')));
-  assert.notDeepEqual(formation(specialtyCircle('keep')), formation(specialtyCircle('keep', undefined, { arrowLoops: 2 })));
-});
-
-test('city, strike spells, infantry and towers select distinct motif families', () => {
-  const save = defaults(), topics = SUBJECTS.flatMap(s => s.topics);
-  for (const id of ['meteor', 'necromancy', 'frostNova', 'reinforcements'])
-    assert.equal(studyCircle(save, topics.find(t => t.id === id)!).motif, 'triangles');
-  for (const id of ['walls', 'spikes', 'repairShop', 'bait'])
-    assert.equal(studyCircle(save, topics.find(t => t.id === id)!).motif, 'tesseract');
-  for (const id of ['barracks', 'wizardTower'])
-    assert.equal(studyCircle(save, topics.find(t => t.id === id)!).motif, 'voronoi');
-  for (const kind of ['keep', 'walls', 'wallSpikes', 'monsterBait'] as const)
-    assert.equal(specialtyCircle(kind).motif, 'tesseract');
-  for (const kind of ['meleeGuild', 'barracks', 'assassinDen', 'rangedGuild', 'archerBarracks', 'wizardTower', 'watchTower', 'cannonTower', 'darkKeep'] as const)
-    assert.equal(specialtyCircle(kind).motif, 'voronoi');
 });
 test('nested triangles are inscribed on parent edges and stay finite while animated', () => {
   const d = formation({ ...base, motif: 'triangles' });

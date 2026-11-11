@@ -25,10 +25,10 @@ fs.mkdirSync(OUT_DIR, { recursive: true });
 
 function launchBrowser() {
   const executablePath = process.env.PLAYWRIGHT_EXECUTABLE;
-  const channel = process.env.PLAYWRIGHT_CHANNEL ?? (executablePath ? undefined : "chrome");
+  const channel = process.env.PLAYWRIGHT_CHANNEL ?? (executablePath ? undefined : (process.platform === 'win32' ? 'chrome' : undefined));
   return chromium.launch({
     headless: true,
-    ...(executablePath ? { executablePath } : { channel }),
+    ...(executablePath ? { executablePath } : channel ? { channel } : { executablePath: '/usr/bin/chromium' }),
   });
 }
 

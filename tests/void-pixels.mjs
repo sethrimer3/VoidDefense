@@ -5,8 +5,12 @@ import { chromium } from '@playwright/test';
 
 const output = 'test-results/void-pixels';
 await mkdir(output, { recursive: true });
-const browser = await chromium.launch({ headless: true,
-  executablePath: process.env.PLAYWRIGHT_EXECUTABLE || '/usr/bin/chromium' });
+const executablePath = process.env.PLAYWRIGHT_EXECUTABLE;
+const channel = process.env.PLAYWRIGHT_CHANNEL ?? (executablePath ? undefined : (process.platform === 'win32' ? 'chrome' : undefined));
+const browser = await chromium.launch({
+  headless: true,
+  ...(executablePath ? { executablePath } : channel ? { channel } : { executablePath: '/usr/bin/chromium' }),
+});
 try {
   for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }]) {
     const page = await browser.newPage({ viewport });

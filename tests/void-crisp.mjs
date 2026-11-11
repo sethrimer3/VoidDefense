@@ -3,8 +3,12 @@ import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import { chromium } from '@playwright/test';
 await mkdir('test-results/void-crisp', { recursive: true });
-const browser = await chromium.launch({ headless: true,
-  executablePath: process.env.PLAYWRIGHT_EXECUTABLE || '/usr/bin/chromium' });
+const executablePath = process.env.PLAYWRIGHT_EXECUTABLE;
+const channel = process.env.PLAYWRIGHT_CHANNEL ?? (executablePath ? undefined : (process.platform === 'win32' ? 'chrome' : undefined));
+const browser = await chromium.launch({
+  headless: true,
+  ...(executablePath ? { executablePath } : channel ? { channel } : { executablePath: '/usr/bin/chromium' }),
+});
 try {
   for (const [width, height, dpr] of [[1280, 900, 1], [390, 844, 2]]) {
     const page = await browser.newPage({ viewport: { width, height }, deviceScaleFactor: dpr });

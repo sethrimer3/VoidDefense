@@ -1,7 +1,7 @@
 // Preloaded into every Node test process (`--import ./tests/pin-random.ts`)
 // before any game module: Math.random becomes a fixed-seed stream, so the
-// start-up seeds of the game's and Defend's random streams (src/random.ts,
-// src/defend/grid.ts), and anything a test leaves to chance, come out the
+// start-up seeds of the game's random streams (src/random.ts,
+// src/void/grid.ts), and anything a test leaves to chance, come out the
 // same on every run. A test that wants other randomness passes its own
 // stream (`new Game(save, rng)`, `newRun({ seed })`, `withStream`).
 //

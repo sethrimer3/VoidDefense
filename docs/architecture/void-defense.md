@@ -1,6 +1,6 @@
 # Void Defense Architecture (`src/void/`)
 
-Void Defense is built as a clean, isolated namespace (`src/void/`) alongside the original `TowerDefense` modules, reusing deterministic math (`src/exact.ts`, `src/random.ts`), hashing (`src/defend/grid.ts`), the magnifying glass (`src/defend/loupe.ts`), and the elastic upgrade tree (`src/ui/upgrade-graph.ts` + `MagicCircle`) while replacing the medieval wave and offline idle-farming systems.
+Void Defense is the sole game in this repository, built as a clean, self-contained architecture in `src/void/`, reusing deterministic math (`src/exact.ts`, `src/random.ts`), the magnifying glass (`src/void/loupe.ts`), and the elastic upgrade tree (`src/ui/upgrade-graph.ts` + `MagicCircle`).
 
 ## Module Overview
 
@@ -23,7 +23,7 @@ Void Defense is built as a clean, isolated namespace (`src/void/`) alongside the
 | `src/void/interior.ts` | Living Void interior (`computeVoidInterior`, `paintVoidInterior`): seeded inward-flowing logarithmic spiral wisps and traveling brightness/color bands occluded behind ledges. |
 | `src/void/pixel-painter.ts` | Hard-edged world-pixel rectangle, line, polygon, circle and ellipse rasterization for moving objects and effects. |
 | `src/void/render.ts` & `ui.ts` | `VoidRenderer` (dirty-chunk offscreen layer + multi-scale LOD + `Loupe` integration) and `VoidApp` shell. See "Rendering the concept composition" below. |
-| `src/void/save.ts` & `main.ts` | Defensive `voiddefense.v1` persistence and isolated bootstrap entrypoint (never invokes `MinePage`, `LibraryPage`, or `away.ts`). Classic TowerDefense remains accessible via `?classic=1`. |
+| `src/void/save.ts` & `main.ts` | Defensive `voiddefense.v1` persistence and sole-game bootstrap entrypoint with graceful non-destructive adoption of legacy player callsigns and visual settings. |
 
 ## Simulation pixels
 
@@ -54,9 +54,7 @@ with a fresh repaint.
 
 Per-pixel erosion costs represent one quarter the former area. `PIXEL_WORK_SCALE`
 keeps that conversion in integer fixed-point arithmetic, including shields and
-ablation, without multiplying reservoir energy, income or rewards. Progression saves
-contain no terrain grid or live placements, so the `voiddefense.v1` save format and
-existing progression are retained. Classic mode keeps its original units.
+ablation, without multiplying reservoir energy, income or rewards. Progression saves contain no terrain grid or live placements, so the `voiddefense.v1` save format and existing progression are retained cleanly.
 
 Validation: `tests/void-defense.test.ts` covers four independent pixels, city
 footprint/income preservation and erosion accounting. `node tests/void-pixels.mjs`

@@ -14,9 +14,11 @@ import { chromium } from "@playwright/test";
 const outputDir = "test-results/void-visuals";
 await mkdir(outputDir, { recursive: true });
 
+const executablePath = process.env.PLAYWRIGHT_EXECUTABLE;
+const channel = process.env.PLAYWRIGHT_CHANNEL ?? (executablePath ? undefined : (process.platform === 'win32' ? 'chrome' : undefined));
 const browser = await chromium.launch({
   headless: true,
-  executablePath: process.env.PLAYWRIGHT_EXECUTABLE || "/usr/bin/chromium",
+  ...(executablePath ? { executablePath } : channel ? { channel } : { executablePath: '/usr/bin/chromium' }),
 });
 
 try {

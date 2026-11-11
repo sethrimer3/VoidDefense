@@ -8,13 +8,12 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host 127.0.0.1",
     "test": "node --experimental-transform-types --import ./tests/pin-random.ts --test tests/*.test.ts",
-    "test:pointer": "node tests/defend-pointer.mjs",
-    "test:performance": "node tests/defend-performance.mjs",
-    "test:stress": "node tests/defend-stress.mjs",
-    "test:stress-ui": "node tests/defend-stress-ui.mjs",
-    "test:render-cache": "node tests/defend-render-cache.mjs",
-    "font": "node --experimental-transform-types scripts/pixel-font/build.ts",
-    "export-sprites": "node tools/export-sprites.mjs"
+    "test:pixels": "node tests/void-pixels.mjs",
+    "test:crisp": "node tests/void-crisp.mjs",
+    "test:ledge": "node tests/void-ledge.mjs",
+    "test:visuals": "node tests/void-visuals.mjs",
+    "test:defense": "node tests/void-defense.mjs",
+    "font": "node --experimental-transform-types scripts/pixel-font/build.ts"
   },
   "devDependencies": {
     "typescript": "~5.9.3",

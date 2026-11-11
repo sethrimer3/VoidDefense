@@ -1,6 +1,6 @@
 /** World coordinate math, safe cell indexing, chunk partitioning, and dirty
  * chunk tracking for Void Defense's metropolitan boards (384x512, 512x768, etc.).
- * Reuses deterministic hashing from `src/defend/grid.ts`. */
+ * Deterministic 32-bit integer hashing and seeded PRNG. */
 
 import { CHUNK_SIZE } from "./config.ts";
 
