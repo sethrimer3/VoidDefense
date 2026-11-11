@@ -3,6 +3,7 @@
 
 import { cleanName, defaultFlag, escapeText, flagSvg, randomPlayerName } from "../profile/model.ts";
 import { play } from "../sound.ts";
+import { VoidSoundEngine } from "./audio.ts";
 import { SCENARIOS } from "./maps.ts";
 import type {
   PlayStyleMode,
@@ -147,6 +148,7 @@ export class VoidApp {
   renderer!: VoidRenderer;
   private techView!: VoidTechTreeView;
   private opsView!: ResistanceOperationsView;
+  private soundEngine = new VoidSoundEngine();
 
   private selectedTowerUid: number | null = null;
   private activeTool:
@@ -1067,10 +1069,20 @@ export class VoidApp {
         this.loupePointer,
         this.save.settings.magnifier,
       );
-    } else if (!document.hidden && this.tab === "network") {
-      this.techView.frame(nowMs);
-    } else if (!document.hidden && this.tab === "operations") {
-      this.opsView.frame(nowMs);
+
+      const baseline = this.sim.world.computePreservedBaseline();
+      this.soundEngine.update(
+        baseline.preservedPercent,
+        this.sim.voidField.totalContactEdges(),
+        this.sim.phase === "battle" && !this.sim.outcome && !this.sim.paused,
+      );
+    } else {
+      this.soundEngine.update(100, 0, false);
+      if (!document.hidden && this.tab === "network") {
+        this.techView.frame(nowMs);
+      } else if (!document.hidden && this.tab === "operations") {
+        this.opsView.frame(nowMs);
+      }
     }
   }
 
