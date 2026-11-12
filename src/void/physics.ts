@@ -908,6 +908,8 @@ export class VoidPhysics {
 
     // Deterministic decorative planting on newly created cells only, with a compact margin from the edge.
     const margin = pixels(0.8);
+    let plantedForest = false;
+    let firstInteriorIdx = -1;
     for (const c of created) {
       const hVal = hash01(Math.round(c.dx) + 2048, Math.round(c.dy) + 2048, world.seed);
       const interior = c.d <= radius - margin;
@@ -915,18 +917,24 @@ export class VoidPhysics {
         if (hVal < 0.22) world.landCover[c.idx] = LandCover.MEADOW;
         continue;
       }
+      if (firstInteriorIdx < 0) firstInteriorIdx = c.idx;
 
       if (clampedRank === 0) {
         if (hVal < 0.25) world.landCover[c.idx] = LandCover.MEADOW;
       } else if (clampedRank === 1) {
-        if (hVal < 0.16) world.landCover[c.idx] = LandCover.FOREST;
-        else if (hVal < 0.36) world.landCover[c.idx] = LandCover.MEADOW;
+        if (hVal < 0.16) {
+          world.landCover[c.idx] = LandCover.FOREST;
+          plantedForest = true;
+        } else if (hVal < 0.36) {
+          world.landCover[c.idx] = LandCover.MEADOW;
+        }
       } else if (clampedRank === 2) {
         const inFarmPatch = Math.abs(c.dx) <= pixels(1.6) && Math.abs(c.dy) <= pixels(1.2);
         if (inFarmPatch) {
           world.landCover[c.idx] = LandCover.FIELD_H;
         } else if (hVal < 0.2) {
           world.landCover[c.idx] = LandCover.FOREST;
+          plantedForest = true;
         } else if (hVal < 0.38) {
           world.landCover[c.idx] = LandCover.MEADOW;
         }
@@ -938,10 +946,14 @@ export class VoidPhysics {
           world.landCover[c.idx] = c.dy > 0 ? LandCover.FIELD_V : LandCover.FIELD_H;
         } else if (hVal < 0.26) {
           world.landCover[c.idx] = LandCover.FOREST;
+          plantedForest = true;
         } else if (hVal < 0.44) {
           world.landCover[c.idx] = LandCover.MEADOW;
         }
       }
+    }
+    if (clampedRank >= 1 && !plantedForest && firstInteriorIdx >= 0) {
+      world.landCover[firstInteriorIdx] = LandCover.FOREST;
     }
 
     if (this.shockwaves.length < 48) {

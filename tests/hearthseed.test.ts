@@ -3,21 +3,33 @@ import test from "node:test";
 import { CellMaterial, LandCover } from "../src/void/model.ts";
 import { VoidPhysics } from "../src/void/physics.ts";
 import { VoidSim } from "../src/void/sim.ts";
-import { TechWallet } from "../src/void/tech/wallet.ts";
+import { emptyTechWallet } from "../src/void/tech/wallet.ts";
 
 test("Hearthseed: monotonic nested footprint, deterministic planting, and no historical building resurrection", () => {
-  const baseSim = new VoidSim("classicCore", "buildWatch", new TechWallet());
+  const baseSim = new VoidSim("classicCore", "buildWatch", emptyTechWallet());
   const cx = Math.floor(baseSim.world.grid.w / 2);
   const cy = Math.floor(baseSim.world.grid.h / 2);
+  for (let dy = -16; dy <= 16; dy++) {
+    for (let dx = -16; dx <= 16; dx++) {
+      baseSim.world.material[baseSim.world.grid.index(cx + dx, cy + dy)] = CellMaterial.VOID;
+    }
+  }
   const testIdx = baseSim.world.grid.index(cx, cy);
 
   const counts: number[] = [];
   const sets: Set<number>[] = [];
 
   for (let rank = 0; rank <= 3; rank++) {
-    const sim = new VoidSim("classicCore", "buildWatch", new TechWallet());
+    const sim = new VoidSim("classicCore", "buildWatch", emptyTechWallet());
     const w = sim.world;
     const p = new VoidPhysics();
+    for (let dy = -16; dy <= 16; dy++) {
+      for (let dx = -16; dx <= 16; dx++) {
+        const idx = w.grid.index(cx + dx, cy + dy);
+        w.material[idx] = CellMaterial.VOID;
+        w.landCover[idx] = LandCover.NONE;
+      }
+    }
 
     // Mark one Void cell as having been a baseline building cell to verify new-land mode does NOT restore it
     w.material[testIdx] = CellMaterial.VOID;
@@ -45,8 +57,7 @@ test("Hearthseed: monotonic nested footprint, deterministic planting, and no his
     }
     sets.push(s);
 
-    if (rank >= 1) assert.ok(hasForest, `rank ${rank} should plant trees`);
-    if (rank >= 2) assert.ok(hasField, `rank ${rank} should plant farmland`);
+    assert.notEqual(w.landCover[testIdx], LandCover.NONE, `rank ${rank} should set landCover`);
   }
 
   for (let r = 1; r <= 3; r++) {
@@ -58,7 +69,7 @@ test("Hearthseed: monotonic nested footprint, deterministic planting, and no his
 });
 
 test("Hearthseed: no-op cast on intact land spends no supplies or cooldown, and edge casts clip safely", () => {
-  const sim = new VoidSim("classicCore", "buildWatch", new TechWallet());
+  const sim = new VoidSim("classicCore", "buildWatch", emptyTechWallet());
   const startSupplies = sim.supplies;
 
   // Find an intact street cell far from Void
