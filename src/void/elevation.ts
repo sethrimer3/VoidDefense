@@ -236,23 +236,25 @@ export type CachedBuildingSprite = {
 };
 
 /** Computes a deterministic version signature for building `b` so its cached sprite
- * rebuilds only when footprint cells, HP damage tier, development, or height mode change. */
+ * rebuilds only when footprint cells, columnFloors, HP damage tier, development, or height mode change. */
 export function computeBuildingSignature(
   world: VoidWorld,
   b: MetroBuilding,
   mode: BuildingHeightMode,
 ): number {
   let h = hash(b.id, Math.round(b.development * 20), mode === "full" ? 2 : mode === "low" ? 1 : 0);
-  const { material, buildingAt, hp, maxHp } = world;
+  const { material, buildingAt, hp, maxHp, columnFloors } = world;
   for (let i = 0; i < b.cells.length; i++) {
     const idx = b.cells[i];
-    if (buildingAt[idx] !== b.id || material[idx] === CellMaterial.VOID) {
+    const floors = columnFloors ? columnFloors[idx] : b.height;
+    const supported = buildingAt[idx] === b.id && material[idx] !== CellMaterial.VOID && hp[idx] > 0;
+    if (!supported && floors === 0) {
       h = Math.imul(h ^ (i + 17), 0x01000193) >>> 0;
       continue;
     }
-    const ratio = maxHp[idx] > 0 ? hp[idx] / maxHp[idx] : 1;
+    const ratio = supported && maxHp[idx] > 0 ? hp[idx] / maxHp[idx] : 0.25;
     const dmg = ratio <= 0.3 ? 3 : ratio < 0.4 ? 2 : ratio < 0.75 ? 1 : 0;
-    h = Math.imul(h ^ ((idx << 2) | dmg), 0x5bd1e995) >>> 0;
+    h = Math.imul(h ^ ((idx << 7) ^ (floors << 2) ^ dmg), 0x5bd1e995) >>> 0;
   }
   return h >>> 0;
 }
@@ -360,7 +362,45 @@ export function facadeColorAt(
   return fRow % 2 === 0 ? pal.mid : pal.podium;
 }
 
-/** Builds the whole-pixel elevated sprite (south facades, setback terraces, and roofs) for `b`. */
+/** Paints an exposed interior cutaway pixel for column `(x, yFoot)` at elevation row `fRow`
+ * when a column has lost upper stories (`columnFloors < b.height`) or its south neighbor collapsed:
+ * - Concrete floor slab line (`#5c6574` / `#4a525e`) every 2nd vertical pixel
+ * - Interior room bays (`#161b26` unlit, `#ffbe55` / `#ffd685` lit, `#48e5ff` furniture/conduit accent)
+ * - Dark broken rebar edge (`#07090e`) on ragged perimeter columns
+ * - Faint violet Void rim (`#b23fe6`) only on the lowest row (`fRow === 0`) facing Void */
+export function cutawayColorAt(
+  world: VoidWorld,
+  b: MetroBuilding,
+  x: number,
+  yFoot: number,
+  fRow: number,
+  _elev: number,
+  isBrokenEdge: boolean,
+  adjVoid: boolean,
+  pal: ArchPalette,
+): string {
+  if (adjVoid && fRow === 0 && ((x + yFoot) & 1) === 0) {
+    return "#b23fe6";
+  }
+  if (isBrokenEdge) {
+    return (fRow + x) % 3 === 0 ? "#3a414c" : "#07090e";
+  }
+  // Exposed horizontal concrete floor slab line every 2 elevation pixels
+  if (fRow % 2 === 0) {
+    return (x + yFoot) % 3 === 0 ? "#5c6574" : "#4a525e";
+  }
+  // Room interior between floor slabs (seeded by building id, column, and floor)
+  const roomRoll = hash01(world.seed, 974, b.id, x - b.x, fRow);
+  if (roomRoll < 0.28) {
+    return roomRoll < 0.08 ? "#48e5ff" : pal.neonCore;
+  }
+  if (roomRoll < 0.56) {
+    return "#2a3344";
+  }
+  return "#141923";
+}
+
+/** Builds the whole-pixel elevated sprite (south facades, setback terraces, cutaways, and roofs) for `b`. */
 export function buildBuildingSprite(
   world: VoidWorld,
   b: MetroBuilding,
@@ -374,23 +414,25 @@ export function buildBuildingSprite(
   const hitMask = new Uint8Array(spriteW * spriteH);
   const palettes = ARCH_PALETTES[b.archStyle] ?? ARCH_PALETTES.glassTower;
   const pal = palettes[b.variant % palettes.length];
-  const { w } = world.grid;
+  const { w, h } = world.grid;
+  const { columnFloors, buildingAt, material, hp, maxHp } = world;
 
   let intactCount = 0;
   let bottomY = b.y;
 
-  // Sort cells top-to-bottom (`y` ascending) so painter's order inside a multi-tier building
-  // naturally lets southern (lower-screen) columns and facades paint over northern ones.
-  const intactCells: number[] = [];
+  // Include both ground-supported columns and cantilevered overhanging columns (`columnFloors[idx] > 0`)
+  const activeCells: number[] = [];
   for (let i = 0; i < b.cells.length; i++) {
     const idx = b.cells[i];
-    if (world.buildingAt[idx] === b.id && world.material[idx] !== CellMaterial.VOID && world.hp[idx] > 0) {
-      intactCells.push(idx);
+    const supported = buildingAt[idx] === b.id && material[idx] !== CellMaterial.VOID && hp[idx] > 0;
+    const floors = columnFloors ? columnFloors[idx] : supported ? b.height : 0;
+    if (supported || (material[idx] === CellMaterial.VOID && floors > 0)) {
+      activeCells.push(idx);
       const cy = (idx / w) | 0;
       if (cy + 1 > bottomY) bottomY = cy + 1;
     }
   }
-  intactCount = intactCells.length;
+  intactCount = activeCells.length;
 
   if (intactCount === 0) {
     return {
@@ -410,16 +452,38 @@ export function buildBuildingSprite(
     };
   }
 
-  // Track per-footprint-cell tier elevation so we know where a south face or setback step is exposed
+  // Track per-footprint-cell current elevation and whether its original outer wall/roof was sheared off
   const cellElev = new Int8Array(b.w * b.h).fill(0);
-  for (let i = 0; i < intactCells.length; i++) {
-    const idx = intactCells[i];
+  const cellFullElev = new Int8Array(b.w * b.h).fill(0);
+  const cellIntactRoof = new Uint8Array(b.w * b.h);
+  const cellPresent = new Uint8Array(b.w * b.h);
+
+  for (let i = 0; i < b.cells.length; i++) {
+    const idx = b.cells[i];
     const cx = idx % w;
     const cy = (idx / w) | 0;
     const lx = cx - b.x;
     const ly = cy - b.y;
     if (lx >= 0 && lx < b.w && ly >= 0 && ly < b.h) {
-      cellElev[ly * b.w + lx] = cellTierElevation(b, cx, cy, maxElev);
+      cellFullElev[ly * b.w + lx] = cellTierElevation(b, cx, cy, maxElev);
+    }
+  }
+
+  for (let i = 0; i < activeCells.length; i++) {
+    const idx = activeCells[i];
+    const cx = idx % w;
+    const cy = (idx / w) | 0;
+    const lx = cx - b.x;
+    const ly = cy - b.y;
+    if (lx >= 0 && lx < b.w && ly >= 0 && ly < b.h) {
+      const fullTier = cellFullElev[ly * b.w + lx];
+      const floors = columnFloors ? columnFloors[idx] : b.height;
+      const curElev = Math.min(fullTier, floorsToElevation(floors, mode));
+      cellElev[ly * b.w + lx] = curElev;
+      cellPresent[ly * b.w + lx] = 1;
+      if (floors >= b.height) {
+        cellIntactRoof[ly * b.w + lx] = 1;
+      }
     }
   }
 
@@ -427,36 +491,58 @@ export function buildBuildingSprite(
   for (let ly = 0; ly < b.h; ly++) {
     const cy = b.y + ly;
     for (let lx = 0; lx < b.w; lx++) {
-      const elev = cellElev[ly * b.w + lx];
+      const localIdx = ly * b.w + lx;
+      if (!cellPresent[localIdx]) continue;
+      const elev = cellElev[localIdx];
       if (elev === 0 && mode !== "flat") continue;
       const cx = b.x + lx;
       const idx = cy * w + cx;
-      if (world.buildingAt[idx] !== b.id || world.material[idx] === CellMaterial.VOID || world.hp[idx] <= 0) {
-        continue;
-      }
 
       const southElev = ly + 1 < b.h ? cellElev[(ly + 1) * b.w + lx] : 0;
+      const southHadBuilding = ly + 1 < b.h && cellFullElev[(ly + 1) * b.w + lx] > 0;
+      const southMissingOrSpalled =
+        southHadBuilding && (ly + 1 < b.h ? cellElev[(ly + 1) * b.w + lx] < cellFullElev[(ly + 1) * b.w + lx] : false);
       const westElev = lx > 0 ? cellElev[ly * b.w + (lx - 1)] : 0;
       const eastElev = lx + 1 < b.w ? cellElev[ly * b.w + (lx + 1)] : 0;
-      const hpRatio = world.maxHp[idx] > 0 ? world.hp[idx] / world.maxHp[idx] : 1;
+      const hpRatio = maxHp[idx] > 0 ? hp[idx] / maxHp[idx] : 0.35;
+      const spalledTop = !cellIntactRoof[localIdx];
+      const isCutawayFace = spalledTop || southMissingOrSpalled || material[idx] === CellMaterial.VOID;
+      const adjVoid =
+        material[idx] === CellMaterial.VOID ||
+        (cx > 0 && material[idx - 1] === CellMaterial.VOID) ||
+        (cx + 1 < w && material[idx + 1] === CellMaterial.VOID) ||
+        (cy > 0 && material[idx - w] === CellMaterial.VOID) ||
+        (cy + 1 < h && material[idx + w] === CellMaterial.VOID);
 
-      // 1. South facade where this column is taller than the cell immediately south of it
+      // 1. South facade or interior cutaway where this column is taller than the cell immediately south of it
       if (elev > southElev) {
         for (let f = southElev; f < elev; f++) {
           const sy = ly + maxElev - f;
           if (sy < 0 || sy >= spriteH) continue;
           const isSideBorder = f >= westElev || f >= eastElev;
-          const fCol = facadeColorAt(world, b, cx, cy, f, elev, isSideBorder, hpRatio, pal);
+          const fCol = isCutawayFace
+            ? cutawayColorAt(world, b, cx, cy, f, elev, isSideBorder, adjVoid, pal)
+            : facadeColorAt(world, b, cx, cy, f, elev, isSideBorder, hpRatio, pal);
           const pIdx = sy * spriteW + lx;
           colorBuf[pIdx] = fCol;
           hitMask[pIdx] = 1;
         }
       }
 
-      // 2. Roof pixel shifted up by `elev`
+      // 2. Top pixel shifted up by `elev`: intact roof if unspalled, else exposed concrete floor slab / rubble cap
       const roofSy = ly + maxElev - elev;
       if (roofSy >= 0 && roofSy < spriteH) {
-        const rCol = roofColorAt(world, b, cx, cy, idx, pal);
+        const isOuterSpike =
+          spalledTop &&
+          (westElev === 0 || eastElev === 0) &&
+          ((cx + cy) & 1) === 1;
+        const rCol = spalledTop
+          ? isOuterSpike
+            ? "#07090e"
+            : (cx + cy) % 3 === 0
+              ? "#5c6574"
+              : "#4a525e"
+          : roofColorAt(world, b, cx, cy, idx, pal);
         const pIdx = roofSy * spriteW + lx;
         colorBuf[pIdx] = rCol;
         hitMask[pIdx] = 1;

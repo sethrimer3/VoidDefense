@@ -246,8 +246,8 @@ the tests and screenshots to show it.
 
 | Phase | Done? | Commit / evidence |
 |-------|-------|-------------------|
-| 1. Elevated buildings and facades | - [x] | `src/void/elevation.ts`, `src/void/render.ts`, `tests/void-depth.test.ts`, `test-results/void-depth/ringed-building-{desktop,phone}.png` |
-| 2. Structural damage and exposed floors | - [ ] | |
+| 1. Elevated buildings and facades | - [x] | `e994624` (`src/void/elevation.ts`, `src/void/render.ts`, `tests/void-depth.test.ts`, `test-results/void-depth/ringed-building-{desktop,phone}.png`) |
+| 2. Structural damage and exposed floors | - [x] | `src/void/world.ts`, `src/void/physics.ts`, `src/void/elevation.ts`, `test-results/void-depth/mid-collapse-{desktop,phone}.png` |
 | 3. Falling physics | - [ ] | |
 | 4. Polish | - [ ] | |
 | 5. Gameplay tie-ins (optional) | - [ ] | Needs Seth's go-ahead |

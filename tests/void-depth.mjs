@@ -141,8 +141,89 @@ try {
     assert.deepEqual(errors, []);
 
     await page.screenshot({ path: `${outputDir}/ringed-building-${label}.png` });
+
+    // Phase 2: Mid-collapse cutaway sequence showing exposed horizontal floor slabs, interior rooms, and broken edges
+    const collapseCheck = await page.evaluate(async () => {
+      const { VoidSim } = await import("/src/void/sim.ts");
+      const { VoidRenderer } = await import("/src/void/render.ts");
+      const { emptyTechWallet } = await import("/src/void/tech/wallet.ts");
+
+      const sim = new VoidSim("tutorialBreach", "buildAndWatch", emptyTechWallet());
+      const { world, physics, voidField } = sim;
+      const { w, h } = world.grid;
+
+      // Pick two adjacent skyscrapers so we can show progressive mid-collapse exposed floors
+      const tall = world.buildings.filter(
+        (b) => b.isSkyscraper && b.height >= 20 && b.w >= 8 && b.h >= 6 && b.x > 40 && b.x < w - 40 && b.y > 50 && b.y < h - 50,
+      );
+      const bMain = tall[0];
+
+      // Consume the southern half of bMain's footprint into Void and step structural support so its south wall
+      // shears off and upper floors spall into a stepped cutaway cross-section
+      const cutY = bMain.y + Math.floor(bMain.h * 0.55);
+      for (let py = cutY; py < bMain.y + bMain.h + 8; py++) {
+        for (let px = bMain.x - 4; px < bMain.x + bMain.w + 4; px++) {
+          if (world.grid.inBounds(px, py)) {
+            physics.consumeCellIntoVoid(world, py * w + px, false);
+          }
+        }
+      }
+      // Step 25 ticks of structural support so cantilever and brink spalling create stepped exposed floors
+      for (let t = 0; t < 25; t++) {
+        physics.stepStructuralSupport(world, 1 / 30);
+      }
+      // Also stagger remaining northern columns to show a clear multi-floor cutaway cross-section
+      // (north rows keep full roof; middle rows expose a 5-px tall interior wall; south rows step down to a lower concrete slab)
+      const keepRows = Math.floor(bMain.h * 0.55);
+      for (let ly = 0; ly < keepRows; ly++) {
+        for (let lx = 0; lx < bMain.w; lx++) {
+          const idx = (bMain.y + ly) * w + (bMain.x + lx);
+          if (world.buildingAt[idx] === bMain.id) {
+            if (ly === 0) {
+              world.columnFloors[idx] = bMain.height;
+            } else if (ly === keepRows - 1) {
+              world.columnFloors[idx] = Math.max(4, Math.floor(bMain.height * 0.35));
+            } else {
+              world.columnFloors[idx] = Math.max(10, Math.floor(bMain.height * 0.72));
+            }
+            world.grid.markCellDirty(bMain.x + lx, bMain.y + ly);
+          }
+        }
+      }
+      voidField.rebuildFrontier(world);
+
+      const canvas = document.querySelectorAll("canvas")[document.querySelectorAll("canvas").length - 1];
+      const renderer = new VoidRenderer(canvas);
+      renderer.resize(w, h);
+      renderer.cam.s = innerWidth < 500 ? 6 : 5;
+      const scale = renderer.pixelScale();
+      const cx = bMain.x + bMain.w * 0.5;
+      const cy = bMain.y + bMain.h * 0.5 - 3;
+      renderer.cam.x = Math.round(canvas.width / 2 - cx * scale);
+      renderer.cam.y = Math.round(canvas.height / 2 - cy * scale);
+
+      const floorsBefore = world.columnFloors.slice();
+      renderer.draw(sim, 1500, null, null, null, false);
+
+      const sp = renderer.spriteCache.getSprite(world, bMain, "full", false);
+      let slabPixels = 0;
+      let roomPixels = 0;
+      for (const op of sp.ops) {
+        if (op.color === "#5c6574" || op.color === "#4a525e") slabPixels++;
+        if (op.color === "#141923" || op.color === "#2a3344" || op.color === "#48e5ff") roomPixels++;
+      }
+
+      const unchanged = floorsBefore.every((f, i) => f === world.columnFloors[i]);
+      return { slabPixels, roomPixels, unchanged };
+    });
+
+    assert.ok(collapseCheck.slabPixels >= 8, `Expected >= 8 exposed concrete slab pixels, got ${collapseCheck.slabPixels}`);
+    assert.ok(collapseCheck.roomPixels >= 8, `Expected >= 8 exposed interior room pixels, got ${collapseCheck.roomPixels}`);
+    assert.equal(collapseCheck.unchanged, true, "Cutaway rendering must not mutate columnFloors");
+
+    await page.screenshot({ path: `${outputDir}/mid-collapse-${label}.png` });
     await page.close();
-    console.log(`PASS ${label} (${width}x${height} DPR ${dpr}): ringed building roof covers Void behind, Void visible left/right/below`);
+    console.log(`PASS ${label} (${width}x${height} DPR ${dpr}): ringed building & mid-collapse exposed floors verified`);
   }
 } finally {
   await browser.close();

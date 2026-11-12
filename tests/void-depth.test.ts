@@ -12,6 +12,7 @@ import {
   TOWER_ELEVATION_PX,
 } from "../src/void/elevation.ts";
 import { getScenario } from "../src/void/maps.ts";
+import { CellMaterial } from "../src/void/model.ts";
 import { VoidSim } from "../src/void/sim.ts";
 import { emptyTechWallet } from "../src/void/tech/wallet.ts";
 import { VoidWorld } from "../src/void/world.ts";
@@ -101,3 +102,66 @@ test("buildingHeight setting defaults to full and round-trips through decodeSett
   assert.equal(decodeSettings({ buildingHeight: "flat" }).buildingHeight, "flat");
   assert.equal(decodeSettings({ buildingHeight: "invalid" }).buildingHeight, "full");
 });
+
+test("Phase 2: columnFloors initializes deterministically and cantilever / brink spalling rules hold 1-px overhang while dropping 5-px overhang", () => {
+  const sc = getScenario("tutorialBreach");
+  const w1 = new VoidWorld(sc);
+  const w2 = new VoidWorld(sc);
+  assert.deepEqual(w1.columnFloors, w2.columnFloors);
+
+  const sim = new VoidSim("tutorialBreach", "underSiege", emptyTechWallet());
+  const { world, physics } = sim;
+  const { w } = world.grid;
+
+  // Pick an intact skyscraper with width >= 8 and height >= 16 (maxSpan = 1 + floor(height/8) >= 3)
+  const target = world.buildings.find((b) => b.isSkyscraper && b.w >= 8 && b.h >= 6 && b.height >= 16);
+  assert.ok(target, "Expected a wide tall skyscraper");
+
+  // Verify initial columnFloors match target.height
+  for (const idx of target.cells) {
+    assert.equal(world.columnFloors[idx], target.height);
+  }
+
+  // Consume 1 column on the west edge into Void: 1-px overhang is within maxSpan of supported neighbor (x + 1)
+  const westEdgeIdx = (target.y + 1) * w + target.x;
+  physics.consumeCellIntoVoid(world, westEdgeIdx, false);
+  physics.stepStructuralSupport(world, 1 / 30);
+  assert.ok(
+    world.columnFloors[westEdgeIdx] > 0,
+    `1-px overhang should survive cantilever check (got ${world.columnFloors[westEdgeIdx]})`,
+  );
+
+  // Now consume a 6-px wide swath from the west side of the building so the westernmost column is 6 px from any supported column (> maxSpan)
+  for (let py = target.y; py < target.y + target.h; py++) {
+    for (let px = target.x; px < Math.min(target.x + 6, target.x + target.w - 1); px++) {
+      physics.consumeCellIntoVoid(world, py * w + px, false);
+    }
+  }
+  physics.stepStructuralSupport(world, 1 / 30);
+  assert.equal(
+    world.columnFloors[westEdgeIdx],
+    0,
+    "Column 6 px from nearest supported foundation (> maxSpan) must detach and drop to 0 floors",
+  );
+
+  // Step 40 ticks of structural support so brink spalling erodes upper floors of columns adjacent to Void
+  let spalledColumns = 0;
+  for (let t = 0; t < 40; t++) {
+    physics.stepStructuralSupport(world, 1 / 30);
+  }
+  for (const idx of target.cells) {
+    if (world.material[idx] !== CellMaterial.VOID && world.columnFloors[idx] < target.height) {
+      spalledColumns++;
+    }
+  }
+  assert.ok(spalledColumns > 0, "Expected brink columns next to Void to spall upper floors over time");
+
+  // Building sprite for partially collapsed skyscraper renders exposed cutaway floor slab & interior room colors
+  const cache = new BuildingSpriteCache();
+  const sp = cache.getSprite(world, target, "full");
+  const hasSlabOrInterior = sp.ops.some(
+    (op) => op.color === "#5c6574" || op.color === "#4a525e" || op.color === "#141923" || op.color === "#2a3344",
+  );
+  assert.ok(hasSlabOrInterior, "Expected exposed concrete slab or room interior pixels in cutaway sprite");
+});
+
