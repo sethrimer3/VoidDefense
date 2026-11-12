@@ -711,69 +711,65 @@ export class BuildingSpriteCache {
     const ctx = this.atlasCtx;
     if (!ctx || !this.atlasCanvas) return null;
     ctx.imageSmoothingEnabled = false;
-    // Incrementally repaint only the bounding box of dirty sprites when < 24 buildings changed
-    let rx0 = 0;
-    let ry0 = 0;
-    let rx1 = w;
-    let ry1 = h;
-    if (!rebuildAll && this.dirtyIds.size <= 24) {
-      rx0 = w;
-      ry0 = h;
-      rx1 = 0;
-      ry1 = 0;
+
+    const repaintRect = (rx0: number, ry0: number, rx1: number, ry1: number): void => {
+      if (rx1 <= rx0 || ry1 <= ry0) return;
+      ctx.save();
+      if (rx0 > 0 || ry0 > 0 || rx1 < w || ry1 < h) {
+        ctx.beginPath();
+        ctx.rect(rx0, ry0, rx1 - rx0, ry1 - ry0);
+        ctx.clip();
+      }
+      ctx.clearRect(rx0, ry0, rx1 - rx0, ry1 - ry0);
+
+      const sorted: CachedBuildingSprite[] = [];
+      for (let i = 0; i < world.buildings.length; i++) {
+        const sp = this.sprites.get(world.buildings[i].id);
+        if (
+          sp &&
+          sp.intactCount > 0 &&
+          sp.x + sp.w > rx0 &&
+          sp.x < rx1 &&
+          sp.y + sp.h > ry0 &&
+          sp.y < ry1
+        ) {
+          sorted.push(sp);
+        }
+      }
+      sorted.sort((a, b) => a.bottomY - b.bottomY || a.x - b.x);
+
+      for (let i = 0; i < sorted.length; i++) {
+        const sp = sorted[i];
+        if (sp.canvas) {
+          ctx.drawImage(sp.canvas, sp.x, sp.y);
+        } else {
+          for (let k = 0; k < sp.runs.length; k++) {
+            const r = sp.runs[k];
+            ctx.fillStyle = r.color;
+            ctx.fillRect(sp.x + r.dx, sp.y + r.dy, r.w, 1);
+          }
+        }
+      }
+      ctx.restore();
+    };
+
+    // Incrementally repaint each dirty building's local region when <= 32 buildings changed
+    // (avoids spanning a single giant bounding box across opposite sides of the board).
+    if (!rebuildAll && this.dirtyIds.size <= 32) {
       for (const id of this.dirtyIds) {
         const sp = this.sprites.get(id);
         if (sp) {
-          if (sp.x < rx0) rx0 = Math.max(0, sp.x);
-          if (sp.y < ry0) ry0 = Math.max(0, sp.y);
-          if (sp.x + sp.w > rx1) rx1 = Math.min(w, sp.x + sp.w);
-          if (sp.y + sp.h > ry1) ry1 = Math.min(h, sp.y + sp.h);
+          repaintRect(
+            Math.max(0, sp.x),
+            Math.max(0, sp.y),
+            Math.min(w, sp.x + sp.w),
+            Math.min(h, sp.y + sp.h),
+          );
         }
       }
-      if (rx1 <= rx0 || ry1 <= ry0) {
-        this.dirtyIds.clear();
-        return this.atlasCanvas;
-      }
+    } else {
+      repaintRect(0, 0, w, h);
     }
-
-    ctx.save();
-    if (rx0 > 0 || ry0 > 0 || rx1 < w || ry1 < h) {
-      ctx.beginPath();
-      ctx.rect(rx0, ry0, rx1 - rx0, ry1 - ry0);
-      ctx.clip();
-    }
-    ctx.clearRect(rx0, ry0, rx1 - rx0, ry1 - ry0);
-
-    // Sort intact sprites overlapping `[rx0..rx1, ry0..ry1]` back-to-front by bottomY then x
-    const sorted: CachedBuildingSprite[] = [];
-    for (let i = 0; i < world.buildings.length; i++) {
-      const sp = this.sprites.get(world.buildings[i].id);
-      if (
-        sp &&
-        sp.intactCount > 0 &&
-        sp.x + sp.w > rx0 &&
-        sp.x < rx1 &&
-        sp.y + sp.h > ry0 &&
-        sp.y < ry1
-      ) {
-        sorted.push(sp);
-      }
-    }
-    sorted.sort((a, b) => a.bottomY - b.bottomY || a.x - b.x);
-
-    for (let i = 0; i < sorted.length; i++) {
-      const sp = sorted[i];
-      if (sp.canvas) {
-        ctx.drawImage(sp.canvas, sp.x, sp.y);
-      } else {
-        for (let k = 0; k < sp.runs.length; k++) {
-          const r = sp.runs[k];
-          ctx.fillStyle = r.color;
-          ctx.fillRect(sp.x + r.dx, sp.y + r.dy, r.w, 1);
-        }
-      }
-    }
-    ctx.restore();
 
     this.dirtyIds.clear();
     return this.atlasCanvas;

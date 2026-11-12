@@ -80,6 +80,7 @@ export class VoidPhysics {
   }));
   /** Set of building IDs that lost at least one pixel this tick and need a local connectivity check. */
   private readonly damagedBuildings = new Set<number>();
+  private readonly cellLostBuildings = new Set<number>();
   /** Monotonic tick counter for deterministic spalling rolls. */
   private supportTick = 0;
 
@@ -164,6 +165,7 @@ export class VoidPhysics {
 
     if (bId >= 0) {
       this.damagedBuildings.add(bId);
+      this.cellLostBuildings.add(bId);
     } else {
       // Also check if any adjacent cell belongs to a building so brink spalling activates
       const cx = world.grid.xOf(idx);
@@ -409,63 +411,65 @@ export class VoidPhysics {
 
         if (supported.length === 0) continue;
 
-        // 4. Connected-component splinter check on supported ground footprint
-        const intactSet = new Set<number>(supported);
-        const visited = new Set<number>();
-        const components: number[][] = [];
+        // 4. Connected-component splinter check on supported ground footprint (only when a cell was lost this tick)
+        if (this.cellLostBuildings.has(bId)) {
+          const intactSet = new Set<number>(supported);
+          const visited = new Set<number>();
+          const components: number[][] = [];
 
-        for (const start of supported) {
-          if (visited.has(start)) continue;
-          const comp: number[] = [];
-          const queue = [start];
-          visited.add(start);
-          while (queue.length > 0) {
-            const curr = queue.pop()!;
-            comp.push(curr);
-            const cx = world.grid.xOf(curr);
-            const cy = world.grid.yOf(curr);
-            for (const [dx, dy] of ORTHO) {
-              const nx = cx + dx;
-              const ny = cy + dy;
-              if (!world.grid.inBounds(nx, ny)) continue;
-              const nIdx = world.grid.index(nx, ny);
-              if (intactSet.has(nIdx) && !visited.has(nIdx)) {
-                visited.add(nIdx);
-                queue.push(nIdx);
+          for (const start of supported) {
+            if (visited.has(start)) continue;
+            const comp: number[] = [];
+            const queue = [start];
+            visited.add(start);
+            while (queue.length > 0) {
+              const curr = queue.pop()!;
+              comp.push(curr);
+              const cx = world.grid.xOf(curr);
+              const cy = world.grid.yOf(curr);
+              for (const [dx, dy] of ORTHO) {
+                const nx = cx + dx;
+                const ny = cy + dy;
+                if (!world.grid.inBounds(nx, ny)) continue;
+                const nIdx = world.grid.index(nx, ny);
+                if (intactSet.has(nIdx) && !visited.has(nIdx)) {
+                  visited.add(nIdx);
+                  queue.push(nIdx);
+                }
               }
             }
+            components.push(comp);
           }
-          components.push(comp);
-        }
 
-        if (components.length > 1) {
-          components.sort((aComp, bComp) => bComp.length - aComp.length);
-          for (let i = 1; i < components.length; i++) {
-            const splinter = components[i];
-            if (splinter.length <= 2 / PIXEL_AREA) {
-              for (const cIdx of splinter) {
-                const sx = cIdx % w;
-                const sy = (cIdx / w) | 0;
-                const z0 = Math.max(1, Math.ceil((columnFloors[cIdx] || b.height) / FLOORS_PER_PIXEL));
-                this.spawnFallingChunk(
-                  sx,
-                  sy,
-                  z0,
-                  0,
-                  0,
-                  0,
-                  1,
-                  1,
-                  "#6e472b",
-                  "#ff8c29",
-                  "salvage",
-                );
-                material[cIdx] = CellMaterial.SALVAGE;
-                hp[cIdx] = 20;
-                maxHp[cIdx] = 26;
-                buildingAt[cIdx] = -1;
-                columnFloors[cIdx] = 0;
-                world.grid.markIndexDirty(cIdx);
+          if (components.length > 1) {
+            components.sort((aComp, bComp) => bComp.length - aComp.length);
+            for (let i = 1; i < components.length; i++) {
+              const splinter = components[i];
+              if (splinter.length <= 2 / PIXEL_AREA) {
+                for (const cIdx of splinter) {
+                  const sx = cIdx % w;
+                  const sy = (cIdx / w) | 0;
+                  const z0 = Math.max(1, Math.ceil((columnFloors[cIdx] || b.height) / FLOORS_PER_PIXEL));
+                  this.spawnFallingChunk(
+                    sx,
+                    sy,
+                    z0,
+                    0,
+                    0,
+                    0,
+                    1,
+                    1,
+                    "#6e472b",
+                    "#ff8c29",
+                    "salvage",
+                  );
+                  material[cIdx] = CellMaterial.SALVAGE;
+                  hp[cIdx] = 20;
+                  maxHp[cIdx] = 26;
+                  buildingAt[cIdx] = -1;
+                  columnFloors[cIdx] = 0;
+                  world.grid.markIndexDirty(cIdx);
+                }
               }
             }
           }
@@ -476,6 +480,7 @@ export class VoidPhysics {
         }
       }
       this.damagedBuildings.clear();
+      this.cellLostBuildings.clear();
       for (let i = 0; i < keepActive.length; i++) {
         this.damagedBuildings.add(keepActive[i]);
       }
