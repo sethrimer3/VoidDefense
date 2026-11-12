@@ -49,6 +49,8 @@ export class VoidPhysics {
   readonly shockwaves: ShockwaveEffect[] = [];
   /** Set of building IDs that lost at least one pixel this tick and need a local connectivity check. */
   private readonly damagedBuildings = new Set<number>();
+  /** Monotonic tick counter for deterministic spalling rolls. */
+  private supportTick = 0;
 
   /** Converts cell `idx` into Void and queues any affected building for structural support evaluation. */
   consumeCellIntoVoid(world: VoidWorld, idx: number, spawnDebris = true): void {
@@ -63,6 +65,18 @@ export class VoidPhysics {
 
     if (bId >= 0) {
       this.damagedBuildings.add(bId);
+    } else {
+      // Also check if any adjacent cell belongs to a building so brink spalling activates
+      const cx = world.grid.xOf(idx);
+      const cy = world.grid.yOf(idx);
+      for (const [dx, dy] of ORTHO) {
+        const nx = cx + dx;
+        const ny = cy + dy;
+        if (world.grid.inBounds(nx, ny)) {
+          const nbId = world.buildingAt[world.grid.index(nx, ny)];
+          if (nbId >= 0) this.damagedBuildings.add(nbId);
+        }
+      }
     }
 
     if (spawnDebris && prevMat !== CellMaterial.VOID && this.debris.length < 750) {
@@ -145,26 +159,103 @@ export class VoidPhysics {
   }
 
   /** Evaluates structural stability for any building damaged this tick:
-   * if a building's remaining pixels split into disconnected fragments and a tiny
-   * splinter (<= 2 pixels) loses support, it detaches into salvage/debris. */
+   * - Cantilever rule: a column whose foundation cell became Void survives only if within
+   *   `maxSpan = 1 + floor(remainingFloors / 8)` px of a supported column of the same building.
+   * - Spalling at the brink: columns adjacent to Void or overhanging Void lose floors from the top
+   *   at a deterministic seeded rate scaled by adjacent Void count.
+   * - Disconnected splinters (`<= 2 / PIXEL_AREA` pixels) detach into salvage/debris. */
   stepStructuralSupport(world: VoidWorld, dt: number): void {
+    this.supportTick++;
+    const { w, h } = world.grid;
+    const { material, buildingAt, hp, maxHp, columnFloors } = world;
+
     if (this.damagedBuildings.size > 0) {
+      const keepActive: number[] = [];
       for (const bId of this.damagedBuildings) {
         const b = world.buildings[bId];
         if (!b) continue;
-        const intact = b.cells.filter(
-          (c) =>
-            world.buildingAt[c] === bId &&
-            world.material[c] !== CellMaterial.VOID &&
-            world.hp[c] > 0,
-        );
-        if (intact.length === 0) continue;
 
-        const intactSet = new Set<number>(intact);
+        // 1. Identify supported columns (solid ground foundation) vs overhanging columns (over Void)
+        const supported: number[] = [];
+        const overhanging: number[] = [];
+        let hasBrinkOrOverhang = false;
+
+        for (let i = 0; i < b.cells.length; i++) {
+          const c = b.cells[i];
+          if (buildingAt[c] === bId && material[c] !== CellMaterial.VOID && hp[c] > 0) {
+            if (columnFloors[c] === 0) columnFloors[c] = b.height;
+            supported.push(c);
+          } else if (material[c] === CellMaterial.VOID && columnFloors[c] > 0) {
+            overhanging.push(c);
+          }
+        }
+
+        // 2. Cantilever check for overhanging columns over Void
+        if (overhanging.length > 0) {
+          for (let i = 0; i < overhanging.length; i++) {
+            const c = overhanging[i];
+            const floors = columnFloors[c];
+            const maxSpan = 1 + Math.floor(floors / 8);
+            const cx = c % w;
+            const cy = (c / w) | 0;
+            let held = false;
+            for (let j = 0; j < supported.length; j++) {
+              const s = supported[j];
+              const sx = s % w;
+              const sy = (s / w) | 0;
+              if (Math.abs(cx - sx) + Math.abs(cy - sy) <= maxSpan) {
+                held = true;
+                break;
+              }
+            }
+            if (!held) {
+              columnFloors[c] = 0;
+              world.grid.markIndexDirty(c);
+            } else {
+              hasBrinkOrOverhang = true;
+              // Overhanging cantilever spalls from the top
+              if (hash01(world.seed, 940, this.supportTick, c) < 0.42) {
+                const loss = 1 + (hash01(world.seed, 941, this.supportTick, c) < 0.35 ? 1 : 0);
+                columnFloors[c] = Math.max(0, floors - loss);
+                world.grid.markIndexDirty(c);
+              }
+            }
+          }
+        }
+
+        // 3. Brink spalling on supported columns adjacent to Void
+        for (let i = 0; i < supported.length; i++) {
+          const c = supported[i];
+          const cx = c % w;
+          const cy = (c / w) | 0;
+          let adjVoid = 0;
+          if (cx > 0 && material[c - 1] === CellMaterial.VOID) adjVoid++;
+          if (cx + 1 < w && material[c + 1] === CellMaterial.VOID) adjVoid++;
+          if (cy > 0 && material[c - w] === CellMaterial.VOID) adjVoid++;
+          if (cy + 1 < h && material[c + w] === CellMaterial.VOID) adjVoid++;
+          if (adjVoid > 0) {
+            hasBrinkOrOverhang = true;
+            // Spall rate proportional to adjacent Void count; floors crumble from the top down to 1 floor
+            // (preserving ground cell HP/salvage until Void or splinter collapse finishes the foundation)
+            if (
+              columnFloors[c] > 1 &&
+              hash01(world.seed, 942, this.supportTick, c) < 0.14 * adjVoid
+            ) {
+              const loss = adjVoid >= 2 ? 2 : 1;
+              columnFloors[c] = Math.max(1, columnFloors[c] - loss);
+              world.grid.markIndexDirty(c);
+            }
+          }
+        }
+
+        if (supported.length === 0) continue;
+
+        // 4. Connected-component splinter check on supported ground footprint
+        const intactSet = new Set<number>(supported);
         const visited = new Set<number>();
         const components: number[][] = [];
 
-        for (const start of intact) {
+        for (const start of supported) {
           if (visited.has(start)) continue;
           const comp: number[] = [];
           const queue = [start];
@@ -194,17 +285,25 @@ export class VoidPhysics {
             const splinter = components[i];
             if (splinter.length <= 2 / PIXEL_AREA) {
               for (const cIdx of splinter) {
-                world.material[cIdx] = CellMaterial.SALVAGE;
-                world.hp[cIdx] = 20;
-                world.maxHp[cIdx] = 26;
-                world.buildingAt[cIdx] = -1;
+                material[cIdx] = CellMaterial.SALVAGE;
+                hp[cIdx] = 20;
+                maxHp[cIdx] = 26;
+                buildingAt[cIdx] = -1;
+                columnFloors[cIdx] = 0;
                 world.grid.markIndexDirty(cIdx);
               }
             }
           }
         }
+
+        if (hasBrinkOrOverhang) {
+          keepActive.push(bId);
+        }
       }
       this.damagedBuildings.clear();
+      for (let i = 0; i < keepActive.length; i++) {
+        this.damagedBuildings.add(keepActive[i]);
+      }
     }
 
     // Advance drifting debris fragments along curved streamlines into their target portal
@@ -283,6 +382,9 @@ export class VoidPhysics {
             const origBld = world.originalBuildingAt[idx];
             world.material[idx] = origBld >= 0 ? origMat : CellMaterial.RECLAIMED;
             world.buildingAt[idx] = origBld;
+            if (origBld >= 0 && world.buildings[origBld]) {
+              world.columnFloors[idx] = world.buildings[origBld].height;
+            }
             const restoredHp = Math.min(255, Math.round(65 * hpBoost));
             world.hp[idx] = restoredHp;
             world.maxHp[idx] = Math.max(world.maxHp[idx], restoredHp);

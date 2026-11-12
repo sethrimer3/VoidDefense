@@ -91,6 +91,8 @@ export class VoidWorld {
   readonly zone: Uint8Array;
   /** Continuous urbanity 0 (deep countryside) .. 255 (city core) used to bias building heights. */
   readonly urbanity: Uint8Array;
+  /** Remaining vertical stories per building footprint column (`0..30`, or `0` for non-building cells). */
+  readonly columnFloors: Uint8Array;
 
   readonly buildings: MetroBuilding[] = [];
   readonly portals: VoidPortal[] = [];
@@ -115,6 +117,7 @@ export class VoidWorld {
     this.landCover = new Uint8Array(n);
     this.zone = new Uint8Array(n);
     this.urbanity = new Uint8Array(n);
+    this.columnFloors = new Uint8Array(n);
 
     if (layoutOnly) {
       this.computeZones(scenario);
@@ -164,6 +167,7 @@ export class VoidWorld {
         this.landCover[pixel] = layout.landCover[i];
         this.zone[pixel] = layout.zone[i];
         this.urbanity[pixel] = layout.urbanity[i];
+        this.columnFloors[pixel] = layout.columnFloors[i];
       }
     }
     for (const b of layout.buildings) {
@@ -779,6 +783,7 @@ export class VoidWorld {
       this.maxHp[idx] = cellHp;
       this.buildingAt[idx] = id;
       this.landCover[idx] = LandCover.NONE;
+      this.columnFloors[idx] = height;
     }
 
     const styles = ARCH_STYLES_BY_DISTRICT[district] ?? ARCH_STYLES_BY_DISTRICT.midtown;
@@ -863,12 +868,14 @@ export class VoidWorld {
             this.material[cellIdx] = CellMaterial.VOID;
             this.hp[cellIdx] = 0;
             this.buildingAt[cellIdx] = -1;
+            this.columnFloors[cellIdx] = 0;
           } else if (d <= effectiveR + 3.2) {
             if (hash01(this.seed, 889, idx, x, y) < 0.48) {
               this.material[cellIdx] = CellMaterial.SALVAGE;
               this.hp[cellIdx] = 18;
               this.maxHp[cellIdx] = 24;
               this.buildingAt[cellIdx] = -1;
+              this.columnFloors[cellIdx] = 0;
             } else {
               this.hp[cellIdx] = Math.max(6, Math.floor(this.hp[cellIdx] * 0.55));
             }
