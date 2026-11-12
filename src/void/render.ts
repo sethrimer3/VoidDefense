@@ -1259,6 +1259,115 @@ export class VoidRenderer {
         c.beginPath();
         c.arc(cx, cy, TOWER_SPECS.gravityAnchor.range, 0, Math.PI * 2);
         c.stroke();
+      } else if (t.type === "voidSiphon") {
+        const s = combat.siphonStates.get(t.uid);
+        const r = TOWER_SPECS.voidSiphon.range;
+        if (s?.phase === "venting") {
+          const pulse = 0.35 + 0.25 * Math.sin((sim.tick * 0.05) * 10);
+          c.strokeStyle = `rgba(255, 176, 82, ${pulse})`;
+          c.lineWidth = 0.55;
+          c.beginPath();
+          c.arc(cx, cy, r * 0.45, 0, Math.PI * 2);
+          c.stroke();
+        } else {
+          c.strokeStyle = "rgba(154, 107, 255, 0.36)";
+          c.lineWidth = 0.4;
+          c.beginPath();
+          c.arc(cx, cy, r, 0, Math.PI * 2);
+          c.stroke();
+          // Inward-flowing dark-violet streams
+          for (let k = 0; k < 4; k++) {
+            const ang = (k * Math.PI) / 2 + (sim.tick * 0.05) * 0.8;
+            const prog = ((sim.tick * 0.05) * 0.9 + k * 0.25) % 1;
+            const distR = r * (1 - prog);
+            c.fillStyle = "rgba(180, 140, 255, 0.75)";
+            c.fillRect(cx + Math.cos(ang) * distR - 0.3, cy + Math.sin(ang) * distR - 0.3, 0.6, 0.6);
+          }
+        }
+      } else if (t.type === "boundaryPrism") {
+        const p = combat.prismStates.get(t.uid);
+        const ang = p?.angleRad ?? 0;
+        const halfLen = (p?.planeLength ?? TOWER_SPECS.boundaryPrism.range) * 0.5;
+        const dx = Math.cos(ang) * halfLen;
+        const dy = Math.sin(ang) * halfLen;
+        const nx = -Math.sin(ang);
+        const ny = Math.cos(ang);
+        c.strokeStyle = "rgba(92, 225, 230, 0.72)";
+        c.lineWidth = 0.7;
+        c.beginPath();
+        c.moveTo(cx - dx, cy - dy);
+        c.lineTo(cx + dx, cy + dy);
+        c.stroke();
+        // Directional chevrons toward receiving flank
+        c.strokeStyle = "rgba(184, 244, 255, 0.8)";
+        c.lineWidth = 0.45;
+        for (const sgn of [-0.5, 0, 0.5]) {
+          const px = cx + dx * sgn;
+          const py = cy + dy * sgn;
+          c.beginPath();
+          c.moveTo(px + nx * 1.4, py + ny * 1.4);
+          c.lineTo(px + nx * 2.6 + Math.cos(ang) * 0.8, py + ny * 2.6 + Math.sin(ang) * 0.8);
+          c.stroke();
+        }
+      } else if (t.type === "chronoCannon") {
+        c.strokeStyle = "rgba(242, 193, 78, 0.42)";
+        c.lineWidth = 0.45;
+        c.setLineDash([2.2, 1.8]);
+        c.beginPath();
+        c.arc(cx, cy, TOWER_SPECS.chronoCannon.range, -(sim.tick * 0.05) * 0.5, -(sim.tick * 0.05) * 0.5 + Math.PI * 1.75);
+        c.stroke();
+        c.setLineDash([]);
+      }
+    }
+
+    // 7a. Farmland livestock: 0.5-px pixel-art sheep and cows on intact farmland/meadow
+    const { w: gw, h: gh } = world.grid;
+    for (let gy = 0; gy < gh; gy += 2) {
+      for (let gx = 0; gx < gw; gx += 2) {
+        const idx = gy * gw + gx;
+        if (world.material[idx] === CellMaterial.VOID) continue;
+        const lc = world.landCover[idx];
+        if (lc !== LandCover.FIELD_H && lc !== LandCover.FIELD_V && lc !== LandCover.MEADOW) continue;
+        const hVal = ((gx * 73856093) ^ (gy * 19349663) ^ (world.seed * 83492791)) >>> 0;
+        const threshold = lc === LandCover.MEADOW ? 0.06 : 0.14;
+        if ((hVal % 1000) / 1000 >= threshold) continue;
+        const isCow = ((hVal >>> 10) & 1) === 1;
+        const ax = gx + 0.25;
+        const ay = gy + 0.25;
+        if (isCow) {
+          // 0.5-px pixel-art cow (4x2 half-pixels = 2.0 x 1.0 world px)
+          c.fillStyle = "#f2ede2";
+          c.fillRect(ax, ay, 1.5, 1.0);
+          c.fillStyle = "#3b281c";
+          c.fillRect(ax + 0.5, ay, 0.5, 0.5); // spot
+          c.fillRect(ax + 1.5, ay, 0.5, 0.5); // head
+          c.fillRect(ax, ay + 1.0, 0.5, 0.5); // back leg
+          c.fillRect(ax + 1.0, ay + 1.0, 0.5, 0.5); // front leg
+        } else {
+          // 0.5-px pixel-art sheep (3x2 half-pixels = 1.5 x 1.0 world px)
+          c.fillStyle = "#f7f5ee";
+          c.fillRect(ax, ay, 1.5, 1.0);
+          c.fillStyle = "#2c2623";
+          c.fillRect(ax + 1.5, ay + 0.25, 0.5, 0.5); // head
+          c.fillRect(ax, ay + 1.0, 0.5, 0.5); // back leg
+          c.fillRect(ax + 1.0, ay + 1.0, 0.5, 0.5); // front leg
+        }
+      }
+    }
+
+    // 7b. Quarantine Bell closed circular seals
+    for (const seal of sim.voidField.quarantineSeals) {
+      const alpha = Math.max(0.2, Math.min(0.85, seal.remaining / Math.max(0.1, seal.duration)));
+      c.strokeStyle = `rgba(212, 180, 92, ${alpha})`;
+      c.lineWidth = 0.65;
+      c.beginPath();
+      c.arc(seal.x, seal.y, seal.radius, 0, Math.PI * 2);
+      c.stroke();
+      const marks = 12;
+      c.fillStyle = `rgba(255, 226, 138, ${alpha})`;
+      for (let m = 0; m < marks; m++) {
+        const a = (m / marks) * Math.PI * 2;
+        c.fillRect(seal.x + Math.cos(a) * seal.radius - 0.35, seal.y + Math.sin(a) * seal.radius - 0.35, 0.7, 0.7);
       }
     }
 
@@ -1286,11 +1395,56 @@ export class VoidRenderer {
       c.fillRect(t.x, topY + t.h - 1, 1, 1);
       c.fillRect(t.x + t.w - 1, topY + t.h - 1, 1, 1);
       // Primary colored turret housing
-      c.fillStyle = spec.color;
-      c.fillRect(t.x + 0.35, topY + 0.35, t.w - 0.7, t.h - 0.7);
-      // Glowing energy core / barrel mount
-      c.fillStyle = "#fff3d1";
-      c.fillRect(t.x + t.w * 0.5 - 0.45, topY + t.h * 0.5 - 0.45, 0.9, 0.9);
+      if (t.type === "voidSiphon") {
+        const s = combat.siphonStates.get(t.uid);
+        const fillFrac = s ? Math.min(1, s.stored / Math.max(1, s.maxStorage)) : 0;
+        // Round glass reservoir
+        c.fillStyle = "#1a1426";
+        c.beginPath();
+        c.arc(t.x + t.w * 0.5, topY + t.h * 0.5, t.w * 0.42, 0, Math.PI * 2);
+        c.fill();
+        c.fillStyle = s?.phase === "venting" ? "#ffb052" : "#9a6bff";
+        const fillH = Math.max(0.4, (t.h * 0.72) * fillFrac);
+        c.fillRect(t.x + t.w * 0.2, topY + t.h * 0.86 - fillH, t.w * 0.6, fillH);
+        c.strokeStyle = "#d8c4ff";
+        c.lineWidth = 0.25;
+        c.beginPath();
+        c.arc(t.x + t.w * 0.5, topY + t.h * 0.5, t.w * 0.42, 0, Math.PI * 2);
+        c.stroke();
+      } else if (t.type === "boundaryPrism") {
+        // Tall triangular faceted crystal
+        c.fillStyle = "#5ce1e6";
+        c.beginPath();
+        c.moveTo(t.x + t.w * 0.5, topY - 0.6);
+        c.lineTo(t.x + t.w - 0.2, topY + t.h - 0.2);
+        c.lineTo(t.x + 0.2, topY + t.h - 0.2);
+        c.closePath();
+        c.fill();
+        c.fillStyle = "#d4fcff";
+        c.beginPath();
+        c.moveTo(t.x + t.w * 0.5, topY - 0.6);
+        c.lineTo(t.x + t.w * 0.5, topY + t.h - 0.2);
+        c.lineTo(t.x + 0.2, topY + t.h - 0.2);
+        c.closePath();
+        c.fill();
+      } else if (t.type === "chronoCannon") {
+        // Golden clock-ring and reverse barrel
+        c.fillStyle = "#3a2e18";
+        c.fillRect(t.x + 0.35, topY + 0.35, t.w - 0.7, t.h - 0.7);
+        c.strokeStyle = "#f2c14e";
+        c.lineWidth = 0.35;
+        c.beginPath();
+        c.arc(t.x + t.w * 0.5, topY + t.h * 0.5, t.w * 0.38, 0, Math.PI * 2);
+        c.stroke();
+        c.fillStyle = "#fff3d1";
+        c.fillRect(t.x + t.w * 0.5 - 0.4, topY + t.h * 0.5 - 0.4, 0.8, 0.8);
+      } else {
+        c.fillStyle = spec.color;
+        c.fillRect(t.x + 0.35, topY + 0.35, t.w - 0.7, t.h - 0.7);
+        // Glowing energy core / barrel mount
+        c.fillStyle = "#fff3d1";
+        c.fillRect(t.x + t.w * 0.5 - 0.45, topY + t.h * 0.5 - 0.45, 0.9, 0.9);
+      }
 
       if (t.uid === selectedTowerUid) {
         c.strokeStyle = "#ffbe3b";

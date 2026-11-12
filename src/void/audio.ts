@@ -229,4 +229,51 @@ export class VoidSoundEngine {
     }
     this.active = false;
   }
+
+  private lastAnimalSoundAt = 0;
+
+  /** Plays a short synthesized sheep ("baa") or cow ("moo") sound when farmland livestock falls into the Void. */
+  playAnimalSound(kind: "sheep" | "cow"): void {
+    if (!this.active || !this.ctx || this.ctx.state !== "running") return;
+    const nowMs = performance.now();
+    if (nowMs - this.lastAnimalSoundAt < 350) return;
+    this.lastAnimalSoundAt = nowMs;
+
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const filter = ctx.createBiquadFilter();
+    const gain = ctx.createGain();
+
+    filter.type = "lowpass";
+    if (kind === "sheep") {
+      osc.type = "sawtooth";
+      osc.frequency.setValueAtTime(340, now);
+      osc.frequency.linearRampToValueAtTime(390, now + 0.08);
+      osc.frequency.linearRampToValueAtTime(310, now + 0.24);
+      filter.frequency.setValueAtTime(1100, now);
+      gain.gain.setValueAtTime(0.001, now);
+      gain.gain.linearRampToValueAtTime(0.06, now + 0.03);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.26);
+      osc.connect(filter);
+      filter.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.28);
+    } else {
+      osc.type = "sawtooth";
+      osc.frequency.setValueAtTime(155, now);
+      osc.frequency.linearRampToValueAtTime(140, now + 0.16);
+      osc.frequency.linearRampToValueAtTime(118, now + 0.38);
+      filter.frequency.setValueAtTime(520, now);
+      gain.gain.setValueAtTime(0.001, now);
+      gain.gain.linearRampToValueAtTime(0.08, now + 0.05);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
+      osc.connect(filter);
+      filter.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.42);
+    }
+  }
 }
