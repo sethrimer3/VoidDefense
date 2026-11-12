@@ -1136,6 +1136,7 @@ export class VoidApp {
         baseline.preservedPercent,
         this.sim.voidField.totalContactEdges(),
         this.sim.phase === "battle" && !this.sim.outcome && !this.sim.paused,
+        this.sim.physics.activeFallingChunkCount(),
       );
     } else {
       this.soundEngine.update(100, 0, false);

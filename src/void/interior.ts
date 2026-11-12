@@ -11,7 +11,7 @@
  *    and complete simulation isolation.
  */
 import { hash, hash01 } from "./grid.ts";
-import { CellMaterial } from "./model.ts";
+import { CellMaterial, type VoidRipple } from "./model.ts";
 import type { VoidWorld } from "./world.ts";
 
 export type VoidInteriorWorld = Pick<VoidWorld, "grid" | "seed" | "material" | "portals">;
@@ -252,6 +252,33 @@ export function paintVoidInterior(c: Painter, wisps: readonly WispPixel[]): void
   for (const p of wisps) {
     c.fillStyle = p.color;
     c.fillRect(p.x, p.y, 1, 1);
+  }
+}
+
+/** Paints brief whole-pixel brightness ripples in Void cells where large falling chunks vanish. */
+export function paintVoidRipples(
+  c: Painter,
+  world: VoidInteriorWorld,
+  ripples: readonly VoidRipple[],
+  reduceEffects = false,
+): void {
+  if (reduceEffects) return;
+  const { w, h } = world.grid;
+  for (let i = 0; i < ripples.length; i++) {
+    const r = ripples[i];
+    if (!r.active) continue;
+    const t = r.age / Math.max(0.01, r.maxAge);
+    const rad = Math.max(1, Math.floor(1 + t * 4));
+    c.fillStyle = t < 0.4 ? "#7afcff" : "#ff5ee8";
+    const ox = [rad, -rad, 0, 0];
+    const oy = [0, 0, rad, -rad];
+    for (let k = 0; k < 4; k++) {
+      const px = r.x + ox[k];
+      const py = r.y + oy[k];
+      if (px >= 0 && px < w && py >= 0 && py < h && world.material[py * w + px] === CellMaterial.VOID) {
+        c.fillRect(px, py, 1, 1);
+      }
+    }
   }
 }
 

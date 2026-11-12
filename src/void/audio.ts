@@ -43,7 +43,7 @@ export class VoidSoundEngine {
   constructor() {}
 
   /** Starts or updates the continuous synthesized cosmic void soundscape. */
-  update(cityPreservedPct: number, contactEdges: number, inBattle: boolean): void {
+  update(cityPreservedPct: number, contactEdges: number, inBattle: boolean, fallingChunks = 0): void {
     if (!soundOn() || document.hidden || !inBattle) {
       this.fadeQuiet();
       return;
@@ -60,12 +60,13 @@ export class VoidSoundEngine {
     // Void takeover metric: 0.0 at 100% city preserved, up to 1.0 at 0% preserved
     const takeover = Math.max(0, Math.min(1, (100 - cityPreservedPct) / 100));
 
-    // Intensity of perimeter shear / grinding
+    // Intensity of perimeter shear / grinding and active structural collapse
     const contactNorm = Math.min(1, contactEdges / 1500);
+    const chunkNorm = Math.min(1, fallingChunks / 40);
 
     // Dynamic targets:
     // 1. Master volume grows deeper and fuller as Void engulfs the metropolis
-    const targetGain = 0.08 + takeover * 0.45;
+    const targetGain = 0.08 + takeover * 0.45 + chunkNorm * 0.08;
     this.masterGain.gain.setTargetAtTime(targetGain, now, 0.4);
 
     // 2. Filter cutoff opens from a muffled 45Hz sub-hum to a roaring 220Hz stereo roar
@@ -86,12 +87,12 @@ export class VoidSoundEngine {
       this.oscDeep.frequency.setTargetAtTime(subFreq * 0.5, now, 0.5); // extreme sub (16Hz - 22Hz)
     }
 
-    // 5. Tectonic rumble noise gain driven by active contact edges and overall consumption
-    const noiseTarget = 0.02 + contactNorm * 0.2 + takeover * 0.25;
+    // 5. Tectonic rumble noise gain driven by active contact edges, collapse chunks, and overall consumption
+    const noiseTarget = 0.02 + contactNorm * 0.2 + takeover * 0.25 + chunkNorm * 0.22;
     this.noiseGain.gain.setTargetAtTime(noiseTarget, now, 0.3);
 
     if (this.noiseFilter) {
-      const noiseCutoff = 80 + contactNorm * 180 + takeover * 200;
+      const noiseCutoff = 80 + contactNorm * 180 + takeover * 200 + chunkNorm * 60;
       this.noiseFilter.frequency.setTargetAtTime(noiseCutoff, now, 0.3);
     }
   }

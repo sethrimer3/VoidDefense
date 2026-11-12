@@ -207,6 +207,27 @@ export type Civilian = {
   falling: boolean;
 };
 
+/** Pooled 1-pixel grey dust puff rising from collapsing building columns. */
+export type DustPuff = {
+  active: boolean;
+  x: number;
+  y: number;
+  z: number;
+  vz: number;
+  age: number;
+  maxAge: number;
+  color: string;
+};
+
+/** Pooled brightness ripple in the Void interior where a large chunk plunges into the abyss. */
+export type VoidRipple = {
+  active: boolean;
+  x: number;
+  y: number;
+  age: number;
+  maxAge: number;
+};
+
 /** Expanding shockwave or energy ring from Matter Cannon impacts, Landfall, or Containment Pulse. */
 export type ShockwaveEffect = {
   x: number;

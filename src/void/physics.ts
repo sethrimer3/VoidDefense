@@ -9,14 +9,20 @@ import { hash01, ORTHO } from "./grid.ts";
 import {
   CellMaterial,
   type DebrisFragment,
+  type DustPuff,
   type FallingChunk,
   LandCover,
   type ShockwaveEffect,
+  type VoidRipple,
 } from "./model.ts";
 import type { VoidWorld } from "./world.ts";
 
 /** Maximum pooled 3D falling chunks (zero per-tick allocation). */
 export const MAX_FALLING_CHUNKS = 200;
+/** Maximum pooled 1-px grey dust puffs from collapsing columns. */
+export const MAX_DUST_PUFFS = 120;
+/** Maximum pooled brightness ripples in the Void interior. */
+export const MAX_VOID_RIPPLES = 16;
 /** Vertical gravitational acceleration in world pixels / s². */
 export const FALL_GRAVITY_PX = 60;
 /** Depth below ground plane (`z < -24`) at which falling Void-bound chunks vanish. */
@@ -83,6 +89,29 @@ export class VoidPhysics {
   private readonly cellLostBuildings = new Set<number>();
   /** Monotonic tick counter for deterministic spalling rolls. */
   private supportTick = 0;
+  /** Support tick of the most recent large structural collapse (>= 20 columns in one tick). */
+  lastLargeCollapseTick = 0;
+  /** Pre-allocated pool of 1-pixel grey dust puffs emitted when building columns lose floors. */
+  readonly dustPuffs: DustPuff[] = Array.from({ length: MAX_DUST_PUFFS }, () => ({
+    active: false,
+    x: 0,
+    y: 0,
+    z: 0,
+    vz: 6,
+    age: 0,
+    maxAge: 0.4,
+    color: "#868080",
+  }));
+  /** Pre-allocated pool of brightness ripples where large chunks vanish into the Void abyss. */
+  readonly voidRipples: VoidRipple[] = Array.from({ length: MAX_VOID_RIPPLES }, () => ({
+    active: false,
+    x: 0,
+    y: 0,
+    age: 0,
+    maxAge: 0.55,
+  }));
+  private dustSlot = 0;
+  private rippleSlot = 0;
 
   /** Returns the count of currently active falling chunks in the pool. */
   activeFallingChunkCount(): number {
@@ -150,6 +179,42 @@ export class VoidPhysics {
     ch.age = 0;
     ch.bounces = 0;
     return ch;
+  }
+
+  /** Spawns a 1-pixel grey dust puff into the pre-allocated pool. */
+  spawnDustPuff(x: number, y: number, z: number, color = "#868080"): void {
+    let slot: DustPuff | null = null;
+    for (let i = 0; i < this.dustPuffs.length; i++) {
+      const idx = (this.dustSlot + i) % this.dustPuffs.length;
+      if (!this.dustPuffs[idx].active) {
+        slot = this.dustPuffs[idx];
+        this.dustSlot = (idx + 1) % this.dustPuffs.length;
+        break;
+      }
+    }
+    if (!slot) {
+      slot = this.dustPuffs[this.dustSlot];
+      this.dustSlot = (this.dustSlot + 1) % this.dustPuffs.length;
+    }
+    slot.active = true;
+    slot.x = x;
+    slot.y = y;
+    slot.z = z;
+    slot.vz = 6.0;
+    slot.age = 0;
+    slot.maxAge = 0.4;
+    slot.color = color;
+  }
+
+  /** Spawns a Void interior brightness ripple where a large falling chunk plunges into the abyss. */
+  spawnVoidRipple(x: number, y: number): void {
+    const slot = this.voidRipples[this.rippleSlot];
+    this.rippleSlot = (this.rippleSlot + 1) % this.voidRipples.length;
+    slot.active = true;
+    slot.x = x;
+    slot.y = y;
+    slot.age = 0;
+    slot.maxAge = 0.55;
   }
 
   /** Converts cell `idx` into Void and queues any affected building for structural support evaluation. */
@@ -267,6 +332,7 @@ export class VoidPhysics {
    * - Disconnected splinters (`<= 2 / PIXEL_AREA` pixels) detach into salvage/debris. */
   stepStructuralSupport(world: VoidWorld, dt: number): void {
     this.supportTick++;
+    let columnsCollapsedThisTick = 0;
     const { w, h } = world.grid;
     const { material, buildingAt, hp, maxHp, columnFloors } = world;
 
@@ -315,9 +381,11 @@ export class VoidPhysics {
               }
             }
             if (!held) {
+              columnsCollapsedThisTick++;
               columnFloors[c] = 0;
               world.grid.markIndexDirty(c);
               const z0 = Math.max(1, Math.ceil(floors / FLOORS_PER_PIXEL));
+              this.spawnDustPuff(cx, cy, z0, (c & 1) === 0 ? "#868080" : "#5c6574");
               const outX = cx - bCenterX;
               const outY = cy - bCenterY;
               const outD = Math.max(1, dist(outX, outY));
@@ -339,10 +407,12 @@ export class VoidPhysics {
               hasBrinkOrOverhang = true;
               // Overhanging cantilever spalls from the top
               if (hash01(world.seed, 940, this.supportTick, c) < 0.42) {
+                columnsCollapsedThisTick++;
                 const loss = 1 + (hash01(world.seed, 941, this.supportTick, c) < 0.35 ? 1 : 0);
                 columnFloors[c] = Math.max(0, floors - loss);
                 world.grid.markIndexDirty(c);
                 const z0 = Math.max(1, Math.ceil(floors / FLOORS_PER_PIXEL));
+                this.spawnDustPuff(cx, cy, z0, (c & 1) === 0 ? "#868080" : "#5c6574");
                 const outX = cx - bCenterX;
                 const outY = cy - bCenterY;
                 const outD = Math.max(1, dist(outX, outY));
@@ -383,11 +453,13 @@ export class VoidPhysics {
               columnFloors[c] > 1 &&
               hash01(world.seed, 942, this.supportTick, c) < 0.14 * adjVoid
             ) {
+              columnsCollapsedThisTick++;
               const oldFloors = columnFloors[c];
               const loss = adjVoid >= 2 ? 2 : 1;
               columnFloors[c] = Math.max(1, oldFloors - loss);
               world.grid.markIndexDirty(c);
               const z0 = Math.max(1, Math.ceil(oldFloors / FLOORS_PER_PIXEL));
+              this.spawnDustPuff(cx, cy, z0, (c & 1) === 0 ? "#868080" : "#5c6574");
               const outX = cx - bCenterX;
               const outY = cy - bCenterY;
               const outD = Math.max(1, dist(outX, outY));
@@ -483,6 +555,9 @@ export class VoidPhysics {
       this.cellLostBuildings.clear();
       for (let i = 0; i < keepActive.length; i++) {
         this.damagedBuildings.add(keepActive[i]);
+      }
+      if (columnsCollapsedThisTick >= 20) {
+        this.lastLargeCollapseTick = this.supportTick;
       }
     }
 
@@ -582,10 +657,30 @@ export class VoidPhysics {
       }
 
       if (onVoid && ch.z < VOID_ABYSS_Z) {
+        if (ch.w * ch.h >= 4) {
+          this.spawnVoidRipple(Math.round(ch.x), Math.round(ch.y - ch.z));
+        }
         ch.active = false;
       } else if (ch.age > 3.5) {
         ch.active = false;
       }
+    }
+
+    // Advance pooled 1-px dust puffs
+    for (let i = 0; i < this.dustPuffs.length; i++) {
+      const p = this.dustPuffs[i];
+      if (!p.active) continue;
+      p.age += dt;
+      p.z += p.vz * dt;
+      if (p.age >= p.maxAge) p.active = false;
+    }
+
+    // Advance pooled Void interior brightness ripples
+    for (let i = 0; i < this.voidRipples.length; i++) {
+      const r = this.voidRipples[i];
+      if (!r.active) continue;
+      r.age += dt;
+      if (r.age >= r.maxAge) r.active = false;
     }
   }
 
