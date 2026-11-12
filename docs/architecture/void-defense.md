@@ -111,12 +111,13 @@ Noise with ridged multifractal octaves rather than gradient Perlin noise). Noise
 coordinates evolve slowly across space and time to produce shifting violet/magenta
 boundaries with occasional cyan highlights while preserving crisp pixel-art silhouettes.
 
-`src/void/interior.ts` renders dynamic fluid vortex dynamics and inward-flowing
-spiral wisps across active anomaly regions. The motion uses continuous streamlines
-driven by domain-warped fractal Brownian motion (fBM) with Keplerian differential
-rotation, paired with pre-seeded spiral streams accelerated non-linearly toward the
-event horizon, strictly confined to `CellMaterial.VOID` cells and rendered behind
-the exposed earth/rock ledges. Both systems adhere strictly to the 1 cell = 1 world
+`src/void/interior.ts` renders dynamic volumetric cosmic visuals across active
+anomaly regions using a recolored, pixelated Star Nest fractal (adapted from Sign99).
+The field uses a precomputed 96×96 toroidal fractal tile (11 folding iterations and
+8 raymarch steps) polar-mapped with Keplerian accretion swirl into `CellMaterial.VOID`
+cells behind exposed earth/rock ledges. High fractal ridges become luminous cyan
+and white stars, while filaments glow hot magenta and deep violet, completely
+eliminating noisy particle clutter. Both systems adhere strictly to the 1 cell = 1 world
 pixel lattice, respect Reduce Motion / Reduced Effects by switching to stable, static
 visuals, and maintain complete simulation isolation.
 

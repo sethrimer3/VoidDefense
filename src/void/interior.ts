@@ -1,14 +1,14 @@
-/** Living, moving Void interior animation.
+/** Living, moving Void interior animation using recolored, pixelated Star Nest fractal math.
  *
- * Preserves the current nebula artwork while adding:
- * 1. Lightweight inward-flowing logarithmic spiral wisps.
- * 2. Subtle traveling color/brightness bands.
- * 3. Seeded particles with bounded lifetime and smooth radial acceleration toward portals.
- *
- * Rendered exclusively within CellMaterial.VOID cells and strictly behind exposed
- * earth/rock ledges, preserving the ground's stability and black-hole core readability.
- *
- * All rasterization produces whole world pixels (1 simulation cell = 1 world pixel).
+ * Adapted from the Star Nest volumetric fractal (Pablo Roman Andrioli, 2013; Sign99 starNestBackground.ts),
+ * converted into a discrete, pixelated 2D torus-tiled field and recolored for Void Defense:
+ * 1. Precomputed volumetric fractal intensity tile with 11 iterations & 8 raymarch steps.
+ * 2. Recolored along a cosmic Void spectrum: deep indigo/violet nebula floor, hot magenta dust filaments,
+ *    and brilliant cyan/white stars at peak fractal ridges.
+ * 3. Dynamic accretion flow: continuous rotational warping and gravitational drift sampled strictly
+ *    within CellMaterial.VOID cells behind exposed ledges and outside the pure black hole core.
+ * 4. Preserves 1 simulation cell = 1 world pixel discrete art, reduced-motion stability,
+ *    and complete simulation isolation.
  */
 import { hash, hash01 } from "./grid.ts";
 import { CellMaterial } from "./model.ts";
@@ -22,42 +22,122 @@ export type WispPixel = {
   color: string;
 };
 
-// Smooth cubic Hermite interpolation
-function smooth(t: number): number {
-  return t * t * (3 - 2 * t);
-}
+export const STARNEST_TILE_SIZE = 96;
 
-// 2D smooth value noise with continuous spatial coordinates
-function fluidNoise2D(x: number, y: number): number {
-  const x0 = Math.floor(x);
-  const y0 = Math.floor(y);
-  const fx = smooth(x - x0);
-  const fy = smooth(y - y0);
-
-  const h00 = hash01(1337, x0, y0);
-  const h10 = hash01(1337, x0 + 1, y0);
-  const h01 = hash01(1337, x0, y0 + 1);
-  const h11 = hash01(1337, x0 + 1, y0 + 1);
-
-  return (h00 * (1 - fx) + h10 * fx) * (1 - fy) + (h01 * (1 - fx) + h11 * fx) * fy;
-}
-
-// Fractal Brownian Motion (fBM) with 3 octaves for fluid density & curl
-function fluidFbm(x: number, y: number): number {
-  let sum = 0;
-  let amp = 0.55;
-  let freq = 1.0;
-  for (let i = 0; i < 3; i++) {
-    sum += fluidNoise2D(x * freq, y * freq) * amp;
-    freq *= 2.02;
-    amp *= 0.5;
-  }
-  return sum;
-}
-
-/** Pre-computed seeded spiral wisp parameters for each portal.
- * Kept bounded to avoid per-frame cell loops.
+/** Star Nest volumetric fractal tile generator.
+ * Computes a toroidal 96x96 grayscale intensity field matching the Sign99 Star Nest formula.
  */
+export function generateStarNestTile(): Float32Array {
+  const TILE = STARNEST_TILE_SIZE;
+  const tile = new Float32Array(TILE * TILE);
+  const iter = 11;
+  const volsteps = 8;
+  const a1 = 0.45, a2 = 0.75;
+  const cos1 = Math.cos(a1), sin1 = Math.sin(a1);
+  const cos2 = Math.cos(a2), sin2 = Math.sin(a2);
+
+  for (let y = 0; y < TILE; y++) {
+    const uvY = (y / TILE - 0.5);
+    for (let x = 0; x < TILE; x++) {
+      const uvX = (x / TILE - 0.5);
+      let s = 0.1;
+      let fade = 1.0;
+      let vr = 0, vg = 0, vb = 0;
+
+      for (let r = 0; r < volsteps; r++) {
+        let dx = uvX * 2.5;
+        let dy = uvY * 2.5;
+        let dz = 1.0;
+
+        // Static view rotation rot1 (xz) & rot2 (xy) from Sign99
+        const rx = cos1 * dx - sin1 * dz;
+        const rz = sin1 * dx + cos1 * dz;
+        dx = rx; dz = rz;
+        const rrx = cos2 * dx - sin2 * dy;
+        const rry = sin2 * dx + cos2 * dy;
+        dx = rrx; dy = rry;
+
+        let px = 1.0 + s * dx * 0.5;
+        let py = 0.5 + s * dy * 0.5;
+        let pz = 0.5 + s * dz * 0.5;
+
+        // Space folding
+        px = Math.abs(0.85 - ((px % 1.7 + 1.7) % 1.7));
+        py = Math.abs(0.85 - ((py % 1.7 + 1.7) % 1.7));
+        pz = Math.abs(0.85 - ((pz % 1.7 + 1.7) % 1.7));
+
+        let pa = 0;
+        let a = 0;
+        for (let i = 0; i < iter; i++) {
+          const dot = px * px + py * py + pz * pz;
+          px = Math.abs(px) / dot - 0.53;
+          py = Math.abs(py) / dot - 0.53;
+          pz = Math.abs(pz) / dot - 0.53;
+          const len = Math.hypot(px, py, pz);
+          a += Math.abs(len - pa);
+          pa = len;
+        }
+
+        const dm = Math.max(0, 0.3 - a * a * 0.001);
+        a *= a * a;
+        if (r > 6) fade *= (1.0 - dm);
+
+        const bright = a * 0.0015 * fade;
+        vr += fade + s * bright;
+        vg += fade + (s * s) * bright;
+        vb += fade + (s * s * s * s) * bright;
+        fade *= 0.73;
+        s += 0.1;
+      }
+
+      const totalLen = Math.hypot(vr, vg, vb) * 0.01;
+      // Normalized intensity in [0, 1]
+      tile[y * TILE + x] = Math.min(1, Math.max(0, (totalLen - 0.06) / 0.35));
+    }
+  }
+
+  return tile;
+}
+
+let cachedStarNest: Float32Array | null = null;
+export function starNestTile(): Float32Array {
+  if (!cachedStarNest) {
+    cachedStarNest = generateStarNestTile();
+  }
+  return cachedStarNest;
+}
+
+/** Samples the toroidal Star Nest tile at continuous (u, v) in [0..1). */
+export function sampleStarNest(u: number, v: number): number {
+  const tile = starNestTile();
+  const TILE = STARNEST_TILE_SIZE;
+  const x = Math.floor((u % 1 + 1) % 1 * TILE);
+  const y = Math.floor((v % 1 + 1) % 1 * TILE);
+  return tile[y * TILE + x];
+}
+
+/** Recolors a Star Nest fractal intensity into Void Defense's cosmic spectrum:
+ * - Low-mid: rich violet & magenta nebula filaments
+ * - High: hot pink/magenta nebulae
+ * - Peak: brilliant cyan & white-cyan star cores
+ */
+export function starNestColor(intensity: number, jitter = 0): string {
+  if (intensity > 0.85) {
+    return jitter % 2 === 0 ? "#d8fbff" : "#7afcff"; // Brilliant white-cyan star cores
+  }
+  if (intensity > 0.65) {
+    return jitter % 2 === 0 ? "#ff5ee8" : "#df56ff"; // Hot magenta filaments
+  }
+  if (intensity > 0.42) {
+    return jitter % 3 === 0 ? "#c73ef5" : "#9d2edb"; // Vibrant violet
+  }
+  if (intensity > 0.22) {
+    return jitter % 2 === 0 ? "#7a22bb" : "#631fa3"; // Deep violet
+  }
+  return "#4a187a"; // Base deep purple
+}
+
+/** Pre-computed seeded spiral wisp parameters for each portal (kept for compatibility). */
 export interface SeededWisp {
   id: number;
   portalId: number;
@@ -74,14 +154,14 @@ export function generateWispsForPortals(world: VoidInteriorWorld): SeededWisp[] 
   let wispId = 0;
   for (const portal of world.portals) {
     if (!portal.active) continue;
-    const count = 36; // Bounded 36 spiral wisps per active portal
+    const count = 36;
     for (let k = 0; k < count; k++) {
       const initialRadiusFrac = 0.25 + hash01(world.seed, 1401, portal.id, k) * 0.75;
       const armAngleOffset = hash01(world.seed, 1402, portal.id, k) * Math.PI * 2;
       const speed = 0.12 + hash01(world.seed, 1403, portal.id, k) * 0.28;
       const spiralTightness = 2.4 + hash01(world.seed, 1404, portal.id, k) * 1.8;
       const colorOffset = hash(world.seed, 1405, portal.id, k) % 3;
-      const length = 3 + hash(world.seed, 1406, portal.id, k) % 4; // 3 to 6 pixels long wisp segment
+      const length = 3 + hash(world.seed, 1406, portal.id, k) % 4;
       wisps.push({
         id: wispId++,
         portalId: portal.id,
@@ -97,12 +177,7 @@ export function generateWispsForPortals(world: VoidInteriorWorld): SeededWisp[] 
   return wisps;
 }
 
-/** Palette ramps for coherent cosmic fluid waves */
-const FLUID_PALETTE_DEEP = ["#32115a", "#4a187a", "#631fa3", "#7e28cf"] as const;
-const FLUID_PALETTE_MID = ["#7a22bb", "#9d2edb", "#c73ef5", "#df56ff"] as const;
-const FLUID_PALETTE_HIGH = ["#ff5ee8", "#7afcff", "#b8fdff", "#d8fbff"] as const;
-
-/** Computes the living Void interior pixels for a given frame.
+/** Computes the living Void interior pixels using pixelated Star Nest fractal sampling.
  * All pixels are clamped strictly inside CellMaterial.VOID, outside black-hole cores.
  */
 export function computeVoidInterior(
@@ -112,7 +187,6 @@ export function computeVoidInterior(
   reduceEffects = false,
 ): WispPixel[] {
   if (reduceEffects) {
-    // In reduced effects mode, static subtle standing bands, no moving streams
     return [];
   }
 
@@ -125,101 +199,43 @@ export function computeVoidInterior(
     const coreR = Math.max(3.6, p.radius * 0.42);
     const maxReach = p.radius * 2.8;
 
-    // 1. Continuous organic vortex streamlines: fluid curl advection
-    const streamlineCount = 5;
-    for (let b = 0; b < streamlineCount; b++) {
-      // Continuous inward phase
-      const wavePhase = (animTime * 0.14 + b / streamlineCount) % 1.0;
-      const baseR = coreR + 1.2 + (1.0 - wavePhase) * (maxReach - coreR - 1.2);
-      const segments = Math.max(20, Math.floor(baseR * 3.2));
+    // Scan bounding box of the active portal's reach inside Void
+    const xMin = Math.max(0, Math.floor(p.x - maxReach));
+    const xMax = Math.min(w - 1, Math.ceil(p.x + maxReach));
+    const yMin = Math.max(0, Math.floor(p.y - maxReach));
+    const yMax = Math.min(h - 1, Math.ceil(p.y + maxReach));
 
-      for (let s = 0; s < segments; s++) {
-        const theta = (s / segments) * Math.PI * 2;
-
-        // Fluid noise domain warping: sample fbm along logarithmic spiral coordinates
-        const logR = Math.log(baseR + 1.0);
-        const spiralU = (theta * 2.0 + logR * 3.5 - animTime * 0.45) * 0.4;
-        const spiralV = (baseR * 0.15 + animTime * 0.25) * 0.4;
-        const fluidPerturb = fluidFbm(spiralU + b * 2.1, spiralV) * 2.2 - 1.1;
-
-        const currentR = baseR + fluidPerturb;
-        if (currentR <= coreR + 0.8 || currentR >= maxReach) continue;
-
-        // Smooth vortex rotation with Keplerian-like differential rotation (faster near core)
-        const swirlOffset = (animTime * (1.6 / (0.8 + currentR * 0.12))) + Math.sin(theta * 3 + animTime * 0.5) * 0.15;
-        const finalTheta = theta + swirlOffset;
-
-        const px = Math.floor(p.x + Math.cos(finalTheta) * currentR);
-        const py = Math.floor(p.y + Math.sin(finalTheta) * currentR);
-
-        if (px < 0 || py < 0 || px >= w || py >= h) continue;
+    for (let py = yMin; py <= yMax; py++) {
+      for (let px = xMin; px <= xMax; px++) {
         const idx = py * w + px;
         if (world.material[idx] !== CellMaterial.VOID) continue;
         if (occupied.has(idx)) continue;
 
-        // Color mapped along radial gradient: cyan crests near core, vibrant magenta mid, deep purple outer
-        const normDist = (currentR - coreR) / (maxReach - coreR);
-        let col: string;
-        if (normDist < 0.28 && (s + b) % 3 === 0) {
-          col = FLUID_PALETTE_HIGH[(s + b) % FLUID_PALETTE_HIGH.length];
-        } else if (normDist < 0.65) {
-          col = FLUID_PALETTE_MID[(s + b) % FLUID_PALETTE_MID.length];
-        } else {
-          col = FLUID_PALETTE_DEEP[(s + b) % FLUID_PALETTE_DEEP.length];
+        const dx = px - p.x;
+        const dy = py - p.y;
+        const r = Math.hypot(dx, dy);
+        if (r <= coreR + 0.8 || r >= maxReach) continue;
+
+        const theta = Math.atan2(dy, dx);
+
+        // Star Nest coordinates: map radial/polar space with subtle gravitational swirl
+        const swirlAngle = theta + animTime * (0.8 / (1.0 + r * 0.15));
+        const logR = Math.log(r + 1.0);
+
+        // Torus UV mapped across Star Nest volumetric fractal
+        const u = ((swirlAngle / (Math.PI * 2)) * 2.0 + logR * 0.4 + animTime * 0.04) % 1;
+        const v = (r * 0.05 - animTime * 0.03) % 1;
+
+        const intensity = sampleStarNest(u, v);
+
+        // Only render visible fractal filaments and star cores (spatially coherent, not noisy mess)
+        if (intensity > 0.28) {
+          const jitter = (px * 7 + py * 13) & 15;
+          const color = starNestColor(intensity, jitter);
+          occupied.add(idx);
+          pixels.push({ x: px, y: py, color });
         }
-
-        occupied.add(idx);
-        pixels.push({ x: px, y: py, color: col });
       }
-    }
-  }
-
-  // 2. Inward-flowing logarithmic spiral wisps
-  for (const wisp of wisps) {
-    const portal = world.portals.find((prt) => prt.id === wisp.portalId && prt.active);
-    if (!portal) continue;
-
-    const coreR = Math.max(3.6, portal.radius * 0.42);
-    const maxReach = portal.radius * 2.6;
-    const travelRange = maxReach - coreR - 1.2;
-
-    // Progress moves inward (1 -> 0) with non-linear cosmic gravity acceleration
-    const cycle = (animTime * wisp.speed + wisp.initialRadiusFrac) % 1.0;
-    const progress = 1.0 - cycle; // 1 (far outside) to 0 (core horizon)
-    const smoothR = coreR + 1.2 + Math.pow(progress, 1.35) * travelRange;
-
-    // Fluid-advected swirl: combine logarithmic spiral angle with smooth continuous noise
-    const curlX = Math.cos(wisp.armAngleOffset) * (smoothR * 0.1);
-    const curlY = Math.sin(wisp.armAngleOffset) * (smoothR * 0.1);
-    const fluidCurl = (fluidNoise2D(curlX + animTime * 0.15, curlY - animTime * 0.15) - 0.5) * 0.6;
-    const baseAngle = wisp.armAngleOffset + Math.log(smoothR + 1.0) * wisp.spiralTightness + animTime * 0.35 + fluidCurl;
-
-    // Draw wisp head and trailing segments
-    for (let seg = 0; seg < wisp.length; seg++) {
-      const segProg = Math.min(1.0, progress + seg * 0.025);
-      const segR = coreR + 1.2 + Math.pow(segProg, 1.35) * travelRange;
-      const segAngle = baseAngle + seg * 0.08;
-
-      const wx = Math.floor(portal.x + Math.cos(segAngle) * segR);
-      const wy = Math.floor(portal.y + Math.sin(segAngle) * segR);
-
-      if (wx < 0 || wy < 0 || wx >= w || wy >= h) continue;
-      const idx = wy * w + wx;
-      if (world.material[idx] !== CellMaterial.VOID) continue;
-      if (occupied.has(idx)) continue;
-
-      // Color selection along the wisp: head has brightest highlight (cyan or hot magenta), tail fades to deep violet
-      let color: string;
-      if (seg === 0) {
-        color = wisp.id % 4 === 0 ? "#7afcff" : wisp.id % 4 === 1 ? "#ff6ee8" : "#e066ff";
-      } else if (seg === 1) {
-        color = wisp.id % 2 === 0 ? "#c746dd" : "#9a36cf";
-      } else {
-        color = "#4a1f93";
-      }
-
-      occupied.add(idx);
-      pixels.push({ x: wx, y: wy, color });
     }
   }
 
@@ -238,4 +254,5 @@ export function paintVoidInterior(c: Painter, wisps: readonly WispPixel[]): void
     c.fillRect(p.x, p.y, 1, 1);
   }
 }
+
 

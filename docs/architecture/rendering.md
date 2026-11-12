@@ -28,12 +28,11 @@ Cosmic organisms (such as the Queen Bee, Bee Swarms, Nebula Worms, and Constella
 
 ## Living Void Interior
 
-`src/void/interior.ts` renders the living fluid dynamics inside the Void field:
-- Continuous vortex streamlines driven by domain-warped fractal Brownian motion (fBM) with smooth cubic Hermite value noise and Keplerian differential rotation.
-- Seeded inward-flowing logarithmic spiral wisps modulated by 2D fluid curl advection.
-- Radial color gradients transitioning from brilliant cyan and hot magenta near the photon horizon to rich violet and deep cosmos tones in the outer accretion reaches.
-- Wisps and fluid streams are occluded by intact ground and exposed subterranean strata.
-- Inward motion halts under Reduced Motion settings, freezing the wisps in place without visual artifacts.
+`src/void/interior.ts` renders the living dynamics inside the Void field using a recolored, pixelated Star Nest volumetric fractal:
+- Adapts the Star Nest volumetric raymarch fractal (Pablo Roman Andrioli; Sign99 `starNestBackground.ts`) into a toroidal 96×96 discrete field with 11 folding iterations and 8 raymarch steps.
+- Torus UV sampling is polar-mapped around active portals with Keplerian-like accretion swirl ($\propto 1 / (1 + 0.15r)$) and logarithmic depth coordinates.
+- Recolored along the cosmic Void spectrum: deep indigo/violet nebula beds, hot magenta filaments, and brilliant cyan/white star cores at peak fractal ridges.
+- Inward motion halts under Reduced Motion settings, freezing the fractal field in place without visual artifacts.
 
 ## Tech DAG & Magic Circles
 

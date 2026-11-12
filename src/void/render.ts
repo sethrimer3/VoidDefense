@@ -23,6 +23,8 @@ import {
   generateWispsForPortals,
   computeVoidInterior,
   paintVoidInterior,
+  sampleStarNest,
+  starNestColor,
   type SeededWisp,
 } from "./interior.ts";
 import { pixelPainter } from "./pixel-painter.ts";
@@ -713,12 +715,17 @@ export class VoidRenderer {
       if (np.d < core) color = "#000000";
       else if (np.d < core + 1) color = "#ff4fd8";
       else {
-        const phase = hash01(world.seed, 989) * Math.PI * 2;
+        // Sample the recolored Star Nest volumetric fractal field
+        const logR = Math.log(np.d + 1.0);
+        const u = ((np.ang / (Math.PI * 2)) * 2.0 + logR * 0.35) % 1;
+        const v = (np.d * 0.045) % 1;
+        const intensity = sampleStarNest(u, v);
+
+        // Blended with radial falloff
         const fall = Math.max(0, 1 - ((np.d - core) / (radius * 3.8)) ** 2);
-        const arm = 0.5 + 0.5 * Math.sin(np.ang * 2 + Math.log(np.d + 1) * 5.2 + phase);
-        color = nebulaColor(arm * (0.4 + fall * 0.6) * (0.7 + r * 0.3));
-        if (r > 0.997) color = "#eaf6ff";
-        else if (arm > 0.92 && r > 0.82) color = "#6fe3ff";
+        const arm = 0.5 + 0.5 * Math.sin(np.ang * 2 + Math.log(np.d + 1) * 5.2);
+        const compositeIntensity = Math.min(1, intensity * (0.5 + fall * 0.5) + arm * 0.25 * fall);
+        color = starNestColor(compositeIntensity, (x * 7 + y * 13) & 15);
       }
     } else if (mat === CellMaterial.UNCLAIMED) {
       color = cover === LandCover.RIVER ? (r < 0.2 ? "#58b0e6" : "#2f78b8") : "#0f2c44";
@@ -1085,16 +1092,7 @@ export class VoidRenderer {
         c.restore();
 
         if (!this.reduceEffects) {
-          // Orbiting sparkles spiralling slowly inward
-          for (let k = 0; k < 26; k++) {
-            const dir = k % 2 === 0 ? 1 : -1;
-            const ang = hash01(world.seed, 786, p.id, k) * Math.PI * 2 + animTime * (0.15 + hash01(world.seed, 787, p.id, k) * 0.3) * dir;
-            const r = coreR + 0.8 + ((hash01(world.seed, 788, p.id, k) * reach + animTime * 0.6) % reach);
-            const tw = 0.5 + 0.5 * Math.sin(animTime * 5 + k);
-            c.fillStyle = k % 5 === 0 ? `rgba(122, 252, 255, ${tw.toFixed(3)})` : k % 5 === 1 ? `rgba(255, 148, 232, ${tw.toFixed(3)})` : `rgba(255, 255, 255, ${tw.toFixed(3)})`;
-            const sz = 0.3 + 0.3 * tw;
-            c.fillRect(p.x + Math.cos(ang) * r - sz * 0.5, p.y + Math.sin(ang) * r - sz * 0.5, sz, sz);
-          }
+          // Orbiting sparkles removed in favor of clean fractal Star Nest field
         }
       } else {
         // Telegraphed warning ring for delayed secondary portal
