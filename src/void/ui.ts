@@ -307,6 +307,7 @@ export class VoidApp {
       }
       const strikeOrder: StrikeId[] = [
         "landfall",
+        "quarantineBell",
         "containmentPulse",
         "genesis",
         "orbitalReinforcement",

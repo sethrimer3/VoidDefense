@@ -447,8 +447,8 @@ test("10. Advanced towers, Wall Serpent trail, Matter Synthesis, and Cosmic Orga
   }
 
   const tech = evaluateTech(wallet.ranks);
-  assert.equal(tech.unlockedTowers.size, 9, "All 9 Resistance tower types unlocked");
-  assert.equal(tech.unlockedStrikes.size, 5, "All 5 orbital strikes unlocked");
+  assert.equal(tech.unlockedTowers.size, 12, "All 12 Resistance tower types unlocked");
+  assert.equal(tech.unlockedStrikes.size, 6, "All 6 orbital strikes unlocked");
   assert.equal(tech.matterSynthesis, true, "Matter Synthesis breakthrough active");
 
   const sim = new VoidSim("organismEscalation", "underSiege", wallet, true);

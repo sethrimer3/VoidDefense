@@ -32,7 +32,7 @@
 import { dist } from "../exact.ts";
 import { MATERIAL_RESISTANCE, pixels, VOID_BALANCE, PIXEL_WORK_SCALE } from "./config.ts";
 import { hash01, ORTHO } from "./grid.ts";
-import { CellMaterial, type ScenarioConfig, type VoidNode, type ZeroContactReason } from "./model.ts";
+import { CellMaterial, type QuarantineSeal, type ScenarioConfig, type VoidNode, type ZeroContactReason } from "./model.ts";
 import type { VoidPhysics } from "./physics.ts";
 import type { VoidWorld } from "./world.ts";
 
@@ -55,6 +55,9 @@ export class VoidField {
   /** Crystalline Void Nodes / Tendril Spires near the frontier. */
   readonly nodes: VoidNode[] = [];
   private nextNodeId = 1;
+  /** Active Quarantine Bell boundary seals. */
+  readonly quarantineSeals: QuarantineSeal[] = [];
+  private nextSealId = 1;
   /** Temporary suppression timer (from Containment Pulse strike). */
   suppressedSeconds = 0;
 
@@ -69,6 +72,34 @@ export class VoidField {
     this.rebuildFrontier(world);
   }
 
+  /** Registers a temporary Quarantine Bell seal and immediately updates the frontier. */
+  addQuarantineSeal(world: VoidWorld, x: number, y: number, radius: number, duration: number): QuarantineSeal {
+    const seal: QuarantineSeal = {
+      id: this.nextSealId++,
+      x,
+      y,
+      radius,
+      remaining: duration,
+      duration,
+    };
+    this.quarantineSeals.push(seal);
+    this.rebuildFrontier(world);
+    return seal;
+  }
+
+  /** Returns true if the edge between `(ax, ay)` and `(bx, by)` crosses any active Quarantine Bell boundary. */
+  isEdgeBlockedBySeal(ax: number, ay: number, bx: number, by: number): boolean {
+    for (let i = 0; i < this.quarantineSeals.length; i++) {
+      const s = this.quarantineSeals[i];
+      if (s.remaining <= 0) continue;
+      const rSq = s.radius * s.radius;
+      const aIn = (ax - s.x) * (ax - s.x) + (ay - s.y) * (ay - s.y) <= rSq;
+      const bIn = (bx - s.x) * (bx - s.x) + (by - s.y) * (by - s.y) <= rSq;
+      if (aIn !== bIn) return true;
+    }
+    return false;
+  }
+
   /** Scans the grid to rebuild `frontierCells`, `frontierContactCount`, and `voidCellCount`. */
   rebuildFrontier(world: VoidWorld): void {
     this.frontierCells.length = 0;
@@ -76,6 +107,7 @@ export class VoidField {
     let vCount = 0;
     const { w, h, count } = world.grid;
     const mat = world.material;
+    const hasSeals = this.quarantineSeals.length > 0;
 
     for (let i = 0; i < count; i++) {
       if (mat[i] === CellMaterial.VOID) {
@@ -84,11 +116,13 @@ export class VoidField {
       }
       const x = i % w;
       const y = (i / w) | 0;
+      const cx = x + 0.5;
+      const cy = y + 0.5;
       let contacts = 0;
-      if (x > 0 && mat[i - 1] === CellMaterial.VOID) contacts++;
-      if (x + 1 < w && mat[i + 1] === CellMaterial.VOID) contacts++;
-      if (y > 0 && mat[i - w] === CellMaterial.VOID) contacts++;
-      if (y + 1 < h && mat[i + w] === CellMaterial.VOID) contacts++;
+      if (x > 0 && mat[i - 1] === CellMaterial.VOID && (!hasSeals || !this.isEdgeBlockedBySeal(cx, cy, cx - 1, cy))) contacts++;
+      if (x + 1 < w && mat[i + 1] === CellMaterial.VOID && (!hasSeals || !this.isEdgeBlockedBySeal(cx, cy, cx + 1, cy))) contacts++;
+      if (y > 0 && mat[i - w] === CellMaterial.VOID && (!hasSeals || !this.isEdgeBlockedBySeal(cx, cy, cx, cy - 1))) contacts++;
+      if (y + 1 < h && mat[i + w] === CellMaterial.VOID && (!hasSeals || !this.isEdgeBlockedBySeal(cx, cy, cx, cy + 1))) contacts++;
 
       if (contacts > 0) {
         this.frontierContactCount[i] = contacts;
@@ -200,6 +234,21 @@ export class VoidField {
 
     if (this.energyRemaining <= 0 && !hasPendingPortal) {
       return "reservoirDepletedVictory";
+    }
+
+    // Advance Quarantine Bell seal timers
+    if (this.quarantineSeals.length > 0) {
+      let expiredAny = false;
+      for (let i = this.quarantineSeals.length - 1; i >= 0; i--) {
+        this.quarantineSeals[i].remaining -= dt;
+        if (this.quarantineSeals[i].remaining <= 0) {
+          this.quarantineSeals.splice(i, 1);
+          expiredAny = true;
+        }
+      }
+      if (expiredAny) {
+        this.rebuildFrontier(world);
+      }
     }
 
     if (this.suppressedSeconds > 0) {

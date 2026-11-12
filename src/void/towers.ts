@@ -6,11 +6,15 @@ import { dist } from "../exact.ts";
 import { hash01, ORTHO } from "./grid.ts";
 import {
   CellMaterial,
+  type CellMaterialId,
   type Agent,
+  type ChronoLossEvent,
   type LaserBeam,
   type MatterPellet,
   type OrganismKind,
   type PlacedTower,
+  type PrismState,
+  type SiphonState,
   type StrikeId,
   type TowerTypeId,
   type VoidOrganism,
@@ -153,6 +157,45 @@ export const TOWER_SPECS: Record<TowerTypeId, TowerSpec> = {
     cooldownSeconds: 4.0,
     color: "#ffa630",
   },
+  voidSiphon: {
+    id: "voidSiphon",
+    name: "Void Siphon",
+    shortName: "Siphon",
+    description: "Absorbs up to 25% of nearby erosion pressure into a finite tank, then enters a 4s vent cycle.",
+    cost: 70,
+    w: pixels(2),
+    h: pixels(2),
+    maxHp: 140,
+    range: pixels(9),
+    cooldownSeconds: 4.0,
+    color: "#9a6bff",
+  },
+  boundaryPrism: {
+    id: "boundaryPrism",
+    name: "Boundary Prism",
+    shortName: "Prism",
+    description: "Directional crystal that bends up to 35% of approaching Void pressure sideways toward an adjacent flank.",
+    cost: 75,
+    w: pixels(2),
+    h: pixels(2),
+    maxHp: 130,
+    range: pixels(12),
+    cooldownSeconds: 0.5,
+    color: "#5ce1e6",
+  },
+  chronoCannon: {
+    id: "chronoCannon",
+    name: "Chrono Cannon",
+    shortName: "Chrono",
+    description: "Rewinds up to 6s of recent Void-caused terrain, structure, and unit losses within a 5-cell radius.",
+    cost: 95,
+    w: pixels(2),
+    h: pixels(2),
+    maxHp: 150,
+    range: pixels(18),
+    cooldownSeconds: 12.0,
+    color: "#f2c14e",
+  },
 };
 
 export type StrikeSpec = {
@@ -176,6 +219,16 @@ export const STRIKE_SPECS: Record<StrikeId, StrikeSpec> = {
     cooldownSeconds: 12,
     radius: pixels(4),
     color: "#86d96a",
+  },
+  quarantineBell: {
+    id: "quarantineBell",
+    name: "Quarantine Bell",
+    shortName: "Bell",
+    description: "Casts a temporary 6s closed seal that blocks Void propagation across its boundary in both directions. Interior Void remains active.",
+    supplyCost: 40,
+    cooldownSeconds: 35,
+    radius: pixels(10),
+    color: "#d4b45c",
   },
   containmentPulse: {
     id: "containmentPulse",
@@ -228,6 +281,7 @@ export class VoidCombatManager {
   readonly organisms: VoidOrganism[] = [];
   readonly strikeCooldowns: Record<StrikeId, number> = {
     landfall: 0,
+    quarantineBell: 0,
     containmentPulse: 0,
     genesis: 0,
     orbitalReinforcement: 0,
@@ -237,6 +291,13 @@ export class VoidCombatManager {
   readonly shieldPools = new Map<number, number>();
   /** Cell mask covered by active `gravityAnchor` towers (`1` = stabilized). */
   readonly gravityAnchorMask: Uint8Array;
+  /** Per-tower Void Siphon containment state (`uid -> SiphonState`). */
+  readonly siphonStates = new Map<number, SiphonState>();
+  /** Per-tower Boundary Prism directional state (`uid -> PrismState`). */
+  readonly prismStates = new Map<number, PrismState>();
+  /** Bounded recent-loss journal for Chrono Cannon recovery. */
+  readonly chronoJournal: ChronoLossEvent[] = [];
+  private nextChronoLossId = 1;
 
   private nextTowerUid = 1;
   private nextAgentId = 1;
@@ -253,6 +314,146 @@ export class VoidCombatManager {
   }
 
   /** Checks whether a tower of `type` can be placed with top-left cell `(x, y)`. */
+  initTowerSpecialState(tower: PlacedTower): void {
+    const cx = tower.x + tower.w * 0.5;
+    const cy = tower.y + tower.h * 0.5;
+    if (tower.type === "voidSiphon") {
+      this.siphonStates.set(tower.uid, {
+        uid: tower.uid,
+        x: cx,
+        y: cy,
+        radius: pixels(9),
+        phase: "intake",
+        stored: 0,
+        maxStorage: 250,
+        ventRemaining: 0,
+        ventDuration: 4.0,
+      });
+    } else if (tower.type === "boundaryPrism") {
+      this.prismStates.set(tower.uid, {
+        uid: tower.uid,
+        x: cx,
+        y: cy,
+        angleRad: 0,
+        planeLength: pixels(12),
+        bandWidth: pixels(3),
+        redirectFraction: 0.35,
+      });
+    }
+  }
+
+  clearTowerSpecialState(uid: number): void {
+    this.siphonStates.delete(uid);
+    this.prismStates.delete(uid);
+  }
+
+  rotatePrism(uid: number, deltaRad = Math.PI / 4): boolean {
+    const p = this.prismStates.get(uid);
+    if (!p) return false;
+    p.angleRad = (p.angleRad + deltaRad) % (Math.PI * 2);
+    return true;
+  }
+
+  recordChronoLoss(
+    timeSeconds: number,
+    kind: "terrain" | "unit",
+    x: number,
+    y: number,
+    cellIdx: number,
+    material: CellMaterialId,
+    maxHp: number,
+    unitHp?: number,
+    unitMaxHp?: number,
+  ): void {
+    if (this.chronoJournal.length >= 512) {
+      this.chronoJournal.shift();
+    }
+    this.chronoJournal.push({
+      id: this.nextChronoLossId++,
+      timeSeconds,
+      kind,
+      x,
+      y,
+      cellIdx,
+      material,
+      maxHp,
+      unitHp,
+      unitMaxHp,
+      claimed: false,
+    });
+  }
+
+  stepSiphonTimers(dt: number): void {
+    for (const s of this.siphonStates.values()) {
+      if (s.phase === "venting") {
+        s.ventRemaining = Math.max(0, s.ventRemaining - dt);
+        s.stored = s.maxStorage * (s.ventRemaining / s.ventDuration);
+        if (s.ventRemaining <= 0) {
+          s.phase = "intake";
+          s.stored = 0;
+        }
+      }
+    }
+  }
+
+  stepChronoCannons(world: VoidWorld, voidField: VoidField, dt: number, timeSeconds: number): number {
+    let restoredTotal = 0;
+    const windowSec = 6.0;
+    const recRadius = pixels(5);
+    const recRadiusSq = recRadius * recRadius;
+
+    for (const t of this.towers) {
+      if (t.type !== "chronoCannon") continue;
+      if (t.cooldown > 0) {
+        t.cooldown = Math.max(0, t.cooldown - dt);
+        continue;
+      }
+      const tx = t.x + t.w * 0.5;
+      const ty = t.y + t.h * 0.5;
+      const rangeSq = TOWER_SPECS.chronoCannon.range * TOWER_SPECS.chronoCannon.range;
+
+      // Find an unclaimed eligible loss within tower range and 6s window
+      let targetLoss: ChronoLossEvent | null = null;
+      for (let i = this.chronoJournal.length - 1; i >= 0; i--) {
+        const ev = this.chronoJournal[i];
+        if (ev.claimed || timeSeconds - ev.timeSeconds > windowSec) continue;
+        const dSq = (ev.x - tx) * (ev.x - tx) + (ev.y - ty) * (ev.y - ty);
+        if (dSq <= rangeSq) {
+          targetLoss = ev;
+          break;
+        }
+      }
+      if (!targetLoss) continue;
+
+      let budget = 24;
+      let restoredAny = false;
+      for (let i = this.chronoJournal.length - 1; i >= 0 && budget > 0; i--) {
+        const ev = this.chronoJournal[i];
+        if (ev.claimed || timeSeconds - ev.timeSeconds > windowSec) continue;
+        const dSq = (ev.x - targetLoss.x) * (ev.x - targetLoss.x) + (ev.y - targetLoss.y) * (ev.y - targetLoss.y);
+        if (dSq > recRadiusSq) continue;
+
+        if (ev.kind === "terrain" && world.material[ev.cellIdx] === CellMaterial.VOID) {
+          ev.claimed = true;
+          world.material[ev.cellIdx] = ev.material === CellMaterial.VOID ? CellMaterial.RECLAIMED : ev.material;
+          world.hp[ev.cellIdx] = ev.maxHp;
+          world.maxHp[ev.cellIdx] = Math.max(world.maxHp[ev.cellIdx], ev.maxHp);
+          world.buildingAt[ev.cellIdx] = -1;
+          world.grid.markIndexDirty(ev.cellIdx);
+          budget--;
+          restoredTotal++;
+          restoredAny = true;
+        }
+      }
+
+      if (restoredAny) {
+        t.cooldown = TOWER_SPECS.chronoCannon.cooldownSeconds;
+        voidField.rebuildFrontier(world);
+      }
+    }
+    return restoredTotal;
+  }
+
   canPlaceTower(world: VoidWorld, type: TowerTypeId, x: number, y: number, ignoreUid = -1): boolean {
     const spec = TOWER_SPECS[type];
     if (x < 1 || y < 1 || x + spec.w > world.grid.w - 1 || y + spec.h > world.grid.h - 1) {
@@ -505,6 +706,11 @@ export class VoidCombatManager {
     }
 
     this.strikeCooldowns[strike] = spec.cooldownSeconds * tech.strikeCooldownMultiplier;
+
+    if (strike === "quarantineBell") {
+      voidField.addQuarantineSeal(world, tx, ty, spec.radius, 6.0);
+      return true;
+    }
 
     if (strike === "genesis") {
       const r = spec.radius;

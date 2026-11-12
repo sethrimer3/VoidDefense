@@ -256,7 +256,10 @@ export type TowerTypeId =
   | "wallSerpent"
   | "gravityAnchor"
   | "rocketTeam"
-  | "heavyMechBay";
+  | "heavyMechBay"
+  | "voidSiphon"
+  | "boundaryPrism"
+  | "chronoCannon";
 
 export type PlacedTower = {
   uid: number;
@@ -322,7 +325,56 @@ export type LaserBeam = {
   color: string;
 };
 
-export type StrikeId = "landfall" | "genesis" | "orbitalReinforcement" | "containmentPulse" | "seismicFrame";
+export type StrikeId = "landfall" | "quarantineBell" | "genesis" | "orbitalReinforcement" | "containmentPulse" | "seismicFrame";
+
+/** Temporary closed boundary seal cast by Quarantine Bell. */
+export type QuarantineSeal = {
+  id: number;
+  x: number;
+  y: number;
+  radius: number;
+  remaining: number;
+  duration: number;
+};
+
+/** Finite-storage containment state for a Void Siphon tower. */
+export type SiphonState = {
+  uid: number;
+  x: number;
+  y: number;
+  radius: number;
+  phase: "intake" | "venting";
+  stored: number;
+  maxStorage: number;
+  ventRemaining: number;
+  ventDuration: number;
+};
+
+/** Directional pressure-redirection state for a Boundary Prism tower. */
+export type PrismState = {
+  uid: number;
+  x: number;
+  y: number;
+  angleRad: number;
+  planeLength: number;
+  bandWidth: number;
+  redirectFraction: number;
+};
+
+/** Bounded recent-loss journal entry for Chrono Cannon recovery. */
+export type ChronoLossEvent = {
+  id: number;
+  timeSeconds: number;
+  kind: "terrain" | "unit";
+  x: number;
+  y: number;
+  cellIdx: number;
+  material: CellMaterialId;
+  maxHp: number;
+  unitHp?: number;
+  unitMaxHp?: number;
+  claimed: boolean;
+};
 
 export type ScenarioId =
   | "tutorialBreach"
