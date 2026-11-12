@@ -27,7 +27,7 @@ import {
   MAX_ELEVATION_PX,
   TOWER_ELEVATION_PX,
 } from "./elevation.ts";
-import { paintVoidLedge } from "./ledge.ts";
+import { isOccludedByLedge, paintVoidLedge } from "./ledge.ts";
 import { computeOrganismContour, computeNodeContour } from "./contour.ts";
 import {
   generateWispsForPortals,
@@ -43,6 +43,8 @@ import { CHUNK_SIZE, CORRUPTION_REACH, PIXEL_AREA, pixels } from "./config.ts";
 import { hash, hash01 } from "./grid.ts";
 import {
   CellMaterial,
+  type Civilian,
+  type FallingChunk,
   LandCover,
   type MetroBuilding,
   type PlacedTower,
@@ -50,6 +52,7 @@ import {
   type TowerTypeId,
   type VoidPortal,
 } from "./model.ts";
+import { FALL_GRAVITY_PX, VOID_ABYSS_Z } from "./physics.ts";
 import type { VoidSim } from "./sim.ts";
 import { STRIKE_SPECS, TOWER_SPECS } from "./towers.ts";
 import type { VoidWorld } from "./world.ts";
@@ -147,6 +150,21 @@ export class VoidRenderer {
   // Cached seeded spiral wisps for living Void interior
   private interiorWisps: SeededWisp[] = [];
   private wispsWorld: VoidWorld | null = null;
+
+  /** Pre-allocated pool of 60 cosmetic street civilians who flee encroaching Void and fall if their street becomes Void. */
+  readonly civilians: Civilian[] = Array.from({ length: 60 }, () => ({
+    active: false,
+    x: 0,
+    y: 0,
+    z: 0,
+    vx: 0,
+    vy: 0,
+    vz: 0,
+    color: "#ffe49e",
+    falling: false,
+  }));
+  private civiliansWorld: VoidWorld | null = null;
+  private civilianSpawnSlot = 0;
 
   /** Camera state: `s` = zoom multiplier (1 = fit board), `x, y` = canvas pixel pan. */
   readonly cam = { s: 1, x: 0, y: 0 };
@@ -361,6 +379,158 @@ export class VoidRenderer {
         dist: ((c * 13) % Math.max(1, corr.path.length)),
         speed: pixels(5.5 + (c % 4) * 1.5),
       });
+    }
+  }
+
+  /** Steps cosmetic street civilians near the active Void frontier and draws a whole-pixel
+   * falling chunk (shrinking `6 -> 4 -> 2 -> 1` px and darkening as `z < 0` sinks into the abyss). */
+  private stepCivilians(world: VoidWorld, frontierCells: readonly number[], dt: number): void {
+    if (this.civiliansWorld !== world) {
+      this.civiliansWorld = world;
+      this.civilianSpawnSlot = 0;
+      for (let i = 0; i < this.civilians.length; i++) {
+        this.civilians[i].active = false;
+      }
+    }
+    if (this.reduceEffects) return;
+
+    const { w, h } = world.grid;
+    const { material } = world;
+    const civColors = ["#ffe49e", "#7afcff", "#ffd166", "#f4f6ff"];
+
+    // Spawn up to 2 fleeing civilians per frame on streets near the Void frontier when slots are free
+    if (frontierCells.length > 0) {
+      let spawned = 0;
+      for (let i = 0; i < this.civilians.length && spawned < 2; i++) {
+        const civ = this.civilians[i];
+        if (civ.active) continue;
+        this.civilianSpawnSlot++;
+        const fIdx =
+          frontierCells[hash(world.seed, 981, this.civilianSpawnSlot, i) % frontierCells.length];
+        const fx = fIdx % w;
+        const fy = (fIdx / w) | 0;
+        const ox = (hash(world.seed, 982, this.civilianSpawnSlot, i) % 9) - 4;
+        const oy = (hash(world.seed, 983, this.civilianSpawnSlot, i) % 9) - 4;
+        const sx = fx + ox;
+        const sy = fy + oy;
+        if (sx < 1 || sx >= w - 1 || sy < 1 || sy >= h - 1) continue;
+        if (material[sy * w + sx] !== CellMaterial.STREET) continue;
+
+        // Flee away from the nearest portal or Void neighbor
+        const np = this.nearestPortal(world, sx, sy);
+        const ang = np.p ? Math.atan2(sy - np.p.y, sx - np.p.x) : 0;
+        const spd = 4.2 + hash01(world.seed, 984, this.civilianSpawnSlot, i) * 3.0;
+        civ.active = true;
+        civ.x = sx + 0.5;
+        civ.y = sy + 0.5;
+        civ.z = 0;
+        civ.vx = Math.cos(ang) * spd;
+        civ.vy = Math.sin(ang) * spd;
+        civ.vz = 0;
+        civ.color = civColors[i % civColors.length];
+        civ.falling = false;
+        spawned++;
+      }
+    }
+
+    for (let i = 0; i < this.civilians.length; i++) {
+      const civ = this.civilians[i];
+      if (!civ.active) continue;
+      const gx = Math.floor(civ.x);
+      const gy = Math.floor(civ.y);
+      if (gx < 0 || gx >= w || gy < 0 || gy >= h) {
+        civ.active = false;
+        continue;
+      }
+      const mat = material[gy * w + gx];
+      if (!civ.falling) {
+        if (mat === CellMaterial.VOID) {
+          civ.falling = true;
+          civ.vz = 0;
+        } else {
+          const nx = civ.x + civ.vx * dt;
+          const ny = civ.y + civ.vy * dt;
+          const ngx = Math.floor(nx);
+          const ngy = Math.floor(ny);
+          if (ngx >= 0 && ngx < w && ngy >= 0 && ngy < h) {
+            const nMat = material[ngy * w + ngx];
+            if (nMat === CellMaterial.STREET || nMat === CellMaterial.PARK || nMat === CellMaterial.VOID) {
+              civ.x = nx;
+              civ.y = ny;
+            } else {
+              civ.vx = -civ.vx;
+              civ.vy = -civ.vy;
+            }
+          } else {
+            civ.active = false;
+          }
+        }
+      }
+      if (civ.falling) {
+        civ.vz -= FALL_GRAVITY_PX * dt;
+        civ.x += civ.vx * 0.35 * dt;
+        civ.y += civ.vy * 0.35 * dt;
+        civ.z += civ.vz * dt;
+        if (civ.z < VOID_ABYSS_Z) {
+          civ.active = false;
+        }
+      }
+    }
+  }
+
+  /** Draws a single 3D falling chunk at `(round(x), round(y - z))` with whole-pixel LOD shrinking
+   * (`6 -> 4 -> 2 -> 1` px) and Void darkening when `z < 0`. When `underVoid` is true, clips pixels
+   * hidden behind the subterranean ledge front face (`src/void/ledge.ts`). */
+  private paintFallingChunk(
+    c: CanvasRenderingContext2D,
+    world: VoidWorld,
+    ch: FallingChunk,
+    underVoid: boolean,
+  ): void {
+    const px = Math.round(ch.x);
+    const py = Math.round(ch.y - ch.z);
+    const { w, h } = world.grid;
+    if (px < 0 || px >= w || py < 0 || py >= h) return;
+
+    // Whole-pixel size reduction as chunk plunges below ground level into the abyss
+    let cw = ch.w;
+    let chH = ch.h;
+    let fill = ch.color;
+    let edge = ch.edgeColor;
+    if (ch.z < 0) {
+      const depth = -ch.z;
+      if (depth > 16) {
+        cw = 1;
+        chH = 1;
+        fill = "#2f176f";
+        edge = "#6e2bb4";
+      } else if (depth > 9) {
+        cw = Math.max(1, Math.min(2, cw));
+        chH = Math.max(1, Math.min(2, chH));
+        fill = "#4a1f93";
+        edge = "#9a36cf";
+      } else if (depth > 3) {
+        cw = Math.max(1, Math.min(4, cw));
+        chH = Math.max(1, Math.min(4, chH));
+        edge = "#df42d1";
+      }
+    }
+
+    for (let dy = 0; dy < chH; dy++) {
+      const sy = py + dy;
+      if (sy < 0 || sy >= h) continue;
+      for (let dx = 0; dx < cw; dx++) {
+        const sx = px + dx;
+        if (sx < 0 || sx >= w) continue;
+        if (underVoid) {
+          // Beneath-ground chunks only render inside Void space and behind northern ledge front faces
+          if (world.material[sy * w + sx] !== CellMaterial.VOID) continue;
+          if (isOccludedByLedge(world, sx, sy)) continue;
+        }
+        const isRim = (cw > 1 || chH > 1) && (dx === 0 || dy === 0);
+        c.fillStyle = isRim ? edge : fill;
+        c.fillRect(sx, sy, 1, 1);
+      }
     }
   }
 

@@ -10,6 +10,43 @@ type Painter = Pick<CanvasRenderingContext2D, "fillStyle" | "fillRect">;
 const EARTH = ["#846443", "#614731", "#735438", "#44352f", "#372b30"];
 const ROCK = ["#868080", "#5f5b62", "#716970", "#423e4c", "#312c3e"];
 
+/** Returns the vertical front-face depth (in world pixels `3..7`) of the subterranean ledge
+ * below ground cell `(x, y)`, or `0` if `(x, y + 1)` is not Void. */
+export function ledgeFrontDepthAt(world: LedgeWorld, x: number, y: number): number {
+  const { w, h } = world.grid;
+  if (x < 0 || y < 0 || x >= w || y + 1 >= h) return 0;
+  const idx = y * w + x;
+  const material = world.material[idx];
+  if (material === CellMaterial.VOID || material === CellMaterial.UNCLAIMED) return 0;
+  if (world.material[idx + w] !== CellMaterial.VOID) return 0;
+  const depth =
+    3 +
+    (hash(world.seed, 1201, x >> 2, y >> 1) % 3) +
+    (hash(world.seed, 1202, x, y) % 5 === 0 ? 1 : 0);
+  let visibleDepth = 0;
+  for (let d = 1; d <= depth; d++) {
+    if (y + d >= h || world.material[idx + d * w] !== CellMaterial.VOID) break;
+    visibleDepth = d;
+  }
+  return visibleDepth > 0 ? visibleDepth + 1 : 0;
+}
+
+/** Returns true if screen pixel `(px, py)` in Void space is covered by a northern ground ledge's
+ * front face (`y0 + 1 .. y0 + ledgeFrontDepthAt(x, y0)`). */
+export function isOccludedByLedge(world: LedgeWorld, px: number, py: number): boolean {
+  const { w, h } = world.grid;
+  if (px < 0 || py <= 0 || px >= w || py >= h) return false;
+  if (world.material[py * w + px] !== CellMaterial.VOID) return false;
+  for (let d = 1; d <= 7 && py - d >= 0; d++) {
+    const ny = py - d;
+    if (world.material[ny * w + px] !== CellMaterial.VOID) {
+      const fDepth = ledgeFrontDepthAt(world, px, ny);
+      return d <= fDepth;
+    }
+  }
+  return false;
+}
+
 /** A slightly elevated camera sees the south-facing cut most clearly, with narrow
  * darker side cuts. Layering after the nebula lets the ledge occlude the abyss. */
 export function paintVoidLedge(c: Painter, world: LedgeWorld, frontier: readonly number[]): void {

@@ -173,6 +173,40 @@ export type DebrisFragment = {
   maxLife: number;
 };
 
+/** Pooled 3D falling chunk (masonry, roof, tower, or unit) that falls under gravity (`vz -= g * dt`),
+ * either bouncing and settling into salvageable rubble on solid ground or plunging below the ground plane
+ * (`z < 0`, drawn at `screenY = y - z`) into the Void behind the subterranean ledge. */
+export type FallingChunk = {
+  active: boolean;
+  x: number;
+  y: number;
+  z: number;
+  vx: number;
+  vy: number;
+  vz: number;
+  w: number;
+  h: number;
+  color: string;
+  edgeColor: string;
+  settle: "salvage" | "void" | "fade";
+  age: number;
+  bounces: number;
+};
+
+/** Cosmetic 1-pixel civilian on city streets near the Void frontier who flees away from Void
+ * and falls into the abyss if the street beneath them is consumed. */
+export type Civilian = {
+  active: boolean;
+  x: number;
+  y: number;
+  z: number;
+  vx: number;
+  vy: number;
+  vz: number;
+  color: string;
+  falling: boolean;
+};
+
 /** Expanding shockwave or energy ring from Matter Cannon impacts, Landfall, or Containment Pulse. */
 export type ShockwaveEffect = {
   x: number;

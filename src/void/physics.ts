@@ -4,9 +4,23 @@ import { CORRUPTION_REACH, PIXEL_AREA, pixels } from "./config.ts";
  * for Void Defense. */
 
 import { dist } from "../exact.ts";
+import { ARCH_PALETTES, FLOORS_PER_PIXEL } from "./elevation.ts";
 import { hash01, ORTHO } from "./grid.ts";
-import { CellMaterial, type DebrisFragment, LandCover, type ShockwaveEffect } from "./model.ts";
+import {
+  CellMaterial,
+  type DebrisFragment,
+  type FallingChunk,
+  LandCover,
+  type ShockwaveEffect,
+} from "./model.ts";
 import type { VoidWorld } from "./world.ts";
+
+/** Maximum pooled 3D falling chunks (zero per-tick allocation). */
+export const MAX_FALLING_CHUNKS = 200;
+/** Vertical gravitational acceleration in world pixels / s². */
+export const FALL_GRAVITY_PX = 60;
+/** Depth below ground plane (`z < -24`) at which falling Void-bound chunks vanish. */
+export const VOID_ABYSS_Z = -24;
 
 /** Prismatic spark colours for small fast fragments. */
 const DEBRIS_PALETTES: readonly { color: string; glow: string }[] = [
@@ -47,10 +61,95 @@ const SLAB_URBAN: Record<number, readonly string[]> = {
 export class VoidPhysics {
   readonly debris: DebrisFragment[] = [];
   readonly shockwaves: ShockwaveEffect[] = [];
+  /** Pre-allocated fixed pool of 3D falling chunks (masonry, roof slabs, collapsed towers, fallen units). */
+  readonly fallingChunks: FallingChunk[] = Array.from({ length: MAX_FALLING_CHUNKS }, () => ({
+    active: false,
+    x: 0,
+    y: 0,
+    z: 0,
+    vx: 0,
+    vy: 0,
+    vz: 0,
+    w: 1,
+    h: 1,
+    color: "#4a525e",
+    edgeColor: "#ff8c29",
+    settle: "void",
+    age: 0,
+    bounces: 0,
+  }));
   /** Set of building IDs that lost at least one pixel this tick and need a local connectivity check. */
   private readonly damagedBuildings = new Set<number>();
   /** Monotonic tick counter for deterministic spalling rolls. */
   private supportTick = 0;
+
+  /** Returns the count of currently active falling chunks in the pool. */
+  activeFallingChunkCount(): number {
+    let n = 0;
+    for (let i = 0; i < this.fallingChunks.length; i++) {
+      if (this.fallingChunks[i].active) n++;
+    }
+    return n;
+  }
+
+  /** Spawns a falling chunk into the pre-allocated pool without allocating.
+   * When the pool is full, recycles the oldest Void-bound chunk first, else the oldest chunk. */
+  spawnFallingChunk(
+    x: number,
+    y: number,
+    z: number,
+    vx: number,
+    vy: number,
+    vz: number,
+    w: number,
+    h: number,
+    color: string,
+    edgeColor: string,
+    settle: "salvage" | "void" | "fade",
+  ): FallingChunk {
+    let slot = -1;
+    let oldestVoidSlot = -1;
+    let oldestVoidAge = -1;
+    let oldestAnySlot = 0;
+    let oldestAnyAge = -1;
+
+    for (let i = 0; i < this.fallingChunks.length; i++) {
+      const ch = this.fallingChunks[i];
+      if (!ch.active) {
+        slot = i;
+        break;
+      }
+      if (ch.settle === "void" && ch.age > oldestVoidAge) {
+        oldestVoidAge = ch.age;
+        oldestVoidSlot = i;
+      }
+      if (ch.age > oldestAnyAge) {
+        oldestAnyAge = ch.age;
+        oldestAnySlot = i;
+      }
+    }
+
+    if (slot < 0) {
+      slot = oldestVoidSlot >= 0 ? oldestVoidSlot : oldestAnySlot;
+    }
+
+    const ch = this.fallingChunks[slot];
+    ch.active = true;
+    ch.x = x;
+    ch.y = y;
+    ch.z = z;
+    ch.vx = vx;
+    ch.vy = vy;
+    ch.vz = vz;
+    ch.w = Math.max(1, Math.round(w));
+    ch.h = Math.max(1, Math.round(h));
+    ch.color = color;
+    ch.edgeColor = edgeColor;
+    ch.settle = settle;
+    ch.age = 0;
+    ch.bounces = 0;
+    return ch;
+  }
 
   /** Converts cell `idx` into Void and queues any affected building for structural support evaluation. */
   consumeCellIntoVoid(world: VoidWorld, idx: number, spawnDebris = true): void {
@@ -191,6 +290,11 @@ export class VoidPhysics {
         }
 
         // 2. Cantilever check for overhanging columns over Void
+        const palettes = ARCH_PALETTES[b.archStyle] ?? ARCH_PALETTES.glassTower;
+        const pal = palettes[b.variant % palettes.length];
+        const bCenterX = b.x + b.w * 0.5;
+        const bCenterY = b.y + b.h * 0.5;
+
         if (overhanging.length > 0) {
           for (let i = 0; i < overhanging.length; i++) {
             const c = overhanging[i];
@@ -211,6 +315,24 @@ export class VoidPhysics {
             if (!held) {
               columnFloors[c] = 0;
               world.grid.markIndexDirty(c);
+              const z0 = Math.max(1, Math.ceil(floors / FLOORS_PER_PIXEL));
+              const outX = cx - bCenterX;
+              const outY = cy - bCenterY;
+              const outD = Math.max(1, dist(outX, outY));
+              const spd = 2.0 + hash01(world.seed, 945, this.supportTick, c) * 3.5;
+              this.spawnFallingChunk(
+                cx,
+                cy,
+                z0,
+                (outX / outD) * spd,
+                (outY / outD) * spd,
+                0,
+                floors >= 12 ? 2 : 1,
+                floors >= 12 ? 2 : 1,
+                pal.crown,
+                pal.neonEdge,
+                "void",
+              );
             } else {
               hasBrinkOrOverhang = true;
               // Overhanging cantilever spalls from the top
@@ -218,6 +340,24 @@ export class VoidPhysics {
                 const loss = 1 + (hash01(world.seed, 941, this.supportTick, c) < 0.35 ? 1 : 0);
                 columnFloors[c] = Math.max(0, floors - loss);
                 world.grid.markIndexDirty(c);
+                const z0 = Math.max(1, Math.ceil(floors / FLOORS_PER_PIXEL));
+                const outX = cx - bCenterX;
+                const outY = cy - bCenterY;
+                const outD = Math.max(1, dist(outX, outY));
+                const spd = 2.0 + hash01(world.seed, 946, this.supportTick, c) * 3.0;
+                this.spawnFallingChunk(
+                  cx,
+                  cy,
+                  z0,
+                  (outX / outD) * spd,
+                  (outY / outD) * spd,
+                  0,
+                  1,
+                  1,
+                  pal.mid,
+                  pal.neonCore,
+                  "void",
+                );
               }
             }
           }
@@ -241,9 +381,28 @@ export class VoidPhysics {
               columnFloors[c] > 1 &&
               hash01(world.seed, 942, this.supportTick, c) < 0.14 * adjVoid
             ) {
+              const oldFloors = columnFloors[c];
               const loss = adjVoid >= 2 ? 2 : 1;
-              columnFloors[c] = Math.max(1, columnFloors[c] - loss);
+              columnFloors[c] = Math.max(1, oldFloors - loss);
               world.grid.markIndexDirty(c);
+              const z0 = Math.max(1, Math.ceil(oldFloors / FLOORS_PER_PIXEL));
+              const outX = cx - bCenterX;
+              const outY = cy - bCenterY;
+              const outD = Math.max(1, dist(outX, outY));
+              const spd = 2.2 + hash01(world.seed, 947, this.supportTick, c) * 3.2;
+              this.spawnFallingChunk(
+                cx,
+                cy,
+                z0,
+                (outX / outD) * spd,
+                (outY / outD) * spd,
+                0,
+                adjVoid >= 2 ? 2 : 1,
+                1,
+                pal.podium,
+                pal.neonEdge,
+                "fade",
+              );
             }
           }
         }
@@ -285,6 +444,22 @@ export class VoidPhysics {
             const splinter = components[i];
             if (splinter.length <= 2 / PIXEL_AREA) {
               for (const cIdx of splinter) {
+                const sx = cIdx % w;
+                const sy = (cIdx / w) | 0;
+                const z0 = Math.max(1, Math.ceil((columnFloors[cIdx] || b.height) / FLOORS_PER_PIXEL));
+                this.spawnFallingChunk(
+                  sx,
+                  sy,
+                  z0,
+                  0,
+                  0,
+                  0,
+                  1,
+                  1,
+                  "#6e472b",
+                  "#ff8c29",
+                  "salvage",
+                );
                 material[cIdx] = CellMaterial.SALVAGE;
                 hp[cIdx] = 20;
                 maxHp[cIdx] = 26;
@@ -337,6 +512,74 @@ export class VoidPhysics {
       s.life += dt;
       if (s.life >= s.maxLife) {
         this.shockwaves.splice(i, 1);
+      }
+    }
+
+    // Advance pooled 3D falling chunks (semi-implicit Euler under gravity g = 60 px/s²)
+    this.stepFallingChunks(world, dt);
+  }
+
+  /** Steps all active 3D falling chunks for `dt` seconds.
+   * Over solid ground: bounces once at `z = 0` (`vz = -vz * 0.25`) then settles (depositing `SALVAGE` if `settle === "salvage"`).
+   * Over Void: falls below the ground plane (`z < 0`, drawn at `screenY = y - z`) and vanishes at `z < -24`. */
+  stepFallingChunks(world: VoidWorld, dt: number): void {
+    const { w, h } = world.grid;
+    const { material, hp, maxHp, buildingAt, towerAt } = world;
+    const drag = Math.max(0, 1 - 1.2 * dt);
+
+    for (let i = 0; i < this.fallingChunks.length; i++) {
+      const ch = this.fallingChunks[i];
+      if (!ch.active) continue;
+
+      ch.age += dt;
+      ch.vz -= FALL_GRAVITY_PX * dt;
+      ch.vx *= drag;
+      ch.vy *= drag;
+      ch.x += ch.vx * dt;
+      ch.y += ch.vy * dt;
+      ch.z += ch.vz * dt;
+
+      const gx = Math.floor(ch.x);
+      const gy = Math.floor(ch.y);
+      if (gx < 0 || gx >= w || gy < 0 || gy >= h) {
+        ch.active = false;
+        continue;
+      }
+
+      const idx = gy * w + gx;
+      const onVoid = material[idx] === CellMaterial.VOID;
+
+      if (!onVoid && ch.z <= 0) {
+        ch.z = 0;
+        if (ch.bounces === 0 && Math.abs(ch.vz) > 8) {
+          ch.vz = -ch.vz * 0.25;
+          ch.vx *= 0.45;
+          ch.vy *= 0.45;
+          ch.bounces = 1;
+        } else {
+          if (
+            ch.settle === "salvage" &&
+            material[idx] !== CellMaterial.VOID &&
+            material[idx] !== CellMaterial.UNCLAIMED &&
+            material[idx] !== CellMaterial.WALL &&
+            material[idx] !== CellMaterial.BARRIER &&
+            buildingAt[idx] < 0 &&
+            towerAt[idx] < 0
+          ) {
+            material[idx] = CellMaterial.SALVAGE;
+            hp[idx] = 20;
+            maxHp[idx] = 26;
+            world.grid.markIndexDirty(idx);
+          }
+          ch.active = false;
+        }
+        continue;
+      }
+
+      if (onVoid && ch.z < VOID_ABYSS_Z) {
+        ch.active = false;
+      } else if (ch.age > 3.5) {
+        ch.active = false;
       }
     }
   }

@@ -628,16 +628,39 @@ export class VoidCombatManager {
       }
     }
 
-    // 2. Check if any tower sits on Void and destroy it
+    // 2. Check if any tower sits on Void and destroy it (spawning a falling tower chunk into the abyss)
     for (let i = this.towers.length - 1; i >= 0; i--) {
       const t = this.towers[i];
       let voided = 0;
+      let vxSum = 0;
+      let vySum = 0;
+      const cx = t.x + t.w * 0.5;
+      const cy = t.y + t.h * 0.5;
       for (let py = t.y; py < t.y + t.h; py++) {
         for (let px = t.x; px < t.x + t.w; px++) {
-          if (world.material[world.grid.index(px, py)] === CellMaterial.VOID) voided++;
+          if (world.material[world.grid.index(px, py)] === CellMaterial.VOID) {
+            voided++;
+            vxSum += px + 0.5 - cx;
+            vySum += py + 0.5 - cy;
+          }
         }
       }
       if (voided > (t.w * t.h) / 2 || t.hp <= 0) {
+        const spec = TOWER_SPECS[t.type];
+        const vLen = Math.max(0.5, dist(vxSum, vySum));
+        physics.spawnFallingChunk(
+          Math.floor(cx),
+          Math.floor(cy),
+          2,
+          (vxSum / vLen) * 3.5,
+          (vySum / vLen) * 3.5,
+          0,
+          t.w,
+          t.h,
+          spec.color,
+          "#242c3a",
+          "void",
+        );
         this.removeTower(world, t.uid);
       }
     }
@@ -770,6 +793,25 @@ export class VoidCombatManager {
         }
         a.hp -= 18 * dt;
         if (a.hp <= 0) {
+          const aColor =
+            a.kind === "engineer"
+              ? "#ffd15c"
+              : a.kind === "heavyMech"
+                ? "#7afcff"
+                : "#ff7b24";
+          physics.spawnFallingChunk(
+            cellX,
+            cellY,
+            1,
+            a.vx * 0.25,
+            a.vy * 0.25,
+            0,
+            a.kind === "heavyMech" ? 2 : 1,
+            a.kind === "engineer" || a.kind === "heavyMech" ? 2 : 1,
+            aColor,
+            "#ff42b8",
+            "void",
+          );
           this.agents.splice(i, 1);
           continue;
         }
