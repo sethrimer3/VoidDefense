@@ -33,6 +33,7 @@ import {
   generateWispsForPortals,
   computeVoidInterior,
   paintVoidInterior,
+  paintVoidRipples,
   sampleStarNest,
   starNestColor,
   type SeededWisp,
@@ -165,6 +166,8 @@ export class VoidRenderer {
   }));
   private civiliansWorld: VoidWorld | null = null;
   private civilianSpawnSlot = 0;
+  private lastSeenCollapseTick = 0;
+  private shakeMs = 0;
 
   /** Camera state: `s` = zoom multiplier (1 = fit board), `x, y` = canvas pixel pan. */
   readonly cam = { s: 1, x: 0, y: 0 };
@@ -1169,6 +1172,7 @@ export class VoidRenderer {
     }
     const interiorWisps = computeVoidInterior(world, this.interiorWisps, animTime, this.reduceEffects);
     paintVoidInterior(c, interiorWisps);
+    paintVoidRipples(c, world, physics.voidRipples, this.reduceEffects);
     lap("interior");
 
     // Exposed strata and undercuts sit in front of the nebula and interior wisps, below the ground lip.
@@ -1360,6 +1364,16 @@ export class VoidRenderer {
             c.fillStyle = civ.color;
             c.fillRect(sx, sy, 1, 1);
           }
+        }
+      }
+      for (let i = 0; i < physics.dustPuffs.length; i++) {
+        const p = physics.dustPuffs[i];
+        if (!p.active) continue;
+        const sx = Math.round(p.x);
+        const sy = Math.round(p.y - p.z);
+        if (sx >= 0 && sx < w && sy >= 0 && sy < h) {
+          c.fillStyle = p.color;
+          c.fillRect(sx, sy, 1, 1);
         }
       }
     }
@@ -1704,13 +1718,31 @@ export class VoidRenderer {
       }
     }
 
+    // 1 device-pixel camera shake when >= 20 building columns collapse in one tick (disabled under reduceEffects)
+    if (physics.lastLargeCollapseTick > this.lastSeenCollapseTick) {
+      this.lastSeenCollapseTick = physics.lastLargeCollapseTick;
+      if (!this.reduceEffects) {
+        this.shakeMs = 120;
+      }
+    }
+    let shakeX = 0;
+    let shakeY = 0;
+    if (this.shakeMs > 0) {
+      this.shakeMs = Math.max(0, this.shakeMs - dt * 1000);
+      if (!this.reduceEffects && this.shakeMs > 0) {
+        const phase = Math.floor(nowMs / 30);
+        shakeX = (phase & 1) === 0 ? 1 : -1;
+        shakeY = ((phase >> 1) & 1) === 0 ? 1 : -1;
+      }
+    }
+
     // Magnify the same world-pixel raster; camera zoom reveals no sub-cell detail.
     const output = this.ctx;
     output.setTransform(1, 0, 0, 1, 0, 0);
     output.drawImage(this.backdropFor(this.canvas.width, this.canvas.height, world.seed), 0, 0);
     const scale = this.pixelScale();
     output.imageSmoothingEnabled = false;
-    output.setTransform(scale, 0, 0, scale, this.cam.x, this.cam.y);
+    output.setTransform(scale, 0, 0, scale, this.cam.x + shakeX, this.cam.y + shakeY);
     output.drawImage(this.sceneLayer, 0, 0);
     output.setTransform(1, 0, 0, 1, 0, 0);
 

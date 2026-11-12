@@ -248,6 +248,6 @@ the tests and screenshots to show it.
 |-------|-------|-------------------|
 | 1. Elevated buildings and facades | - [x] | `e994624` (`src/void/elevation.ts`, `src/void/render.ts`, `tests/void-depth.test.ts`, `test-results/void-depth/ringed-building-{desktop,phone}.png`) |
 | 2. Structural damage and exposed floors | - [x] | `88e56e1` (`src/void/world.ts`, `src/void/physics.ts`, `src/void/elevation.ts`, `test-results/void-depth/mid-collapse-{desktop,phone}.png`) |
-| 3. Falling physics | - [x] | `src/void/physics.ts`, `src/void/ledge.ts`, `src/void/towers.ts`, `src/void/render.ts`, `tests/void-depth.test.ts`, `tests/void-depth.mjs`, `test-results/void-depth/falling-chunk-{desktop,phone}.png` |
-| 4. Polish | - [ ] | |
+| 3. Falling physics | - [x] | `d022638` (`src/void/physics.ts`, `src/void/ledge.ts`, `src/void/towers.ts`, `src/void/render.ts`, `tests/void-depth.test.ts`, `tests/void-depth.mjs`, `test-results/void-depth/falling-chunk-{desktop,phone}.png`) |
+| 4. Polish | - [x] | `src/void/physics.ts`, `src/void/audio.ts`, `src/void/interior.ts`, `src/void/render.ts`, `tests/void-depth.test.ts` |
 | 5. Gameplay tie-ins (optional) | - [ ] | Needs Seth's go-ahead |

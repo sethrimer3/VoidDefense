@@ -269,4 +269,39 @@ test("Phase 3: FallingChunk pool (cap 200), ground salvage deposition vs Void ab
   assert.ok(foundLedge, "Expected at least one north-rim subterranean ledge on tutorialBreach");
 });
 
+test("Phase 4: pooled dust puffs, large-collapse camera shake trigger, and Void abyss ripples", () => {
+  const sim = new VoidSim("tutorialBreach", "buildAndWatch", emptyTechWallet());
+  const { world, physics } = sim;
+  const p = world.portals[0];
+
+  // 1. Dust puffs are pooled and capped (zero per-tick allocation)
+  for (let i = 0; i < 160; i++) {
+    physics.spawnDustPuff(p.x, p.y, 4, "#868080");
+  }
+  assert.equal(physics.dustPuffs.length, 120);
+  const activeDust = physics.dustPuffs.filter((d) => d.active).length;
+  assert.equal(activeDust, 120);
+
+  // 2. Large falling chunk (w * h >= 4) plunging past VOID_ABYSS_Z emits a Void interior ripple
+  for (const r of physics.voidRipples) r.active = false;
+  const big = physics.spawnFallingChunk(p.x, p.y, 1, 0, 0, -50, 2, 2, "#5a6376", "#78dcff", "void");
+  for (let t = 0; t < 60 && big.active; t++) {
+    physics.stepFallingChunks(world, 1 / 30);
+  }
+  const activeRipples = physics.voidRipples.filter((r) => r.active).length;
+  assert.ok(activeRipples >= 1, "Expected >= 1 Void ripple when a 2x2 chunk plunges past VOID_ABYSS_Z");
+
+  // 3. Collapsing >= 20 columns in one tick advances lastLargeCollapseTick for 1-px camera shake
+  const b = world.buildings.find((bld) => bld.cells.length >= 25)!;
+  const prevTick = physics.lastLargeCollapseTick;
+  for (let i = 0; i < b.cells.length; i++) {
+    physics.consumeCellIntoVoid(world, b.cells[i], false);
+  }
+  physics.stepStructuralSupport(world, 1 / 30);
+  assert.ok(
+    physics.lastLargeCollapseTick > prevTick,
+    "Collapsing >= 20 columns in one tick must advance lastLargeCollapseTick",
+  );
+});
+
 
