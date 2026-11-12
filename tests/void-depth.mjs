@@ -222,8 +222,177 @@ try {
     assert.equal(collapseCheck.unchanged, true, "Cutaway rendering must not mutate columnFloors");
 
     await page.screenshot({ path: `${outputDir}/mid-collapse-${label}.png` });
+
+    // Phase 3: Falling chunks, agents, towers, and fleeing/falling civilians plunging into the Void abyss (z < 0)
+    const fallingCheck = await page.evaluate(async () => {
+      const { VoidSim } = await import("/src/void/sim.ts");
+      const { VoidRenderer } = await import("/src/void/render.ts");
+      const { emptyTechWallet } = await import("/src/void/tech/wallet.ts");
+      const { isOccludedByLedge } = await import("/src/void/ledge.ts");
+
+      const sim = new VoidSim("tutorialBreach", "buildAndWatch", emptyTechWallet());
+      const { world, physics, voidField } = sim;
+      const { w, h } = world.grid;
+
+      const tall = world.buildings.filter(
+        (b) => b.isSkyscraper && b.height >= 20 && b.w >= 8 && b.h >= 6 && b.x > 40 && b.x < w - 40 && b.y > 50 && b.y < h - 50,
+      );
+      const bMain = tall[0];
+
+      // Carve a deep Void chasm directly south of bMain so chunks and agents plunge below the northern ledge
+      const cutY = bMain.y + Math.floor(bMain.h * 0.5);
+      for (let py = cutY; py < bMain.y + bMain.h + 22; py++) {
+        for (let px = bMain.x - 10; px < bMain.x + bMain.w + 10; px++) {
+          if (world.grid.inBounds(px, py)) {
+            physics.consumeCellIntoVoid(world, py * w + px, false);
+          }
+        }
+      }
+      voidField.rebuildFrontier(world);
+
+      const canvas = document.querySelectorAll("canvas")[document.querySelectorAll("canvas").length - 1];
+      const renderer = new VoidRenderer(canvas);
+      renderer.resize(w, h);
+      renderer.cam.s = innerWidth < 500 ? 6 : 5;
+      const scale = renderer.pixelScale();
+      const cx = bMain.x + bMain.w * 0.5;
+      const cy = cutY + 4;
+      renderer.cam.x = Math.round(canvas.width / 2 - cx * scale);
+      renderer.cam.y = Math.round(canvas.height / 2 - cy * scale);
+
+      // Clear auto-spawned chunks so we can place a controlled cascade of above-ground (z >= 0)
+      // and below-ground (z < 0) chunks, falling agents, and a falling tower
+      for (const c of physics.fallingChunks) c.active = false;
+
+      // 1. Chunk behind northern ledge front face (cutY + 1 at z = 0 -> screenY = cutY + 1, which is inside the 4px ledge at cutY)
+      const ledgeBlocked = isOccludedByLedge(world, bMain.x + 2, cutY + 1);
+
+      // 2. Spawn visible cascade of falling building chunks, a tipping tower chunk, and falling agents into the open Void chasm
+      const chasmX = bMain.x + Math.floor(bMain.w * 0.5);
+      // Mid-air chunks detaching from the upper facade (z > 0)
+      physics.spawnFallingChunk({
+        x: chasmX - 4,
+        y: cutY - 1,
+        z: 7,
+        vx: -2,
+        vy: 4,
+        vz: -8,
+        w: 2,
+        h: 2,
+        color: "#6b7588",
+        accentColor: "#ffe28a",
+        settle: "void",
+        kind: "slab",
+      });
+      physics.spawnFallingChunk({
+        x: chasmX + 2,
+        y: cutY,
+        z: 5,
+        vx: 2,
+        vy: 3,
+        vz: -6,
+        w: 2,
+        h: 2,
+        color: "#5c6574",
+        accentColor: "#48e5ff",
+        settle: "void",
+        kind: "wall",
+      });
+
+      // Tipping tower chunk over the Void chasm
+      physics.spawnFallingChunk({
+        x: chasmX - 1,
+        y: cutY + 6,
+        z: -2,
+        vx: 1,
+        vy: 2,
+        vz: -14,
+        w: 4,
+        h: 4,
+        color: "#5a6376",
+        accentColor: "#78dcff",
+        settle: "void",
+        kind: "tower",
+      });
+
+      // Plunging chunks and agents at progressive depths in the Void (z = -4, -9, -15)
+      physics.spawnFallingChunk({
+        x: chasmX - 5,
+        y: cutY + 8,
+        z: -4,
+        vx: -1,
+        vy: 1,
+        vz: -18,
+        w: 2,
+        h: 2,
+        color: "#ff5c77",
+        accentColor: "#ffffff",
+        settle: "void",
+        kind: "agent",
+      });
+      physics.spawnFallingChunk({
+        x: chasmX + 4,
+        y: cutY + 9,
+        z: -9,
+        vx: 1,
+        vy: 1,
+        vz: -24,
+        w: 2,
+        h: 2,
+        color: "#6b7588",
+        accentColor: "#b23fe6",
+        settle: "void",
+        kind: "slab",
+      });
+      physics.spawnFallingChunk({
+        x: chasmX - 2,
+        y: cutY + 11,
+        z: -15,
+        vx: 0,
+        vy: 1,
+        vz: -30,
+        w: 2,
+        h: 2,
+        color: "#ffd166",
+        accentColor: "#141923",
+        settle: "void",
+        kind: "agent",
+      });
+
+      // Compare sceneCtx with reduceEffects = true (chunks suppressed) vs reduceEffects = false (chunks drawn)
+      renderer.reduceEffects = true;
+      renderer.draw(sim, 2000, null, null, null, false);
+      const imgReduced = renderer.sceneCtx.getImageData(0, 0, w, h).data;
+
+      renderer.reduceEffects = false;
+      renderer.draw(sim, 2000, null, null, null, false);
+      const imgFull = renderer.sceneCtx.getImageData(0, 0, w, h).data;
+
+      let diffPixels = 0;
+      for (let i = 0; i < imgFull.length; i += 4) {
+        if (
+          imgFull[i] !== imgReduced[i] ||
+          imgFull[i + 1] !== imgReduced[i + 1] ||
+          imgFull[i + 2] !== imgReduced[i + 2]
+        ) {
+          diffPixels++;
+        }
+      }
+
+      return {
+        ledgeBlocked,
+        activeChunks: physics.activeFallingChunkCount(),
+        diffPixels,
+      };
+    });
+
+    assert.equal(fallingCheck.ledgeBlocked, true, "Northern ledge front face must clip z < 0 chunks behind it");
+    assert.equal(fallingCheck.activeChunks, 6, "Expected 6 active falling chunks in scene");
+    assert.ok(fallingCheck.diffPixels >= 10, `Expected falling chunks/civilians to paint >= 10 pixels (got ${fallingCheck.diffPixels})`);
+
+    await page.screenshot({ path: `${outputDir}/falling-chunk-${label}.png` });
     await page.close();
-    console.log(`PASS ${label} (${width}x${height} DPR ${dpr}): ringed building & mid-collapse exposed floors verified`);
+    console.log(`PASS ${label} (${width}x${height} DPR ${dpr}): ringed building, mid-collapse cutaways & falling chunks verified`);
   }
 } finally {
   await browser.close();

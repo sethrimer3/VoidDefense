@@ -1173,6 +1173,36 @@ export class VoidRenderer {
 
     // Exposed strata and undercuts sit in front of the nebula and interior wisps, below the ground lip.
     paintVoidLedge(c, world, voidField.frontierCells);
+
+    // Step cosmetic fleeing civilians and draw beneath-ground falling chunks/civilians (`z < 0`),
+    // clipped behind northern ledge front faces.
+    this.stepCivilians(world, voidField.frontierCells, dt);
+    if (!this.reduceEffects) {
+      for (let i = 0; i < physics.fallingChunks.length; i++) {
+        const ch = physics.fallingChunks[i];
+        if (ch.active && ch.z < 0) {
+          this.paintFallingChunk(c, world, ch, true);
+        }
+      }
+      for (let i = 0; i < this.civilians.length; i++) {
+        const civ = this.civilians[i];
+        if (civ.active && civ.z < 0) {
+          const sx = Math.round(civ.x);
+          const sy = Math.round(civ.y - civ.z);
+          if (
+            sx >= 0 &&
+            sx < w &&
+            sy >= 0 &&
+            sy < h &&
+            world.material[sy * w + sx] === CellMaterial.VOID &&
+            !isOccludedByLedge(world, sx, sy)
+          ) {
+            c.fillStyle = civ.z < -10 ? "#6e2bb4" : "#df42d1";
+            c.fillRect(sx, sy, 1, 1);
+          }
+        }
+      }
+    }
     lap("ledge");
 
     // 5. Draw crystalline Void Nodes (Phase 6+ infantry targets) with organic nebula contours
@@ -1311,6 +1341,27 @@ export class VoidRenderer {
     const rawScene = this.sceneCtx;
     if (atlas) {
       rawScene.drawImage(atlas, 0, 0);
+    }
+
+    // Draw above-ground falling chunks (`z >= 0`) and fleeing street civilians (`z >= 0`)
+    if (!this.reduceEffects) {
+      for (let i = 0; i < physics.fallingChunks.length; i++) {
+        const ch = physics.fallingChunks[i];
+        if (ch.active && ch.z >= 0) {
+          this.paintFallingChunk(c, world, ch, false);
+        }
+      }
+      for (let i = 0; i < this.civilians.length; i++) {
+        const civ = this.civilians[i];
+        if (civ.active && civ.z >= 0) {
+          const sx = Math.round(civ.x);
+          const sy = Math.round(civ.y - civ.z);
+          if (sx >= 0 && sx < w && sy >= 0 && sy < h) {
+            c.fillStyle = civ.color;
+            c.fillRect(sx, sy, 1, 1);
+          }
+        }
+      }
     }
 
     // Re-draw any tower or agent whose footprint bottom is south of an overlapping northern building's

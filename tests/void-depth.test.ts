@@ -12,7 +12,9 @@ import {
   TOWER_ELEVATION_PX,
 } from "../src/void/elevation.ts";
 import { getScenario } from "../src/void/maps.ts";
+import { isOccludedByLedge, ledgeFrontDepthAt } from "../src/void/ledge.ts";
 import { CellMaterial } from "../src/void/model.ts";
+import { MAX_FALLING_CHUNKS, VOID_ABYSS_Z } from "../src/void/physics.ts";
 import { VoidSim } from "../src/void/sim.ts";
 import { emptyTechWallet } from "../src/void/tech/wallet.ts";
 import { VoidWorld } from "../src/void/world.ts";
@@ -164,4 +166,107 @@ test("Phase 2: columnFloors initializes deterministically and cantilever / brink
   );
   assert.ok(hasSlabOrInterior, "Expected exposed concrete slab or room interior pixels in cutaway sprite");
 });
+
+test("Phase 3: FallingChunk pool (cap 200), ground salvage deposition vs Void abyss plunge (z < -24), and ledge front-face occlusion", () => {
+  const sim = new VoidSim("tutorialBreach", "underSiege", emptyTechWallet(), true);
+  const { world, physics } = sim;
+  const { w } = world.grid;
+
+  assert.equal(physics.fallingChunks.length, MAX_FALLING_CHUNKS);
+
+  // 1. Test falling chunk over solid street ground with settle="salvage": bounces once at z=0, then settles into CellMaterial.SALVAGE
+  let streetX = 20;
+  let streetY = 20;
+  for (let y = 10; y < 80; y++) {
+    for (let x = 10; x < 80; x++) {
+      const idx = y * w + x;
+      if (
+        world.material[idx] === CellMaterial.STREET &&
+        world.buildingAt[idx] < 0 &&
+        world.towerAt[idx] < 0
+      ) {
+        streetX = x;
+        streetY = y;
+        break;
+      }
+    }
+  }
+  const streetIdx = streetY * w + streetX;
+  const chGround = physics.spawnFallingChunk(
+    streetX + 0.5,
+    streetY + 0.5,
+    6,
+    0,
+    0,
+    0,
+    2,
+    2,
+    "#6e472b",
+    "#ff8c29",
+    "salvage",
+  );
+  assert.equal(chGround.active, true);
+
+  let bounced = false;
+  for (let t = 0; t < 40 && chGround.active; t++) {
+    physics.stepFallingChunks(world, 1 / 30);
+    if (chGround.bounces > 0) bounced = true;
+  }
+  assert.equal(bounced, true, "Falling chunk over ground should bounce once before settling");
+  assert.equal(chGround.active, false, "Chunk should deactivate after settling on ground");
+  assert.equal(world.material[streetIdx], CellMaterial.SALVAGE, "Settled salvage chunk deposits CellMaterial.SALVAGE");
+
+  // 2. Test falling chunk over Void: falls below z = 0 (`z < 0`, drawn at `screenY = y - z`) and is removed at `z < -24`
+  const p = world.portals[0];
+  const chVoid = physics.spawnFallingChunk(
+    p.x,
+    p.y,
+    4,
+    0,
+    0,
+    0,
+    3,
+    3,
+    "#161f30",
+    "#ff8c29",
+    "void",
+  );
+  let sawNegativeZ = false;
+  let minZ = 4;
+  for (let t = 0; t < 60 && chVoid.active; t++) {
+    physics.stepFallingChunks(world, 1 / 30);
+    if (chVoid.z < 0) sawNegativeZ = true;
+    if (chVoid.z < minZ) minZ = chVoid.z;
+  }
+  assert.equal(sawNegativeZ, true, "Chunk over Void must plunge below ground level (z < 0)");
+  assert.equal(chVoid.active, false, "Chunk over Void must deactivate once z < -24");
+  assert.ok(minZ <= VOID_ABYSS_Z, `Expected minZ <= ${VOID_ABYSS_Z}, got ${minZ}`);
+
+  // 3. Test pool cap (~200): spawning 250 chunks never allocates beyond MAX_FALLING_CHUNKS and recycles oldest Void-bound first
+  for (let k = 0; k < 250; k++) {
+    physics.spawnFallingChunk(p.x, p.y, 5, 0, 0, 0, 1, 1, "#4a525e", "#ff8c29", k % 2 === 0 ? "void" : "fade");
+    physics.stepFallingChunks(world, 0.001);
+  }
+  assert.equal(physics.fallingChunks.length, MAX_FALLING_CHUNKS);
+  assert.ok(physics.activeFallingChunkCount() <= MAX_FALLING_CHUNKS);
+
+  // 4. Test ledge front-face occlusion helper
+  let foundLedge = false;
+  for (const fIdx of sim.voidField.frontierCells) {
+    const fx = fIdx % w;
+    const fy = (fIdx / w) | 0;
+    const d = ledgeFrontDepthAt(world, fx, fy);
+    if (d >= 4) {
+      foundLedge = true;
+      assert.equal(isOccludedByLedge(world, fx, fy + 1), true, "Pixel 1 px below north rim is occluded by ledge");
+      assert.equal(isOccludedByLedge(world, fx, fy + d), true, "Pixel at bottom of ledge front face is occluded");
+      if (fy + d + 2 < world.grid.h && world.material[(fy + d + 2) * w + fx] === CellMaterial.VOID) {
+        assert.equal(isOccludedByLedge(world, fx, fy + d + 2), false, "Pixel below ledge undercut is visible in Void");
+      }
+      break;
+    }
+  }
+  assert.ok(foundLedge, "Expected at least one north-rim subterranean ledge on tutorialBreach");
+});
+
 
