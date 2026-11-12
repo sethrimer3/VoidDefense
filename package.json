@@ -12,6 +12,7 @@
     "test:crisp": "node tests/void-crisp.mjs",
     "test:ledge": "node tests/void-ledge.mjs",
     "test:visuals": "node tests/void-visuals.mjs",
+    "test:depth": "node tests/void-depth.mjs",
     "test:defense": "node tests/void-defense.mjs",
     "font": "node --experimental-transform-types scripts/pixel-font/build.ts"
   },

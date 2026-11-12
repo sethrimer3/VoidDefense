@@ -29,6 +29,9 @@ node --experimental-transform-types --import ./tests/pin-random.ts --test tests/
 # Subterranean ledge strata generation and Void clipping
 node --experimental-transform-types --import ./tests/pin-random.ts --test tests/void-ledge.test.ts
 
+# 3D oblique building elevation, sprite cache, and roof picking
+node --experimental-transform-types --import ./tests/pin-random.ts --test tests/void-depth.test.ts
+
 # Sole-game bootstrap, legacy settings migration, and save isolation
 node --experimental-transform-types --import ./tests/pin-random.ts --test tests/bootstrap.test.ts
 
@@ -77,6 +80,10 @@ npm run test:ledge
 # Verify living Void interior wisps, nebula contours, Queen Bee & swarm noise outlines
 npm run test:visuals
 # node tests/void-visuals.mjs
+
+# Verify 3D oblique building depth, ringed building occlusion, and elevation modes
+npm run test:depth
+# node tests/void-depth.mjs
 
 # Verify full browser gameplay flow, HUD, towers, strikes, pause/speed controls, and QA benchmark
 npm run test:defense

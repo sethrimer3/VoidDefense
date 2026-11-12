@@ -27,6 +27,7 @@ npm run test:pixels   # 1:1 simulation cell to raster pixel regression
 npm run test:crisp    # Native-cell art and hard-edged shapes check
 npm run test:ledge    # Cutaway strata and subterranean ledge rendering
 npm run test:visuals  # Living Void interior wisps and organic noise contours
+npm run test:depth    # 3D oblique building depth, facades, and roof occlusion
 npm run test:defense  # Full browser QA and performance benchmark
 ```
 
@@ -57,6 +58,7 @@ npm run test:defense  # Full browser QA and performance benchmark
 - **World & Simulation Lattice.** One world pixel equals one simulation cell. Simulation runs on discrete integer lattice coordinates (`VoidWorld`, `VoidField`, `VoidPhysics`, `VoidSim`), eliminating fractional blur.
 - **Organic Noise Contours.** `src/void/portal-noise.ts` and `src/void/contour.ts` provide organic boundary contours using smooth cubic value noise and 4-octave ridged multifractals sampled from a 96×96 torus.
 - **Exposed Subterranean Ledges.** `src/void/ledge.ts` paints exposed strata and dark undersides along Void cutaways while strictly preserving ground isolation.
+- **Oblique ¾ Building Depth.** `src/void/elevation.ts` and `src/void/render.ts` project buildings (`1..15` px at 2 floors/px) and towers (`2` px) above the ground plane with whole-pixel south facades, setback terraces, directional SE shadows, and whole-pixel dithered occlusion fades.
 - **Deterministic Randomness.** Fixed-seed stream generation via `src/random.ts` and `src/void/grid.ts` preloaded via `tests/pin-random.ts`, guaranteeing repeatable simulations and regression tests.
 - **Typography & UI.** Alembic custom pixel font (`assets/fonts/Alembic/`) built directly into vector TrueType outlines (`scripts/pixel-font/build.ts`), paired with Cinzel fallback and responsive CSS (`src/style.css`, `src/theme.css`).
 - **Save Isolation.** `src/void/save.ts` persists into `voiddefense.v1` while leaving legacy `towerdefense.v1` in browser storage intact and safely adopting player callsigns and visual accessibility preferences on initial launch.

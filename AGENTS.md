@@ -20,6 +20,7 @@ npm run test:pixels    # One simulation cell per raster pixel regression (needs 
 npm run test:crisp     # Native-cell art and hard edges check (needs dev server)
 npm run test:ledge     # Exposed terrain cutaways check (needs dev server)
 npm run test:visuals   # Nebula contours and living interior wisps check (needs dev server)
+npm run test:depth     # 3D oblique building depth, crumbling cutaways, and falling physics check (needs dev server)
 npm run test:defense   # Full browser battle flow, HUD, towers, strikes and pause/speed controls (needs dev server)
 npm run font           # Rebuild the Alembic pixel font from scripts/pixel-font/glyphs.txt
 ```

@@ -136,6 +136,7 @@ export class VoidRenderer {
   buildingHeight: BuildingHeightMode = "full";
   /** Per-building elevated roof & south-facade sprite cache. */
   readonly spriteCache = new BuildingSpriteCache();
+  private lastDirtyChunks = new Uint8Array(0);
 
   // Tron light cycle trails along streets connecting buildings
   private corridors: TronCorridor[] = [];
@@ -384,7 +385,15 @@ export class VoidRenderer {
       world.grid.markAllDirty();
     }
 
-    if (!world.grid.hasDirtyChunks()) return;
+    if (!world.grid.hasDirtyChunks()) {
+      this.lastDirtyChunks.fill(0);
+      return;
+    }
+
+    if (this.lastDirtyChunks.length !== dirtyChunks.length) {
+      this.lastDirtyChunks = new Uint8Array(dirtyChunks.length);
+    }
+    this.lastDirtyChunks.set(dirtyChunks);
 
     const c = this.tctx;
     c.imageSmoothingEnabled = false;
@@ -1044,35 +1053,139 @@ export class VoidRenderer {
       }
     }
 
-    // 8. Sorted Structure Pass: buildings (roof + south facade), placed towers (elevated 2 px),
-    //    and autonomous agents (0-1 px) sorted back-to-front by footprint bottom `y` (tie-break `x`).
+    // 8. Sorted Structure Pass: placed towers (elevated 2 px), autonomous agents (0-1 px),
+    //    and elevated building roofs/south facades sorted back-to-front by footprint bottom `y`.
     const tElev =
       this.buildingHeight === "flat" ? 0 : this.buildingHeight === "low" ? 1 : TOWER_ELEVATION_PX;
 
-    type SortedDrawable =
-      | { kind: "building"; bottomY: number; sortX: number; sprite: CachedBuildingSprite }
-      | { kind: "tower"; bottomY: number; sortX: number; tower: (typeof combat.towers)[number] }
-      | { kind: "agent"; bottomY: number; sortX: number; agent: (typeof combat.agents)[number] };
-
-    const drawables: SortedDrawable[] = [];
-    for (let i = 0; i < world.buildings.length; i++) {
-      const sp = this.spriteCache.getSprite(world, world.buildings[i], this.buildingHeight);
-      if (sp.intactCount > 0) {
-        drawables.push({ kind: "building", bottomY: sp.bottomY, sortX: sp.x, sprite: sp });
+    const drawTower = (t: (typeof combat.towers)[number]): void => {
+      const spec = TOWER_SPECS[t.type];
+      const topY = t.y - tElev;
+      // Armored shadow & south base facade (2 px tall)
+      c.fillStyle = "#0d1118";
+      c.fillRect(t.x, topY, t.w, t.h + tElev);
+      if (tElev > 0) {
+        c.fillStyle = "#18202c";
+        c.fillRect(t.x, t.y + t.h - tElev, t.w, tElev);
       }
+      c.fillStyle = "#242c3a";
+      c.fillRect(t.x, topY, t.w, t.h);
+      // Corner rivets / mounting brackets
+      c.fillStyle = "#5c6b82";
+      c.fillRect(t.x, topY, 1, 1);
+      c.fillRect(t.x + t.w - 1, topY, 1, 1);
+      c.fillRect(t.x, topY + t.h - 1, 1, 1);
+      c.fillRect(t.x + t.w - 1, topY + t.h - 1, 1, 1);
+      // Primary colored turret housing
+      c.fillStyle = spec.color;
+      c.fillRect(t.x + 0.35, topY + 0.35, t.w - 0.7, t.h - 0.7);
+      // Glowing energy core / barrel mount
+      c.fillStyle = "#fff3d1";
+      c.fillRect(t.x + t.w * 0.5 - 0.45, topY + t.h * 0.5 - 0.45, 0.9, 0.9);
+
+      if (t.uid === selectedTowerUid) {
+        c.strokeStyle = "#ffbe3b";
+        c.lineWidth = 0.4;
+        c.strokeRect(t.x - 0.35, topY - 0.35, t.w + 0.7, t.h + tElev + 0.7);
+        c.strokeStyle = "rgba(255, 190, 59, 0.42)";
+        c.lineWidth = 0.35;
+        c.beginPath();
+        c.arc(t.x + t.w * 0.5, t.y + t.h * 0.5, spec.range, 0, Math.PI * 2);
+        c.stroke();
+      }
+
+      if (t.focus) {
+        c.strokeStyle = "rgba(255, 145, 45, 0.65)";
+        c.lineWidth = 0.28;
+        c.beginPath();
+        c.moveTo(t.x + t.w * 0.5, topY + t.h * 0.5);
+        c.lineTo(t.focus.x, t.focus.y);
+        c.stroke();
+        c.strokeRect(t.focus.x - 1.1, t.focus.y - 1.1, 2.2, 2.2);
+      }
+    };
+
+    const drawAgent = (a: (typeof combat.agents)[number]): void => {
+      const ax = Math.floor(a.x);
+      const ay = Math.floor(a.y);
+      if (a.kind === "rifleman") {
+        c.fillStyle = "#ff7b24";
+        c.fillRect(ax, ay, 1, 1);
+      } else if (a.kind === "engineer") {
+        c.fillStyle = a.carryingMatter > 0 ? "#48e5ff" : "#ffd15c";
+        c.fillRect(ax, ay - 1, 1, 1);
+        c.fillStyle = "#d9822b";
+        c.fillRect(ax, ay, 1, 1);
+      } else if (a.kind === "heavyMech") {
+        c.fillStyle = "#ff9e30";
+        c.fillRect(ax - 1, ay - 1, 2, 2);
+        c.fillStyle = "#7afcff";
+        c.fillRect(ax, ay - 1, 1, 1);
+      } else if (a.kind === "wallSerpent") {
+        c.fillStyle = "#0c1420";
+        c.fillRect(a.x - 1.1, a.y - 1.1, 2.2, 2.2);
+        c.fillStyle = "#48e5ff";
+        c.fillRect(a.x - 0.9, a.y - 0.9, 1.8, 1.8);
+        c.fillStyle = "#ffd166";
+        c.fillRect(a.x - 0.4, a.y - 0.4, 0.8, 0.8);
+      }
+    };
+
+    // Draw placed Resistance towers and agents before the building atlas so north-of-building
+    // towers/agents are naturally occluded by southern building roofs.
+    for (let i = 0; i < combat.towers.length; i++) drawTower(combat.towers[i]);
+    for (let i = 0; i < combat.agents.length; i++) drawAgent(combat.agents[i]);
+
+    // Composite the sorted building structure atlas in 1 drawImage call
+    const atlas = this.spriteCache.getBoardAtlas(world, this.buildingHeight, this.lastDirtyChunks);
+    const rawScene = this.sceneCtx;
+    if (atlas) {
+      rawScene.drawImage(atlas, 0, 0);
     }
+
+    // Re-draw any tower or agent whose footprint bottom is south of an overlapping northern building's
+    // footprint bottom so southern units stand in front of northern building facades.
     for (let i = 0; i < combat.towers.length; i++) {
       const t = combat.towers[i];
-      drawables.push({ kind: "tower", bottomY: t.y + t.h, sortX: t.x, tower: t });
+      const ty0 = Math.max(0, t.y - tElev);
+      const ty1 = Math.min(h - 1, t.y + t.h - 1);
+      let needsFront = false;
+      for (let py = ty0; py <= ty1 && !needsFront; py++) {
+        for (let px = Math.max(0, t.x); px < Math.min(w, t.x + t.w); px++) {
+          const bId = world.buildingAt[py * w + px];
+          if (bId >= 0 && world.buildings[bId] && world.buildings[bId].y + world.buildings[bId].h <= t.y + t.h) {
+            needsFront = true;
+            break;
+          }
+        }
+      }
+      if (needsFront) drawTower(t);
     }
     for (let i = 0; i < combat.agents.length; i++) {
       const a = combat.agents[i];
-      drawables.push({ kind: "agent", bottomY: Math.floor(a.y) + 1, sortX: Math.floor(a.x), agent: a });
+      const ax = Math.floor(a.x);
+      const ay = Math.floor(a.y);
+      if (ax >= 0 && ax < w && ay + 1 < h) {
+        // If a building cell lies within 15 px south of the agent, that building is in front of the agent;
+        // otherwise draw the agent in front of any northern building's facade.
+        let occludedBySouthernBuilding = false;
+        for (let dy = 1; dy <= MAX_ELEVATION_PX && ay + dy < h; dy++) {
+          const bId = world.buildingAt[(ay + dy) * w + ax];
+          if (bId >= 0) {
+            const sp = this.spriteCache.getSprite(world, world.buildings[bId], this.buildingHeight, false);
+            if (sp.intactCount > 0 && ay >= sp.y && ay < sp.bottomY) {
+              occludedBySouthernBuilding = true;
+              break;
+            }
+          }
+        }
+        if (!occludedBySouthernBuilding) drawAgent(a);
+      }
     }
 
-    drawables.sort((a, b) => a.bottomY - b.bottomY || a.sortX - b.sortX);
-
-    // Precompute preview/selection bounding box on the ground behind tall buildings for occlusion fade
+    // Occlusion fade: when a placement preview or selected tower lies north of a tall building
+    // whose raised roof overlaps it, punch a whole-pixel checkerboard dither through that building
+    // and re-stamp any towers/agents that sit in front of (south of) that building.
     const occluders: { x0: number; y0: number; x1: number; y1: number; footY: number }[] = [];
     if (preview) {
       if (preview.kind === "tower") {
@@ -1108,133 +1221,41 @@ export class VoidRenderer {
         }
       }
     }
-    for (let i = 0; i < combat.towers.length; i++) {
-      const t = combat.towers[i];
-      occluders.push({ x0: t.x, y0: t.y - tElev, x1: t.x + t.w, y1: t.y + t.h, footY: t.y + t.h });
-    }
-    for (let i = 0; i < combat.agents.length; i++) {
-      const a = combat.agents[i];
-      const ax = Math.floor(a.x);
-      const ay = Math.floor(a.y);
-      occluders.push({ x0: ax - 1, y0: ay - 1, x1: ax + 2, y1: ay + 2, footY: ay + 1 });
+    if (selectedTowerUid !== null) {
+      const st = combat.towers.find((tw) => tw.uid === selectedTowerUid);
+      if (st) {
+        occluders.push({ x0: st.x, y0: st.y - tElev, x1: st.x + st.w, y1: st.y + st.h, footY: st.y + st.h });
+      }
     }
 
-    const rawScene = this.sceneCtx;
-    for (let i = 0; i < drawables.length; i++) {
-      const item = drawables[i];
-      if (item.kind === "building") {
-        const sp = item.sprite;
+    if (occluders.length > 0) {
+      for (let i = 0; i < world.buildings.length; i++) {
+        const sp = this.spriteCache.getSprite(world, world.buildings[i], this.buildingHeight, false);
+        if (sp.intactCount === 0 || sp.maxElev === 0) continue;
         let occluded = false;
-        if (sp.maxElev > 0) {
-          const sx0 = sp.x;
-          const sy0 = sp.y;
-          const sx1 = sp.x + sp.w;
-          const sy1 = sp.bottomY;
-          for (let j = 0; j < occluders.length; j++) {
-            const occ = occluders[j];
-            if (
-              occ.footY <= sp.bottomY - 1 &&
-              occ.x1 > sx0 &&
-              occ.x0 < sx1 &&
-              occ.y1 > sy0 &&
-              occ.y0 < sy1
-            ) {
-              occluded = true;
-              break;
-            }
+        for (let j = 0; j < occluders.length; j++) {
+          const occ = occluders[j];
+          if (
+            occ.footY <= sp.bottomY - 1 &&
+            occ.x1 > sp.x &&
+            occ.x0 < sp.x + sp.w &&
+            occ.y1 > sp.y &&
+            occ.y0 < sp.bottomY
+          ) {
+            occluded = true;
+            break;
           }
         }
-
         if (occluded) {
-          // Whole-pixel checkerboard dither fade (no alpha blur) so obscured ground stays readable
+          // Punch whole-pixel checkerboard dither holes revealing the terrain/preview behind the roof
           for (let k = 0; k < sp.ops.length; k++) {
             const op = sp.ops[k];
             const wx = sp.x + op.dx;
             const wy = sp.y + op.dy;
-            if (((wx + wy) & 1) === 0) {
-              c.fillStyle = op.color;
-              c.fillRect(wx, wy, 1, 1);
+            if (((wx + wy) & 1) === 1 && wy < sp.bottomY - sp.maxElev) {
+              rawScene.drawImage(this.terrainLayer, wx, wy, 1, 1, wx, wy, 1, 1);
             }
           }
-        } else if (sp.canvas) {
-          rawScene.drawImage(sp.canvas, sp.x, sp.y);
-        } else {
-          for (let k = 0; k < sp.runs.length; k++) {
-            const r = sp.runs[k];
-            c.fillStyle = r.color;
-            c.fillRect(sp.x + r.dx, sp.y + r.dy, r.w, 1);
-          }
-        }
-      } else if (item.kind === "tower") {
-        const t = item.tower;
-        const spec = TOWER_SPECS[t.type];
-        const topY = t.y - tElev;
-        // Armored shadow & south base facade (2 px tall)
-        c.fillStyle = "#0d1118";
-        c.fillRect(t.x, topY, t.w, t.h + tElev);
-        if (tElev > 0) {
-          c.fillStyle = "#18202c";
-          c.fillRect(t.x, t.y + t.h - tElev, t.w, tElev);
-        }
-        c.fillStyle = "#242c3a";
-        c.fillRect(t.x, topY, t.w, t.h);
-        // Corner rivets / mounting brackets
-        c.fillStyle = "#5c6b82";
-        c.fillRect(t.x, topY, 1, 1);
-        c.fillRect(t.x + t.w - 1, topY, 1, 1);
-        c.fillRect(t.x, topY + t.h - 1, 1, 1);
-        c.fillRect(t.x + t.w - 1, topY + t.h - 1, 1, 1);
-        // Primary colored turret housing
-        c.fillStyle = spec.color;
-        c.fillRect(t.x + 0.35, topY + 0.35, t.w - 0.7, t.h - 0.7);
-        // Glowing energy core / barrel mount
-        c.fillStyle = "#fff3d1";
-        c.fillRect(t.x + t.w * 0.5 - 0.45, topY + t.h * 0.5 - 0.45, 0.9, 0.9);
-
-        if (t.uid === selectedTowerUid) {
-          c.strokeStyle = "#ffbe3b";
-          c.lineWidth = 0.4;
-          c.strokeRect(t.x - 0.35, topY - 0.35, t.w + 0.7, t.h + tElev + 0.7);
-          c.strokeStyle = "rgba(255, 190, 59, 0.42)";
-          c.lineWidth = 0.35;
-          c.beginPath();
-          c.arc(t.x + t.w * 0.5, t.y + t.h * 0.5, spec.range, 0, Math.PI * 2);
-          c.stroke();
-        }
-
-        if (t.focus) {
-          c.strokeStyle = "rgba(255, 145, 45, 0.65)";
-          c.lineWidth = 0.28;
-          c.beginPath();
-          c.moveTo(t.x + t.w * 0.5, topY + t.h * 0.5);
-          c.lineTo(t.focus.x, t.focus.y);
-          c.stroke();
-          c.strokeRect(t.focus.x - 1.1, t.focus.y - 1.1, 2.2, 2.2);
-        }
-      } else {
-        const a = item.agent;
-        const ax = Math.floor(a.x);
-        const ay = Math.floor(a.y);
-        if (a.kind === "rifleman") {
-          c.fillStyle = "#ff7b24";
-          c.fillRect(ax, ay, 1, 1);
-        } else if (a.kind === "engineer") {
-          c.fillStyle = a.carryingMatter > 0 ? "#48e5ff" : "#ffd15c";
-          c.fillRect(ax, ay - 1, 1, 1);
-          c.fillStyle = "#d9822b";
-          c.fillRect(ax, ay, 1, 1);
-        } else if (a.kind === "heavyMech") {
-          c.fillStyle = "#ff9e30";
-          c.fillRect(ax - 1, ay - 1, 2, 2);
-          c.fillStyle = "#7afcff";
-          c.fillRect(ax, ay - 1, 1, 1);
-        } else if (a.kind === "wallSerpent") {
-          c.fillStyle = "#0c1420";
-          c.fillRect(a.x - 1.1, a.y - 1.1, 2.2, 2.2);
-          c.fillStyle = "#48e5ff";
-          c.fillRect(a.x - 0.9, a.y - 0.9, 1.8, 1.8);
-          c.fillStyle = "#ffd166";
-          c.fillRect(a.x - 0.4, a.y - 0.4, 0.8, 0.8);
         }
       }
     }

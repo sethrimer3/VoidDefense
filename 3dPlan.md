@@ -246,7 +246,7 @@ the tests and screenshots to show it.
 
 | Phase | Done? | Commit / evidence |
 |-------|-------|-------------------|
-| 1. Elevated buildings and facades | - [ ] | |
+| 1. Elevated buildings and facades | - [x] | `src/void/elevation.ts`, `src/void/render.ts`, `tests/void-depth.test.ts`, `test-results/void-depth/ringed-building-{desktop,phone}.png` |
 | 2. Structural damage and exposed floors | - [ ] | |
 | 3. Falling physics | - [ ] | |
 | 4. Polish | - [ ] | |

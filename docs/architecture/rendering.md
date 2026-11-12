@@ -26,6 +26,15 @@ Cosmic organisms (such as the Queen Bee, Bee Swarms, Nebula Worms, and Constella
 - Ledges strictly occupy only existing Void cells and do not overwrite or mutate ground, islands, or active simulation state.
 - Cutaway geometry adapts cleanly to viewport scale and respects Reduced Motion modes.
 
+## Oblique ¾ Building Depth & Sorted Structure Pass
+
+`src/void/elevation.ts` and `src/void/render.ts` give buildings, towers, and units whole-pixel ¾ oblique height above the ground plane:
+- **Vertical Scale (`FLOORS_PER_PIXEL = 2`):** Two stories map to 1 world pixel of vertical rise (`elevationOf(b)` in `1..15` px). Screen coordinates project upward via $(x_{\text{screen}}, y_{\text{screen}}) = (x, y - E)$.
+- **Ground Foundation vs. Elevated Sprite:** `paintCell` paints only the ground foundation slab into the 16×16 terrain chunk cache. `buildBuildingSprite` constructs each building's south facade (window columns, ground lobby, east/west border shading, setback terraces) and raised roof (bevels, helipads, sky gardens, solar arrays) into an offscreen sprite (`CachedBuildingSprite`), composited into a board-wide structure atlas (`getBoardAtlas`) that incrementally repaints only dirty building bounding boxes.
+- **Sorted Structure Pass:** After `paintVoidLedge`, towers (elevated 2 px with a dark south base), agents (0–1 px), and buildings sort back-to-front by footprint bottom $y$ (`y + h`), so tall roofs naturally occlude Void, streets, and units north of their south wall while Void, ledges, and units to the left, right, and south remain in front.
+- **Whole-Pixel Occlusion Fade & Roof Picking:** When a placement preview or selected tower lies on the ground behind a tall building's raised roof, `render.ts` punches a whole-pixel checkerboard dither (`(x + y) % 2 === 0`, never alpha blur) through the roof. `pickStructureAt` tests elevated building hit masks and tower boxes front-to-back while keeping tower placement and strike targeting strictly footprint-based.
+- **Building Height Setting (`buildingHeight`):** Configurable in Sectors & Mode settings (`"full"` default, `"low"` half-height, `"flat"` legacy top-down).
+
 ## Living Void Interior
 
 `src/void/interior.ts` renders the living dynamics inside the Void field using a recolored, pixelated Star Nest volumetric fractal:

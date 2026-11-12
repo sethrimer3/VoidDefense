@@ -871,3 +871,21 @@ The smallest unit of Void Defense terrain and simulation: one simulation cell. F
 
 **Void ledge**:
 The exposed earth or rock beneath the crumbling edge of land over the Void, with an irregular dark underside. It shows depth beneath the surface without adding solid ground.
+
+**Elevation**:
+A structure's vertical height above the ground plane in whole world pixels (`1 px` per `2 floors`, up to `15 px` for a 30-story skyscraper, or `2 px` for a placed Resistance tower). Projecting a roof or upper story at elevation $E$ shifts its screen position upward by $E$ pixels (`y - E`) without changing its ground footprint.
+
+**Facade**:
+The visible down-screen (south) vertical wall of an elevated building or setback terrace between its ground footprint and its raised roof, painted in whole world pixels with window columns, lobby awnings, and darker east/west side borders.
+
+**Column**:
+One `1x1` cell within a building's footprint together with its remaining story count from ground foundation up to its current top floor.
+
+**Cutaway**:
+The exposed interior cross-section of a damaged building where outer columns or upper stories have collapsed, revealing horizontal concrete floor slabs, lit or unlit rooms, broken rebar edges, and violet Void rim lighting.
+
+**Falling chunk**:
+A pooled piece of collapsed masonry, roof, tower, or terrain that detaches from a crumbling structure and falls downward under gravity—either bouncing and settling into salvageable rubble on solid ground or plunging below the ground plane into the Void behind the subterranean ledge.
+
+**Civilian**:
+A cosmetic 1-pixel person on city streets near the active Void frontier who flees away from encroaching Void and falls into the abyss if the street beneath them is consumed.

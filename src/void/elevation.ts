@@ -530,21 +530,167 @@ export class BuildingSpriteCache {
   private cachedWorld: VoidWorld | null = null;
   private cachedMode: BuildingHeightMode = "full";
   private readonly sprites = new Map<number, CachedBuildingSprite>();
+  private atlasCanvas: HTMLCanvasElement | null = null;
+  private atlasCtx: CanvasRenderingContext2D | null = null;
+  private readonly dirtyIds = new Set<number>();
 
-  getSprite(world: VoidWorld, b: MetroBuilding, mode: BuildingHeightMode): CachedBuildingSprite {
+  getSprite(
+    world: VoidWorld,
+    b: MetroBuilding,
+    mode: BuildingHeightMode,
+    forceCheck = true,
+  ): CachedBuildingSprite {
     if (this.cachedWorld !== world || this.cachedMode !== mode) {
       this.cachedWorld = world;
       this.cachedMode = mode;
       this.sprites.clear();
+      this.atlasCanvas = null;
+      this.atlasCtx = null;
+      this.dirtyIds.clear();
+    }
+    const existing = this.sprites.get(b.id);
+    if (existing && !forceCheck) {
+      return existing;
     }
     const sig = computeBuildingSignature(world, b, mode);
-    const existing = this.sprites.get(b.id);
     if (existing && existing.signature === sig) {
       return existing;
     }
     const built = buildBuildingSprite(world, b, mode, sig);
     this.sprites.set(b.id, built);
+    this.dirtyIds.add(b.id);
     return built;
+  }
+
+  /** Returns a full-board cached canvas containing all buildings sorted back-to-front.
+   * Re-checks signatures only for buildings overlapping dirtied 16x16 terrain chunks. */
+  getBoardAtlas(
+    world: VoidWorld,
+    mode: BuildingHeightMode,
+    dirtyChunkFlags?: Uint8Array,
+  ): HTMLCanvasElement | null {
+    if (typeof document === "undefined" || typeof document.createElement !== "function") {
+      return null;
+    }
+    const { w, h, chunksW } = world.grid;
+    let rebuildAll = false;
+    if (
+      this.cachedWorld !== world ||
+      this.cachedMode !== mode ||
+      !this.atlasCanvas ||
+      this.atlasCanvas.width !== w ||
+      this.atlasCanvas.height !== h
+    ) {
+      this.cachedWorld = world;
+      this.cachedMode = mode;
+      this.sprites.clear();
+      this.dirtyIds.clear();
+      const el = this.atlasCanvas ?? document.createElement("canvas");
+      el.width = w;
+      el.height = h;
+      this.atlasCanvas = el;
+      this.atlasCtx = el.getContext("2d");
+      rebuildAll = true;
+    }
+
+    const CHUNK = 16;
+    for (let i = 0; i < world.buildings.length; i++) {
+      const b = world.buildings[i];
+      let needsCheck = rebuildAll || !this.sprites.has(b.id);
+      if (!needsCheck && dirtyChunkFlags) {
+        const cx0 = (b.x / CHUNK) | 0;
+        const cx1 = ((b.x + b.w - 1) / CHUNK) | 0;
+        const cy0 = (b.y / CHUNK) | 0;
+        const cy1 = ((b.y + b.h - 1) / CHUNK) | 0;
+        outer: for (let cy = cy0; cy <= cy1; cy++) {
+          for (let cx = cx0; cx <= cx1; cx++) {
+            if (dirtyChunkFlags[cy * chunksW + cx]) {
+              needsCheck = true;
+              break outer;
+            }
+          }
+        }
+      } else if (!dirtyChunkFlags) {
+        needsCheck = true;
+      }
+      if (needsCheck) {
+        this.getSprite(world, b, mode, true);
+      }
+    }
+
+    if (!rebuildAll && this.dirtyIds.size === 0) {
+      return this.atlasCanvas;
+    }
+
+    const ctx = this.atlasCtx;
+    if (!ctx || !this.atlasCanvas) return null;
+    ctx.imageSmoothingEnabled = false;
+    // Incrementally repaint only the bounding box of dirty sprites when < 24 buildings changed
+    let rx0 = 0;
+    let ry0 = 0;
+    let rx1 = w;
+    let ry1 = h;
+    if (!rebuildAll && this.dirtyIds.size <= 24) {
+      rx0 = w;
+      ry0 = h;
+      rx1 = 0;
+      ry1 = 0;
+      for (const id of this.dirtyIds) {
+        const sp = this.sprites.get(id);
+        if (sp) {
+          if (sp.x < rx0) rx0 = Math.max(0, sp.x);
+          if (sp.y < ry0) ry0 = Math.max(0, sp.y);
+          if (sp.x + sp.w > rx1) rx1 = Math.min(w, sp.x + sp.w);
+          if (sp.y + sp.h > ry1) ry1 = Math.min(h, sp.y + sp.h);
+        }
+      }
+      if (rx1 <= rx0 || ry1 <= ry0) {
+        this.dirtyIds.clear();
+        return this.atlasCanvas;
+      }
+    }
+
+    ctx.save();
+    if (rx0 > 0 || ry0 > 0 || rx1 < w || ry1 < h) {
+      ctx.beginPath();
+      ctx.rect(rx0, ry0, rx1 - rx0, ry1 - ry0);
+      ctx.clip();
+    }
+    ctx.clearRect(rx0, ry0, rx1 - rx0, ry1 - ry0);
+
+    // Sort intact sprites overlapping `[rx0..rx1, ry0..ry1]` back-to-front by bottomY then x
+    const sorted: CachedBuildingSprite[] = [];
+    for (let i = 0; i < world.buildings.length; i++) {
+      const sp = this.sprites.get(world.buildings[i].id);
+      if (
+        sp &&
+        sp.intactCount > 0 &&
+        sp.x + sp.w > rx0 &&
+        sp.x < rx1 &&
+        sp.y + sp.h > ry0 &&
+        sp.y < ry1
+      ) {
+        sorted.push(sp);
+      }
+    }
+    sorted.sort((a, b) => a.bottomY - b.bottomY || a.x - b.x);
+
+    for (let i = 0; i < sorted.length; i++) {
+      const sp = sorted[i];
+      if (sp.canvas) {
+        ctx.drawImage(sp.canvas, sp.x, sp.y);
+      } else {
+        for (let k = 0; k < sp.runs.length; k++) {
+          const r = sp.runs[k];
+          ctx.fillStyle = r.color;
+          ctx.fillRect(sp.x + r.dx, sp.y + r.dy, r.w, 1);
+        }
+      }
+    }
+    ctx.restore();
+
+    this.dirtyIds.clear();
+    return this.atlasCanvas;
   }
 
   /** Picks the topmost visible structure (tower or elevated building roof/facade) at world pixel `(wx, wy)`.

@@ -21,6 +21,7 @@ Void Defense is the sole game in this repository, built as a clean, self-contain
 | `src/void/ledge.ts` | Cosmetic exposed strata, irregular undersides and narrow side faces projected into existing Void cells below the terrain edge. |
 | `src/void/contour.ts` | Nebula-colored organic enemy contours (`computeOrganismContour`, `computeNodeContour`): thin violet/magenta boundary with cyan highlights driven by classic 2D value noise. |
 | `src/void/interior.ts` | Living Void interior (`computeVoidInterior`, `paintVoidInterior`): seeded inward-flowing logarithmic spiral wisps and traveling brightness/color bands occluded behind ledges. |
+| `src/void/elevation.ts` | Oblique ¾ building elevation (`FLOORS_PER_PIXEL = 2`, `1..15` px), setback tiering, south-facade and roof sprite caching (`BuildingSpriteCache`), incremental board structure atlas, and front-to-back roof/tower picking (`pickStructureAt`). |
 | `src/void/pixel-painter.ts` | Hard-edged world-pixel rectangle, line, polygon, circle and ellipse rasterization for moving objects and effects. |
 | `src/void/render.ts` & `ui.ts` | `VoidRenderer` (dirty-chunk offscreen layer + multi-scale LOD + `Loupe` integration) and `VoidApp` shell. See "Rendering the concept composition" below. |
 | `src/void/save.ts` & `main.ts` | Defensive `voiddefense.v1` persistence and sole-game bootstrap entrypoint with graceful non-destructive adoption of legacy player callsigns and visual settings. |
