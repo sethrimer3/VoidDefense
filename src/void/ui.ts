@@ -151,6 +151,7 @@ export class VoidApp {
   private soundEngine = new VoidSoundEngine();
 
   private selectedTowerUid: number | null = null;
+  private selectedBuildingId: number | null = null;
   private activeTool:
     | { kind: "none" }
     | { kind: "placeTower"; type: TowerTypeId }
@@ -264,6 +265,7 @@ export class VoidApp {
     const canvas = this.root.querySelector<HTMLCanvasElement>("#void-board-canvas")!;
     this.renderer = new VoidRenderer(canvas);
     this.renderer.reduceEffects = this.save.settings.reduceMotion;
+    this.renderer.buildingHeight = this.save.settings.buildingHeight;
     this.bindBoardPointers(canvas);
 
     this.techView = new VoidTechTreeView(
@@ -298,6 +300,7 @@ export class VoidApp {
         this.activeTool = { kind: "none" };
         this.hoverPreview = null;
         this.selectedTowerUid = null;
+        this.selectedBuildingId = null;
         this.renderPalette();
         this.refreshHUD();
         return;
@@ -359,9 +362,11 @@ export class VoidApp {
       this.save.settings.devMode,
     );
     this.selectedTowerUid = null;
+    this.selectedBuildingId = null;
     this.activeTool = { kind: "none" };
     this.hoverPreview = null;
     this.renderer.reduceEffects = this.save.settings.reduceMotion;
+    this.renderer.buildingHeight = this.save.settings.buildingHeight;
     this.renderer.resetCam(this.sim.world.grid.w, this.sim.world.grid.h);
     this.persist();
     this.renderPalette();
@@ -546,6 +551,35 @@ export class VoidApp {
       return;
     }
 
+    const picked = this.renderer.pickStructureAt(
+      this.sim.world,
+      this.sim.combat.towers,
+      e.clientX,
+      e.clientY,
+    );
+    if (picked?.kind === "tower") {
+      this.selectedTowerUid = picked.uid;
+      this.selectedBuildingId = null;
+      this.refreshHUD();
+      return;
+    }
+    if (picked?.kind === "building") {
+      // Still allow ground tower hit if a tower is right under or adjacent to the tap
+      if (this.sim.world.grid.inBounds(cx, cy)) {
+        const groundUid = this.sim.world.towerAt[this.sim.world.grid.index(cx, cy)];
+        if (groundUid >= 0) {
+          this.selectedTowerUid = groundUid;
+          this.selectedBuildingId = null;
+          this.refreshHUD();
+          return;
+        }
+      }
+      this.selectedTowerUid = null;
+      this.selectedBuildingId = picked.id;
+      this.refreshHUD();
+      return;
+    }
+
     if (this.sim.world.grid.inBounds(cx, cy)) {
       let uid = this.sim.world.towerAt[this.sim.world.grid.index(cx, cy)];
       if (uid < 0) {
@@ -559,6 +593,7 @@ export class VoidApp {
         }
       }
       this.selectedTowerUid = uid >= 0 ? uid : null;
+      this.selectedBuildingId = null;
       this.refreshHUD();
     }
   }
@@ -771,6 +806,30 @@ export class VoidApp {
     const insp = this.root.querySelector<HTMLElement>("[data-tower-inspector]")!;
     const t = this.sim.combat.towers.find((tw) => tw.uid === this.selectedTowerUid);
     if (!t) {
+      const b =
+        this.selectedBuildingId !== null
+          ? this.sim.world.buildings.find((mb) => mb.id === this.selectedBuildingId)
+          : undefined;
+      if (b) {
+        let intact = 0;
+        for (let i = 0; i < b.cells.length; i++) {
+          const idx = b.cells[i];
+          if (this.sim.world.buildingAt[idx] === b.id && this.sim.world.hp[idx] > 0) intact++;
+        }
+        if (intact > 0) {
+          insp.hidden = false;
+          insp.innerHTML = `
+            <strong>${b.isSkyscraper ? "Skyscraper" : "Structure"} #${b.id} (${b.height}F)</strong>
+            <span>Integrity: ${Math.round((intact / Math.max(1, b.cells.length)) * 100)}%</span>
+            <button type="button" data-insp-close class="secondary-btn">X</button>
+          `;
+          insp.querySelector<HTMLButtonElement>("[data-insp-close]")!.onclick = () => {
+            this.selectedBuildingId = null;
+            this.refreshHUD();
+          };
+          return;
+        }
+      }
       insp.hidden = true;
       return;
     }
@@ -885,6 +944,13 @@ export class VoidApp {
             <label><input type="checkbox" data-set-sound ${!this.save.settings.soundOff ? "checked" : ""} /> Audio Telemetry & Sound Effects</label>
             <label><input type="checkbox" data-set-mag ${this.save.settings.magnifier ? "checked" : ""} /> Precision Placement Magnifier (Loupe)</label>
             <label><input type="checkbox" data-set-motion ${this.save.settings.reduceMotion ? "checked" : ""} /> Reduce Motion & Ambient Flicker</label>
+            <label>Building Height (Oblique Depth)
+              <select data-set-bheight>
+                <option value="full" ${this.save.settings.buildingHeight === "full" ? "selected" : ""}>Full (1 px / 2 floors)</option>
+                <option value="low" ${this.save.settings.buildingHeight === "low" ? "selected" : ""}>Low (Half Height)</option>
+                <option value="flat" ${this.save.settings.buildingHeight === "flat" ? "selected" : ""}>Flat (Legacy Top-Down)</option>
+              </select>
+            </label>
             <label><input type="checkbox" data-set-dev ${this.save.settings.devMode ? "checked" : ""} /> Developer Mode (Unlock All Towers/Strikes & Unlimited Supplies)</label>
           </div>
         </section>
@@ -902,6 +968,12 @@ export class VoidApp {
     secPage.querySelector<HTMLInputElement>("[data-set-motion]")!.onchange = (e) => {
       this.save.settings.reduceMotion = (e.target as HTMLInputElement).checked;
       this.renderer.reduceEffects = this.save.settings.reduceMotion;
+      this.persist();
+    };
+    secPage.querySelector<HTMLSelectElement>("[data-set-bheight]")!.onchange = (e) => {
+      const v = (e.target as HTMLSelectElement).value;
+      this.save.settings.buildingHeight = v === "low" || v === "flat" ? v : "full";
+      this.renderer.buildingHeight = this.save.settings.buildingHeight;
       this.persist();
     };
     secPage.querySelector<HTMLInputElement>("[data-set-dev]")!.onchange = (e) => {

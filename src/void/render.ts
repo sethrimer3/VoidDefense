@@ -17,6 +17,16 @@
  * - Integer camera zoom/pan math and precision placement Loupe. */
 
 import { dist } from "../exact.ts";
+import {
+  ARCH_PALETTES,
+  type ArchPalette,
+  type BuildingHeightMode,
+  BuildingSpriteCache,
+  type CachedBuildingSprite,
+  elevationOf,
+  MAX_ELEVATION_PX,
+  TOWER_ELEVATION_PX,
+} from "./elevation.ts";
 import { paintVoidLedge } from "./ledge.ts";
 import { computeOrganismContour, computeNodeContour } from "./contour.ts";
 import {
@@ -84,17 +94,6 @@ export type DragPreview =
   | { kind: "reticle"; towerUid: number; x: number; y: number }
   | { kind: "blueprint"; points: { x: number; y: number }[] };
 
-type ArchPalette = {
-  podium: string;
-  mid: string;
-  crown: string;
-  litEdge: string;
-  shadeEdge: string;
-  neonEdge: string;
-  neonCore: string;
-  roofAccent: string;
-};
-
 interface TronCorridor {
   fromBld: number;
   toBld: number;
@@ -108,141 +107,6 @@ interface TronCycle {
   speed: number;
 }
 
-const ARCH_PALETTES: Record<MetroBuilding["archStyle"], readonly ArchPalette[]> = {
-  glassTower: [
-    {
-      podium: "#0a0e14",
-      mid: "#101622",
-      crown: "#161f30",
-      litEdge: "#1f304d",
-      shadeEdge: "#04060a",
-      neonEdge: "#ff7b1a",
-      neonCore: "#ffbe55",
-      roofAccent: "#ff8c29",
-    },
-    {
-      podium: "#080c14",
-      mid: "#0d1420",
-      crown: "#131d2e",
-      litEdge: "#1a2c47",
-      shadeEdge: "#030508",
-      neonEdge: "#ff922b",
-      neonCore: "#ffd685",
-      roofAccent: "#ffa94d",
-    },
-  ],
-  artDecoSetback: [
-    {
-      podium: "#0c0a0c",
-      mid: "#141014",
-      crown: "#1c161d",
-      litEdge: "#2b202c",
-      shadeEdge: "#050305",
-      neonEdge: "#ff5e1a",
-      neonCore: "#ffaa4d",
-      roofAccent: "#ff7426",
-    },
-    {
-      podium: "#0d0b09",
-      mid: "#16110d",
-      crown: "#1f1813",
-      litEdge: "#2e231b",
-      shadeEdge: "#050403",
-      neonEdge: "#ff6d1f",
-      neonCore: "#ffbe55",
-      roofAccent: "#ff8c33",
-    },
-  ],
-  cyberArcology: [
-    {
-      podium: "#080a12",
-      mid: "#0d111c",
-      crown: "#141928",
-      litEdge: "#1c253d",
-      shadeEdge: "#030408",
-      neonEdge: "#ff852b",
-      neonCore: "#ffcf70",
-      roofAccent: "#ff9933",
-    },
-    {
-      podium: "#0a0812",
-      mid: "#100d1c",
-      crown: "#18142a",
-      litEdge: "#221c3d",
-      shadeEdge: "#040308",
-      neonEdge: "#ff5424",
-      neonCore: "#ffa066",
-      roofAccent: "#ff6e38",
-    },
-  ],
-  foundryComplex: [
-    {
-      podium: "#0f0806",
-      mid: "#170c0a",
-      crown: "#22110d",
-      litEdge: "#331812",
-      shadeEdge: "#050202",
-      neonEdge: "#ff4d12",
-      neonCore: "#ff9047",
-      roofAccent: "#ff6122",
-    },
-    {
-      podium: "#0e0906",
-      mid: "#160e0a",
-      crown: "#20140e",
-      litEdge: "#2f1e14",
-      shadeEdge: "#050302",
-      neonEdge: "#ff5e1a",
-      neonCore: "#ffaa4d",
-      roofAccent: "#ff7426",
-    },
-  ],
-  solarTerrace: [
-    {
-      podium: "#090d12",
-      mid: "#0e141c",
-      crown: "#141d28",
-      litEdge: "#1b2838",
-      shadeEdge: "#030508",
-      neonEdge: "#ff7426",
-      neonCore: "#ffbe55",
-      roofAccent: "#ff8c33",
-    },
-    {
-      podium: "#070b10",
-      mid: "#0c111a",
-      crown: "#121926",
-      litEdge: "#182336",
-      shadeEdge: "#020406",
-      neonEdge: "#ff802b",
-      neonCore: "#ffc96b",
-      roofAccent: "#ff9938",
-    },
-  ],
-  civicDome: [
-    {
-      podium: "#080c10",
-      mid: "#0d131a",
-      crown: "#131b24",
-      litEdge: "#1a2533",
-      shadeEdge: "#030406",
-      neonEdge: "#ff8c2b",
-      neonCore: "#ffd685",
-      roofAccent: "#ffa242",
-    },
-  ],
-  // Countryside: pitched roofs seen from above (ridge highlight, eave shadow, warm window).
-  // `neonCore` is the lit window colour; rural buildings carry no neon trim.
-  homestead: [
-    { podium: "#8c3a2a", mid: "#a8432f", crown: "#c45a42", litEdge: "#d8765a", shadeEdge: "#3a1410", neonEdge: "#ffbe55", neonCore: "#ffbe55", roofAccent: "#ffe9a8" },
-    { podium: "#4a505d", mid: "#5b6372", crown: "#6f7889", litEdge: "#8d97a8", shadeEdge: "#1c2027", neonEdge: "#ffbe55", neonCore: "#ffbe55", roofAccent: "#ffe9a8" },
-    { podium: "#7a5436", mid: "#8f6442", crown: "#a87a52", litEdge: "#c49468", shadeEdge: "#2c1c10", neonEdge: "#ffbe55", neonCore: "#ffbe55", roofAccent: "#ffe9a8" },
-  ],
-  barn: [
-    { podium: "#8e2c22", mid: "#ad3528", crown: "#c64534", litEdge: "#f2e8d8", shadeEdge: "#3a100c", neonEdge: "#ffbe55", neonCore: "#ffbe55", roofAccent: "#f2e8d8" },
-  ],
-};
-
 export class VoidRenderer {
   readonly canvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
@@ -252,6 +116,7 @@ export class VoidRenderer {
   private readonly pixelCtx: CanvasRenderingContext2D;
   private readonly tctx: CanvasRenderingContext2D;
   private renderedWorld: VoidWorld | null = null;
+  private renderedHeightMode: BuildingHeightMode = "full";
   /** Last painted state of each world pixel, including neighboring corrosion/shadow. */
   private paintedPixels = new Float64Array(0);
   private paintedNeighbors = new Float64Array(0);
@@ -267,6 +132,10 @@ export class VoidRenderer {
   readonly loupe = new Loupe();
   /** When true, suppresses dynamic shimmer/lensing overlays for reduced-motion accessibility & comparison. */
   reduceEffects = false;
+  /** Oblique building height projection (`full`, `low`, or `flat`). */
+  buildingHeight: BuildingHeightMode = "full";
+  /** Per-building elevated roof & south-facade sprite cache. */
+  readonly spriteCache = new BuildingSpriteCache();
 
   // Tron light cycle trails along streets connecting buildings
   private corridors: TronCorridor[] = [];
@@ -362,14 +231,30 @@ export class VoidRenderer {
   }
 
   private clampCam(worldW: number, worldH: number): void {
-    const bw = worldW * this.pixelScale();
-    const bh = worldH * this.pixelScale();
+    const scale = this.pixelScale();
+    const bw = worldW * scale;
+    const bh = worldH * scale;
     const cw = this.canvas.width;
     const ch = this.canvas.height;
+    const roofMargin = Math.ceil(MAX_ELEVATION_PX * scale);
     this.cam.x = bw <= cw ? (cw - bw) * 0.5 : Math.min(60, Math.max(cw - bw - 60, this.cam.x));
-    this.cam.y = bh <= ch ? (ch - bh) * 0.5 : Math.min(60, Math.max(ch - bh - 60, this.cam.y));
+    this.cam.y =
+      bh + roofMargin <= ch
+        ? (ch - bh + roofMargin) * 0.5
+        : Math.min(60 + roofMargin, Math.max(ch - bh - 60, this.cam.y));
     this.cam.x = Math.round(this.cam.x);
     this.cam.y = Math.round(this.cam.y);
+  }
+
+  /** Picks the topmost visible structure (tower or elevated building roof/facade) at client coordinates. */
+  pickStructureAt(
+    world: VoidWorld,
+    towers: readonly PlacedTower[],
+    clientX: number,
+    clientY: number,
+  ): { kind: "tower"; uid: number } | { kind: "building"; id: number } | null {
+    const { fx, fy } = this.toCell(clientX, clientY);
+    return this.spriteCache.pickStructureAt(world, towers, fx, fy, this.buildingHeight);
   }
 
   /** Builds orthogonal street circuit corridors connecting nearby buildings for Tron light trails. */
@@ -486,10 +371,12 @@ export class VoidRenderer {
 
     if (
       this.renderedWorld !== world ||
+      this.renderedHeightMode !== this.buildingHeight ||
       this.terrainLayer.width !== targetW ||
       this.terrainLayer.height !== targetH
     ) {
       this.renderedWorld = world;
+      this.renderedHeightMode = this.buildingHeight;
       this.paintedPixels = new Float64Array(world.grid.count).fill(-1);
       this.paintedNeighbors = new Float64Array(world.grid.count).fill(-1);
       this.terrainLayer.width = targetW;
@@ -514,22 +401,27 @@ export class VoidRenderer {
     world.grid.clearDirtyFlags();
   }
 
-  /** Computes directional shadow darkness (0..0.68) cast onto `(x, y)` by taller NW buildings. */
+  /** Computes elevation-based directional shadow darkness (0..0.68) cast onto `(x, y)` toward the SE
+   * up to `ceil(E * 0.6)` world pixels away. */
   private computeShadowAt(world: VoidWorld, x: number, y: number, selfHeight: number): number {
     const { w } = world.grid;
+    const mode = this.buildingHeight === "flat" ? "full" : this.buildingHeight;
+    const selfElev = selfHeight > 0 ? elevationOf({ height: selfHeight }, mode) : 0;
     let maxShade = 0;
-    for (let step = 1; step <= 4; step++) {
-      // Diagonal NW sun angle (primary) + N/W ambient occlusion
+    // Maximum elevation is 15 px -> ceil(15 * 0.6) = 9 px reach
+    for (let step = 1; step <= 9; step++) {
       const nx = x - step;
       const ny = y - step;
       if (nx >= 0 && ny >= 0) {
         const bId = world.buildingAt[ny * w + nx];
         if (bId >= 0) {
           const b = world.buildings[bId];
-          if (b && b.height > selfHeight + step * 3) {
-            const reach = Math.min(4, Math.ceil((b.height - selfHeight) / 6));
-            if (step <= reach) {
-              maxShade = Math.max(maxShade, 0.62 - (step - 1) * 0.12);
+          if (b) {
+            const bElev = elevationOf(b, mode);
+            const deltaE = bElev - selfElev;
+            const reach = Math.ceil(deltaE * 0.6);
+            if (deltaE > 0 && step <= reach) {
+              maxShade = Math.max(maxShade, 0.62 - (step - 1) * (0.42 / Math.max(1, reach)));
             }
           }
         }
@@ -736,38 +628,21 @@ export class VoidRenderer {
     } else if (mat === CellMaterial.SALVAGE) {
       color = r < 0.25 ? "#ff8c29" : r < 0.6 ? "#6e472b" : "#463b43";
     } else if (b) {
+      // In oblique view, paintCell paints only the building's ground footprint
+      // (foundation slab, plaza paving, or dark base). Roofs, roof features, and south
+      // facades are drawn in the sorted structure pass.
       const palettes = ARCH_PALETTES[b.archStyle] ?? ARCH_PALETTES.glassTower;
       const pal = palettes[b.variant % palettes.length];
-      const lx = x - b.x, ly = y - b.y;
-      const right = b.x + b.w - 1 - x, bottom = b.y + b.h - 1 - y;
-      const inset = Math.min(lx, ly, right, bottom);
-      const cx = Math.floor(b.x + b.w / 2), cy = Math.floor(b.y + b.h / 2);
-      if (b.archStyle === "homestead" || b.archStyle === "barn") {
-        const horizontal = b.w >= b.h;
-        color = (horizontal ? y < cy : x < cx) ? pal.crown : pal.podium;
-        if (horizontal ? y === cy : x === cx) color = pal.litEdge;
-        if (right === 0 || bottom === 0) color = pal.shadeEdge;
-        if (lx === 1 && ly === 1) color = "#3a3a3a";
-        if (right === 1 && bottom === 1 && hp > 0.3) color = pal.neonCore;
-      } else {
-        color = inset >= pixels(2) ? pal.crown : inset >= pixels(1) ? pal.mid : pal.podium;
-        const edge = x === 0 || y === 0 || x + 1 === w || y + 1 === h
-          || world.buildingAt[idx - 1] !== bId || world.buildingAt[idx + 1] !== bId
-          || world.buildingAt[idx - w] !== bId || world.buildingAt[idx + w] !== bId;
-        if (edge) color = (x + y) % 4 === 0 ? pal.neonCore : pal.neonEdge;
-        else if (inset === pixels(1) && Math.min(b.w, b.h) >= pixels(4)) color = pal.neonEdge;
-        else if (x === cx || y === cy) color = pal.roofAccent;
-        // Roof equipment is authored across cells instead of squeezed into each cell.
-        if (inset >= pixels(1)) {
-          const dx = x - cx, dy = y - cy;
-          if (b.roofFeature === "helipad" && Math.abs(dx) <= 2 && Math.abs(dy) <= 2) {
-            color = Math.abs(dx) === 2 || dy === 0 ? "#ffd166" : pal.crown;
-          } else if (b.roofFeature === "skyGarden" && (lx + ly) % 3 !== 0) color = "#357542";
-          else if (b.roofFeature === "solarArray" && ly % 3 === 0) color = "#48a8dc";
-          else if (dx === 0 && dy === 0) color = "#ffffff";
-        }
-        if (b.development > 1.05 && inset === 0 && (x + y) % 3 === 0) color = pal.neonCore;
-      }
+      const edge =
+        x === 0 ||
+        y === 0 ||
+        x + 1 === w ||
+        y + 1 === h ||
+        world.buildingAt[idx - 1] !== bId ||
+        world.buildingAt[idx + 1] !== bId ||
+        world.buildingAt[idx - w] !== bId ||
+        world.buildingAt[idx + w] !== bId;
+      color = edge ? pal.podium : pal.shadeEdge;
       if (hp < 0.4) color = r < 0.3 ? "#ff42b8" : "#12091c";
       else if (hp < 0.75 && r < 0.35) color = "#ff8c29";
     } else if (mat === CellMaterial.STREET) {
@@ -1146,7 +1021,7 @@ export class VoidRenderer {
       }
     }
 
-    // 7. Draw Shield Projector arcs & Gravity Anchor fields
+    // 7. Draw Shield Projector arcs & Gravity Anchor fields on the ground plane
     for (const t of combat.towers) {
       const cx = t.x + t.w * 0.5;
       const cy = t.y + t.h * 0.5;
@@ -1169,76 +1044,202 @@ export class VoidRenderer {
       }
     }
 
-    // 8. Draw placed Resistance towers with crisp multi-part pixel silhouettes
-    for (const t of combat.towers) {
-      const spec = TOWER_SPECS[t.type];
-      // Armored shadow & base plate
-      c.fillStyle = "#0d1118";
-      c.fillRect(t.x - 0.15, t.y - 0.15, t.w + 0.3, t.h + 0.3);
-      c.fillStyle = "#242c3a";
-      c.fillRect(t.x, t.y, t.w, t.h);
-      // Corner rivets / mounting brackets
-      c.fillStyle = "#5c6b82";
-      c.fillRect(t.x, t.y, 0.6, 0.6);
-      c.fillRect(t.x + t.w - 0.6, t.y, 0.6, 0.6);
-      c.fillRect(t.x, t.y + t.h - 0.6, 0.6, 0.6);
-      c.fillRect(t.x + t.w - 0.6, t.y + t.h - 0.6, 0.6, 0.6);
-      // Primary colored turret housing
-      c.fillStyle = spec.color;
-      c.fillRect(t.x + 0.35, t.y + 0.35, t.w - 0.7, t.h - 0.7);
-      // Glowing energy core / barrel mount
-      c.fillStyle = "#fff3d1";
-      c.fillRect(t.x + t.w * 0.5 - 0.45, t.y + t.h * 0.5 - 0.45, 0.9, 0.9);
+    // 8. Sorted Structure Pass: buildings (roof + south facade), placed towers (elevated 2 px),
+    //    and autonomous agents (0-1 px) sorted back-to-front by footprint bottom `y` (tie-break `x`).
+    const tElev =
+      this.buildingHeight === "flat" ? 0 : this.buildingHeight === "low" ? 1 : TOWER_ELEVATION_PX;
 
-      if (t.uid === selectedTowerUid) {
-        c.strokeStyle = "#ffbe3b";
-        c.lineWidth = 0.4;
-        c.strokeRect(t.x - 0.35, t.y - 0.35, t.w + 0.7, t.h + 0.7);
-        c.strokeStyle = "rgba(255, 190, 59, 0.42)";
-        c.lineWidth = 0.35;
-        c.beginPath();
-        c.arc(t.x + t.w * 0.5, t.y + t.h * 0.5, spec.range, 0, Math.PI * 2);
-        c.stroke();
+    type SortedDrawable =
+      | { kind: "building"; bottomY: number; sortX: number; sprite: CachedBuildingSprite }
+      | { kind: "tower"; bottomY: number; sortX: number; tower: (typeof combat.towers)[number] }
+      | { kind: "agent"; bottomY: number; sortX: number; agent: (typeof combat.agents)[number] };
+
+    const drawables: SortedDrawable[] = [];
+    for (let i = 0; i < world.buildings.length; i++) {
+      const sp = this.spriteCache.getSprite(world, world.buildings[i], this.buildingHeight);
+      if (sp.intactCount > 0) {
+        drawables.push({ kind: "building", bottomY: sp.bottomY, sortX: sp.x, sprite: sp });
       }
+    }
+    for (let i = 0; i < combat.towers.length; i++) {
+      const t = combat.towers[i];
+      drawables.push({ kind: "tower", bottomY: t.y + t.h, sortX: t.x, tower: t });
+    }
+    for (let i = 0; i < combat.agents.length; i++) {
+      const a = combat.agents[i];
+      drawables.push({ kind: "agent", bottomY: Math.floor(a.y) + 1, sortX: Math.floor(a.x), agent: a });
+    }
 
-      if (t.focus) {
-        c.strokeStyle = "rgba(255, 145, 45, 0.65)";
-        c.lineWidth = 0.28;
-        c.beginPath();
-        c.moveTo(t.x + t.w * 0.5, t.y + t.h * 0.5);
-        c.lineTo(t.focus.x, t.focus.y);
-        c.stroke();
-        c.strokeRect(t.focus.x - 1.1, t.focus.y - 1.1, 2.2, 2.2);
+    drawables.sort((a, b) => a.bottomY - b.bottomY || a.sortX - b.sortX);
+
+    // Precompute preview/selection bounding box on the ground behind tall buildings for occlusion fade
+    const occluders: { x0: number; y0: number; x1: number; y1: number; footY: number }[] = [];
+    if (preview) {
+      if (preview.kind === "tower") {
+        const spec = TOWER_SPECS[preview.type];
+        occluders.push({
+          x0: preview.x - 1,
+          y0: preview.y - 1,
+          x1: preview.x + spec.w + 1,
+          y1: preview.y + spec.h + 1,
+          footY: preview.y + spec.h,
+        });
+      } else if (preview.kind === "strike") {
+        const r = Math.min(8, STRIKE_SPECS[preview.strike].radius);
+        occluders.push({
+          x0: preview.x - r,
+          y0: preview.y - r,
+          x1: preview.x + r,
+          y1: preview.y + r,
+          footY: preview.y,
+        });
+      } else if (preview.kind === "reticle") {
+        occluders.push({
+          x0: preview.x - 2,
+          y0: preview.y - 2,
+          x1: preview.x + 2,
+          y1: preview.y + 2,
+          footY: preview.y + 1,
+        });
+      } else if (preview.kind === "blueprint") {
+        for (let i = 0; i < preview.points.length; i++) {
+          const pt = preview.points[i];
+          occluders.push({ x0: pt.x - 1, y0: pt.y - 1, x1: pt.x + 2, y1: pt.y + 2, footY: pt.y + 1 });
+        }
+      }
+    }
+    for (let i = 0; i < combat.towers.length; i++) {
+      const t = combat.towers[i];
+      occluders.push({ x0: t.x, y0: t.y - tElev, x1: t.x + t.w, y1: t.y + t.h, footY: t.y + t.h });
+    }
+    for (let i = 0; i < combat.agents.length; i++) {
+      const a = combat.agents[i];
+      const ax = Math.floor(a.x);
+      const ay = Math.floor(a.y);
+      occluders.push({ x0: ax - 1, y0: ay - 1, x1: ax + 2, y1: ay + 2, footY: ay + 1 });
+    }
+
+    const rawScene = this.sceneCtx;
+    for (let i = 0; i < drawables.length; i++) {
+      const item = drawables[i];
+      if (item.kind === "building") {
+        const sp = item.sprite;
+        let occluded = false;
+        if (sp.maxElev > 0) {
+          const sx0 = sp.x;
+          const sy0 = sp.y;
+          const sx1 = sp.x + sp.w;
+          const sy1 = sp.bottomY;
+          for (let j = 0; j < occluders.length; j++) {
+            const occ = occluders[j];
+            if (
+              occ.footY <= sp.bottomY - 1 &&
+              occ.x1 > sx0 &&
+              occ.x0 < sx1 &&
+              occ.y1 > sy0 &&
+              occ.y0 < sy1
+            ) {
+              occluded = true;
+              break;
+            }
+          }
+        }
+
+        if (occluded) {
+          // Whole-pixel checkerboard dither fade (no alpha blur) so obscured ground stays readable
+          for (let k = 0; k < sp.ops.length; k++) {
+            const op = sp.ops[k];
+            const wx = sp.x + op.dx;
+            const wy = sp.y + op.dy;
+            if (((wx + wy) & 1) === 0) {
+              c.fillStyle = op.color;
+              c.fillRect(wx, wy, 1, 1);
+            }
+          }
+        } else if (sp.canvas) {
+          rawScene.drawImage(sp.canvas, sp.x, sp.y);
+        } else {
+          for (let k = 0; k < sp.runs.length; k++) {
+            const r = sp.runs[k];
+            c.fillStyle = r.color;
+            c.fillRect(sp.x + r.dx, sp.y + r.dy, r.w, 1);
+          }
+        }
+      } else if (item.kind === "tower") {
+        const t = item.tower;
+        const spec = TOWER_SPECS[t.type];
+        const topY = t.y - tElev;
+        // Armored shadow & south base facade (2 px tall)
+        c.fillStyle = "#0d1118";
+        c.fillRect(t.x, topY, t.w, t.h + tElev);
+        if (tElev > 0) {
+          c.fillStyle = "#18202c";
+          c.fillRect(t.x, t.y + t.h - tElev, t.w, tElev);
+        }
+        c.fillStyle = "#242c3a";
+        c.fillRect(t.x, topY, t.w, t.h);
+        // Corner rivets / mounting brackets
+        c.fillStyle = "#5c6b82";
+        c.fillRect(t.x, topY, 1, 1);
+        c.fillRect(t.x + t.w - 1, topY, 1, 1);
+        c.fillRect(t.x, topY + t.h - 1, 1, 1);
+        c.fillRect(t.x + t.w - 1, topY + t.h - 1, 1, 1);
+        // Primary colored turret housing
+        c.fillStyle = spec.color;
+        c.fillRect(t.x + 0.35, topY + 0.35, t.w - 0.7, t.h - 0.7);
+        // Glowing energy core / barrel mount
+        c.fillStyle = "#fff3d1";
+        c.fillRect(t.x + t.w * 0.5 - 0.45, topY + t.h * 0.5 - 0.45, 0.9, 0.9);
+
+        if (t.uid === selectedTowerUid) {
+          c.strokeStyle = "#ffbe3b";
+          c.lineWidth = 0.4;
+          c.strokeRect(t.x - 0.35, topY - 0.35, t.w + 0.7, t.h + tElev + 0.7);
+          c.strokeStyle = "rgba(255, 190, 59, 0.42)";
+          c.lineWidth = 0.35;
+          c.beginPath();
+          c.arc(t.x + t.w * 0.5, t.y + t.h * 0.5, spec.range, 0, Math.PI * 2);
+          c.stroke();
+        }
+
+        if (t.focus) {
+          c.strokeStyle = "rgba(255, 145, 45, 0.65)";
+          c.lineWidth = 0.28;
+          c.beginPath();
+          c.moveTo(t.x + t.w * 0.5, topY + t.h * 0.5);
+          c.lineTo(t.focus.x, t.focus.y);
+          c.stroke();
+          c.strokeRect(t.focus.x - 1.1, t.focus.y - 1.1, 2.2, 2.2);
+        }
+      } else {
+        const a = item.agent;
+        const ax = Math.floor(a.x);
+        const ay = Math.floor(a.y);
+        if (a.kind === "rifleman") {
+          c.fillStyle = "#ff7b24";
+          c.fillRect(ax, ay, 1, 1);
+        } else if (a.kind === "engineer") {
+          c.fillStyle = a.carryingMatter > 0 ? "#48e5ff" : "#ffd15c";
+          c.fillRect(ax, ay - 1, 1, 1);
+          c.fillStyle = "#d9822b";
+          c.fillRect(ax, ay, 1, 1);
+        } else if (a.kind === "heavyMech") {
+          c.fillStyle = "#ff9e30";
+          c.fillRect(ax - 1, ay - 1, 2, 2);
+          c.fillStyle = "#7afcff";
+          c.fillRect(ax, ay - 1, 1, 1);
+        } else if (a.kind === "wallSerpent") {
+          c.fillStyle = "#0c1420";
+          c.fillRect(a.x - 1.1, a.y - 1.1, 2.2, 2.2);
+          c.fillStyle = "#48e5ff";
+          c.fillRect(a.x - 0.9, a.y - 0.9, 1.8, 1.8);
+          c.fillStyle = "#ffd166";
+          c.fillRect(a.x - 0.4, a.y - 0.4, 0.8, 0.8);
+        }
       }
     }
 
     lap("towers");
-
-    // 9. Draw autonomous agents: 1x1 riflemen, 1x2 engineers, 2x2 heavy mechs, wall serpents (V3)
-    for (const a of combat.agents) {
-      const ax = Math.floor(a.x), ay = Math.floor(a.y);
-      if (a.kind === "rifleman") {
-        c.fillStyle = "#ff7b24";
-        c.fillRect(ax, ay, 1, 1);
-      } else if (a.kind === "engineer") {
-        c.fillStyle = a.carryingMatter > 0 ? "#48e5ff" : "#ffd15c";
-        c.fillRect(ax, ay - 1, 1, 1);
-        c.fillStyle = "#d9822b";
-        c.fillRect(ax, ay, 1, 1);
-      } else if (a.kind === "heavyMech") {
-        c.fillStyle = "#ff9e30";
-        c.fillRect(ax - 1, ay - 1, 2, 2);
-        c.fillStyle = "#7afcff";
-        c.fillRect(ax, ay - 1, 1, 1);
-      } else if (a.kind === "wallSerpent") {
-        c.fillStyle = "#0c1420";
-        c.fillRect(a.x - 1.1, a.y - 1.1, 2.2, 2.2);
-        c.fillStyle = "#48e5ff";
-        c.fillRect(a.x - 0.9, a.y - 0.9, 1.8, 1.8);
-        c.fillStyle = "#ffd166";
-        c.fillRect(a.x - 0.4, a.y - 0.4, 0.8, 0.8);
-      }
-    }
 
     // 10. Draw cosmic Void organisms with nebula contours
     for (const o of combat.organisms) {
