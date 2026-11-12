@@ -16,7 +16,7 @@ import {
   type VoidOrganism,
   type WallBlueprint,
 } from "./model.ts";
-import type { VoidPhysics } from "./physics.ts";
+import { CHUNK_TOWER_DAMAGE_SCALE, type VoidPhysics } from "./physics.ts";
 import type { EvaluatedTech } from "./tech/wallet.ts";
 import type { VoidField } from "./void-field.ts";
 import type { VoidWorld } from "./world.ts";
@@ -637,7 +637,7 @@ export class VoidCombatManager {
           const nx = Math.max(t.x, Math.min(imp.x, t.x + t.w));
           const ny = Math.max(t.y, Math.min(imp.y, t.y + t.h));
           if (dist(imp.x - nx, imp.y - ny) <= imp.radius) {
-            t.hp -= imp.damage;
+            t.hp -= Math.round(imp.damage * CHUNK_TOWER_DAMAGE_SCALE);
           }
         }
         for (let i = this.agents.length - 1; i >= 0; i--) {

@@ -14,7 +14,7 @@ import {
 import { getScenario } from "../src/void/maps.ts";
 import { isOccludedByLedge, ledgeFrontDepthAt } from "../src/void/ledge.ts";
 import { CellMaterial } from "../src/void/model.ts";
-import { MAX_FALLING_CHUNKS, VOID_ABYSS_Z } from "../src/void/physics.ts";
+import { CHUNK_IMPACT_MAX_DAMAGE, CHUNK_STREET_CRACK, MAX_FALLING_CHUNKS, VOID_ABYSS_Z } from "../src/void/physics.ts";
 import { computeCityIncomePerCycle } from "../src/void/scoring.ts";
 import { VoidSim } from "../src/void/sim.ts";
 import { emptyTechWallet } from "../src/void/tech/wallet.ts";
@@ -305,12 +305,12 @@ test("Phase 4: pooled dust puffs, large-collapse camera shake trigger, and Void 
   );
 });
 
-test("Phase 5: floor-based income, chunk fall damage (streets/turrets/units/organisms), and engineer shoring", () => {
+test("Phase 5: floor-based income, chunk fall damage (units/organisms/turrets, not buildings), and engineer shoring", () => {
   const sim = new VoidSim("tutorialBreach", "underSiege", emptyTechWallet());
   const { world, physics, combat, tech } = sim;
   const { w } = world.grid;
 
-  // 1. Income scales with remaining columnFloors (1 floor = $1 per 5s = $0.40 per 2s cycle)
+  // 1. Income scales with remaining columnFloors (1 floor = $1 per 15s = $2/15 per 2s cycle)
   const fullIncome = computeCityIncomePerCycle(world, tech);
   for (let i = 0; i < world.columnFloors.length; i++) {
     if (world.columnFloors[i] > 2) {
@@ -392,14 +392,28 @@ test("Phase 5: floor-based income, chunk fall damage (streets/turrets/units/orga
   for (let t = 0; t < 5 && heavyChunk.bounces === 0 && heavyChunk.active; t++) {
     physics.stepFallingChunks(world, 1 / 30);
   }
-  assert.ok(world.hp[streetIdx] < streetHpBefore, "Heavy falling chunk must crack street HP");
+  assert.ok(world.hp[streetIdx] < streetHpBefore, "Heavy falling chunk must scuff street HP");
+  assert.ok(streetHpBefore - world.hp[streetIdx] <= CHUNK_STREET_CRACK, "Street scuff stays small");
   assert.ok(physics.dustPuffs.some((d) => d.active), "Impact must emit smoke cloud dust puffs");
   assert.ok(physics.pendingImpacts.length >= 1, "Impact must queue damage for combat entities");
 
+  const impactDamage = physics.pendingImpacts[0].damage;
+  assert.ok(impactDamage <= CHUNK_IMPACT_MAX_DAMAGE, `Impact damage ${impactDamage} is capped`);
   combat.step(world, physics, sim.voidField, sim.tick + 1, 1 / 30, tech, false);
-  assert.ok(combat.towers.find((t) => t.uid === 9999)!.hp < 100, "Impact must damage nearby turret");
+  const towerHp = combat.towers.find((t) => t.uid === 9999)!.hp;
+  assert.ok(towerHp < 100, "Impact must damage nearby turret");
+  assert.ok(100 - towerHp < impactDamage, "Turrets take reduced impact damage");
   assert.ok(combat.agents.find((a) => a.id === 9998)!.hp < 100, "Impact must damage nearby friendly unit");
   assert.ok(combat.organisms.find((o) => o.id === 9997)!.hp < 100, "Impact must damage nearby Void organism");
+
+  // 2b. Chunks landing on a building leave it untouched
+  const bld = world.buildings.find((bb) => bb.cells.length > 0 && world.buildingAt[bb.cells[0]] === bb.id)!;
+  const bCell = bld.cells[0];
+  const bHpBefore = world.hp[bCell];
+  physics.spawnFallingChunk((bCell % w) + 0.5, Math.floor(bCell / w) + 0.5, 2, 0, 0, -60, 2, 2, "#5c6574", "#ff8c29", "fade");
+  for (let t = 0; t < 10; t++) physics.stepFallingChunks(world, 1 / 30);
+  assert.equal(world.hp[bCell], bHpBefore, "Falling chunks must not damage buildings");
+  physics.pendingImpacts.length = 0;
 
   // 3. Engineer shoring registers building support until future tick
   const b = world.buildings[0];

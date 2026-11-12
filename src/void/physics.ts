@@ -28,6 +28,14 @@ export const MAX_VOID_RIPPLES = 16;
 export const FALL_GRAVITY_PX = 60;
 /** Depth below ground plane (`z < -24`) at which falling Void-bound chunks vanish. */
 export const VOID_ABYSS_Z = -24;
+/** Falling-chunk impact damage per (mass x landing speed); a 1x1 chunk from a 30-floor roof deals ~8. */
+export const CHUNK_IMPACT_DAMAGE_SCALE = 0.2;
+/** Cap on one chunk's impact damage, so a 2x2 slab maims rather than one-shots heavy units. */
+export const CHUNK_IMPACT_MAX_DAMAGE = 30;
+/** HP a landing chunk scuffs off a street cell (buildings and walls take none). */
+export const CHUNK_STREET_CRACK = 2;
+/** Fraction of impact damage armoured towers take. */
+export const CHUNK_TOWER_DAMAGE_SCALE = 0.5;
 
 /** Prismatic spark colours for small fast fragments. */
 const DEBRIS_PALETTES: readonly { color: string; glow: string }[] = [
@@ -654,18 +662,16 @@ export class VoidPhysics {
         ch.z = 0;
         if (ch.bounces === 0 && Math.abs(ch.vz) > 10) {
           const mass = Math.max(1, ch.w * ch.h);
-          const impactDamage = Math.max(4, Math.round(mass * Math.abs(ch.vz) * 0.35));
+          const impactDamage = Math.min(
+            CHUNK_IMPACT_MAX_DAMAGE,
+            Math.max(3, Math.round(mass * Math.abs(ch.vz) * CHUNK_IMPACT_DAMAGE_SCALE)),
+          );
 
-          // Crack streets, damage ground/building cells, and emit smoke clouds & debris on solid impact
+          // Debris is aimed at entities, not the city: it only scuffs a street it lands on
+          // (never below 1 HP) and leaves buildings and walls untouched.
           if (material[idx] === CellMaterial.STREET) {
-            hp[idx] = Math.max(1, hp[idx] - impactDamage);
+            hp[idx] = Math.max(1, hp[idx] - CHUNK_STREET_CRACK);
             world.grid.markIndexDirty(idx);
-          } else if (buildingAt[idx] >= 0 || material[idx] === CellMaterial.WALL) {
-            hp[idx] = Math.max(0, hp[idx] - impactDamage);
-            world.grid.markIndexDirty(idx);
-            if (hp[idx] === 0 && buildingAt[idx] >= 0) {
-              this.damagedBuildings.add(buildingAt[idx]);
-            }
           }
 
           // Smoke cloud puffs around ground impact
