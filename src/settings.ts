@@ -87,6 +87,8 @@ export const SETTINGS = {
   /** City walls with their brick south face hung below the stones (the
    * old slanted look); off, walls are drawn top-down only. */
   legacyWalls: { kind: "toggle", default: false, page: { id: "legacy-walls", label: "Legacy Walls" } },
+  /** Oblique building height projection (`full` = 1 px per 2 floors, `low` = half height, `flat` = top-down only). */
+  buildingHeight: { kind: "choice", default: "full", choices: [["full", "Full"], ["low", "Low"], ["flat", "Flat"]], page: { id: "building-height", label: "Building height" } },
   /** Alembic, the game's own pixel font, for every word on the page; off, Cinzel. */
   pixelFont: { kind: "toggle", default: true, page: { id: "pixel-font", label: "Use Custom Font" } },
   /** Master switch for developer controls, including the enemy tester. */
