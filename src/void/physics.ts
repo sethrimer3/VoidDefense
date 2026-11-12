@@ -854,4 +854,108 @@ export class VoidPhysics {
 
     return { displacedVoidCells, restoredCells };
   }
+
+  /** Creates a new-land Hearthseed island on eligible Void/UNCLAIMED cells without
+   * restoring historical buildings. Deterministic nested footprint grows monotonically with rank. */
+  depositHearthseedIsland(
+    world: VoidWorld,
+    cx: number,
+    cy: number,
+    rank: number,
+    hpBoost = 1.15,
+  ): { displacedVoidCells: number; createdCells: number } {
+    const clampedRank = Math.max(0, Math.min(3, Math.floor(rank)));
+    const radius = pixels(4 + clampedRank);
+    const rCeil = Math.ceil(radius + 1);
+    const { w, h } = world.grid;
+    const islandHp = Math.min(255, Math.round(80 * hpBoost));
+
+    let displacedVoidCells = 0;
+    let createdCells = 0;
+    const created: { idx: number; dx: number; dy: number; d: number }[] = [];
+
+    for (let y = Math.max(0, Math.floor(cy - rCeil)); y <= Math.min(h - 1, Math.ceil(cy + rCeil)); y++) {
+      for (let x = Math.max(0, Math.floor(cx - rCeil)); x <= Math.min(w - 1, Math.ceil(cx + rCeil)); x++) {
+        const dx = x - cx;
+        const dy = y - cy;
+        const d = dist(dx, dy);
+        // Deterministic organic edge jitter independent of rank so higher ranks strictly nest lower ranks.
+        const jitter = (hash01(Math.round(dx) + 1000, Math.round(dy) + 1000, world.seed) - 0.5) * 0.9;
+        if (d + jitter > radius) continue;
+
+        const idx = y * w + x;
+        const mat = world.material[idx];
+        if (mat !== CellMaterial.VOID && mat !== CellMaterial.UNCLAIMED) continue;
+        if (world.landCover[idx] === LandCover.RIVER || world.landCover[idx] === LandCover.BRIDGE) continue;
+
+        if (mat === CellMaterial.VOID) displacedVoidCells++;
+        world.material[idx] = CellMaterial.RECLAIMED;
+        world.buildingAt[idx] = -1;
+        world.columnFloors[idx] = 0;
+        world.hp[idx] = islandHp;
+        world.maxHp[idx] = islandHp;
+        world.landCover[idx] = LandCover.GRASS;
+        world.grid.markRadiusDirty(idx, CORRUPTION_REACH);
+
+        createdCells++;
+        created.push({ idx, dx, dy, d });
+      }
+    }
+
+    if (createdCells === 0) {
+      return { displacedVoidCells: 0, createdCells: 0 };
+    }
+
+    // Deterministic decorative planting on newly created cells only, with a compact margin from the edge.
+    const margin = pixels(0.8);
+    for (const c of created) {
+      const hVal = hash01(Math.round(c.dx) + 2048, Math.round(c.dy) + 2048, world.seed);
+      const interior = c.d <= radius - margin;
+      if (!interior) {
+        if (hVal < 0.22) world.landCover[c.idx] = LandCover.MEADOW;
+        continue;
+      }
+
+      if (clampedRank === 0) {
+        if (hVal < 0.25) world.landCover[c.idx] = LandCover.MEADOW;
+      } else if (clampedRank === 1) {
+        if (hVal < 0.16) world.landCover[c.idx] = LandCover.FOREST;
+        else if (hVal < 0.36) world.landCover[c.idx] = LandCover.MEADOW;
+      } else if (clampedRank === 2) {
+        const inFarmPatch = Math.abs(c.dx) <= pixels(1.6) && Math.abs(c.dy) <= pixels(1.2);
+        if (inFarmPatch) {
+          world.landCover[c.idx] = LandCover.FIELD_H;
+        } else if (hVal < 0.2) {
+          world.landCover[c.idx] = LandCover.FOREST;
+        } else if (hVal < 0.38) {
+          world.landCover[c.idx] = LandCover.MEADOW;
+        }
+      } else {
+        const inFarmPatch =
+          (Math.abs(c.dx) <= pixels(2.4) && Math.abs(c.dy) <= pixels(1.8)) ||
+          (c.dx > pixels(0.5) && c.dx <= pixels(3.2) && c.dy >= -pixels(2.2) && c.dy <= pixels(0.4));
+        if (inFarmPatch) {
+          world.landCover[c.idx] = c.dy > 0 ? LandCover.FIELD_V : LandCover.FIELD_H;
+        } else if (hVal < 0.26) {
+          world.landCover[c.idx] = LandCover.FOREST;
+        } else if (hVal < 0.44) {
+          world.landCover[c.idx] = LandCover.MEADOW;
+        }
+      }
+    }
+
+    if (this.shockwaves.length < 48) {
+      this.shockwaves.push({
+        x: cx,
+        y: cy,
+        maxRadius: radius * 1.15,
+        color: "#86d96a",
+        secondaryColor: "#e8c050",
+        life: 0,
+        maxLife: 0.55,
+      });
+    }
+
+    return { displacedVoidCells, createdCells };
+  }
 }

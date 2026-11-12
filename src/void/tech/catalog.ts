@@ -53,7 +53,7 @@ export const TECH_NODES: readonly TechNodeDef[] = [
   {
     id: "commandCore",
     name: "Emergency Response Protocol",
-    description: "United Resistance command network online. Unlocks Matter Cannon, Repair Depot, Infantry Barracks, and Landfall orbital drops.",
+    description: "United Resistance command network online. Unlocks Matter Cannon, Repair Depot, Infantry Barracks, and Hearthseed drops.",
     sector: "foundation",
     kind: "passive",
     currency: "essence",
@@ -324,8 +324,8 @@ export const TECH_NODES: readonly TechNodeDef[] = [
   // ── Sector 5: Strike Command ──────────────────────────────────────────
   {
     id: "landfallPayload",
-    name: "Expanded Landfall Payload",
-    description: "Landfall strikes create a +25% larger sacrificial island with higher material durability per rank.",
+    name: "Fertile Hearthseed",
+    description: "Expands Hearthseed radius (+1 cell per rank) and grows trees and farmland on newly raised islands.",
     sector: "strikes",
     kind: "passive",
     currency: "essence",

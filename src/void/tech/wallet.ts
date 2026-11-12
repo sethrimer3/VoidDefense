@@ -307,6 +307,7 @@ export type EvaluatedTech = {
   shieldRegenMultiplier: number;
   shieldExtraRadius: number;
   landfallRadiusMultiplier: number;
+  hearthseedRank: number;
   strikeCooldownMultiplier: number;
   strikeCostMultiplier: number;
   matterSynthesis: boolean;
@@ -351,6 +352,7 @@ export function evaluateTech(ranks: Readonly<Record<string, number>>): Evaluated
     shieldRegenMultiplier: 1 + 0.25 * r("harmonicShields"),
     shieldExtraRadius: r("harmonicShields"),
     landfallRadiusMultiplier: 1 + 0.25 * r("landfallPayload"),
+    hearthseedRank: r("landfallPayload"),
     strikeCooldownMultiplier: Math.max(0.4, 1 - 0.12 * r("orbitalCooldowns")),
     strikeCostMultiplier: Math.max(0.5, 1 - 0.1 * r("strikeCapacitors")),
     matterSynthesis: r("matterSynthesis") > 0,

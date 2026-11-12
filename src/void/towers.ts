@@ -169,13 +169,13 @@ export type StrikeSpec = {
 export const STRIKE_SPECS: Record<StrikeId, StrikeSpec> = {
   landfall: {
     id: "landfall",
-    name: "Landfall Drop",
-    shortName: "Landfall",
-    description: "Drops a sacrificial bedrock island inside the Void, expanding contact perimeter to slow city erosion.",
+    name: "Hearthseed",
+    shortName: "Hearthseed",
+    description: "Drops a warm seed into the Void, raising a living patch of earth and grass. Upgrades grow its radius, trees, and farmland.",
     supplyCost: 35,
     cooldownSeconds: 12,
-    radius: pixels(6.5),
-    color: "#f29d38",
+    radius: pixels(4),
+    color: "#86d96a",
   },
   containmentPulse: {
     id: "containmentPulse",
@@ -495,14 +495,16 @@ export class VoidCombatManager {
     if (!world.grid.inBounds(Math.floor(tx), Math.floor(ty))) return false;
 
     const spec = STRIKE_SPECS[strike];
-    this.strikeCooldowns[strike] = spec.cooldownSeconds * tech.strikeCooldownMultiplier;
 
     if (strike === "landfall") {
-      const r = spec.radius * tech.landfallRadiusMultiplier;
-      physics.depositMatterDisc(world, tx, ty, r, false, 1.15);
+      const res = physics.depositHearthseedIsland(world, tx, ty, tech.hearthseedRank, 1.15);
+      if (res.createdCells === 0) return false;
+      this.strikeCooldowns[strike] = spec.cooldownSeconds * tech.strikeCooldownMultiplier;
       voidField.rebuildFrontier(world);
       return true;
     }
+
+    this.strikeCooldowns[strike] = spec.cooldownSeconds * tech.strikeCooldownMultiplier;
 
     if (strike === "genesis") {
       const r = spec.radius;
