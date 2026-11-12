@@ -228,6 +228,14 @@ export type VoidRipple = {
   maxAge: number;
 };
 
+/** Impact event emitted when a falling chunk strikes solid ground with sufficient velocity. */
+export type ChunkImpact = {
+  x: number;
+  y: number;
+  radius: number;
+  damage: number;
+};
+
 /** Expanding shockwave or energy ring from Matter Cannon impacts, Landfall, or Containment Pulse. */
 export type ShockwaveEffect = {
   x: number;

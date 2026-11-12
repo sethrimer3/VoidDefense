@@ -828,10 +828,15 @@ export class VoidRenderer {
       if (hp < 0.4) color = r < 0.3 ? "#ff42b8" : "#12091c";
       else if (hp < 0.75 && r < 0.35) color = "#ff8c29";
     } else if (mat === CellMaterial.STREET) {
-      if (world.streetTier[idx] === 8) color = cover === LandCover.BRIDGE
-        ? (x + y) % 3 === 0 ? "#4a3422" : "#8a6a48"
-        : r < 0.25 ? "#c9a66f" : "#9a7549";
-      else color = world.streetTier[idx] === 4 ? "#050608" : "#040507";
+      if (hp < 0.85 && (x + y) % 2 === 0) {
+        color = "#1e232e";
+      } else if (world.streetTier[idx] === 8) {
+        color = cover === LandCover.BRIDGE
+          ? (x + y) % 3 === 0 ? "#4a3422" : "#8a6a48"
+          : r < 0.25 ? "#c9a66f" : "#9a7549";
+      } else {
+        color = world.streetTier[idx] === 4 ? "#050608" : "#040507";
+      }
     } else if (mat === CellMaterial.PARK) {
       switch (cover) {
         case LandCover.NONE: color = (x + y) % 4 === 0 ? "#1b332b" : "#090d12"; break;

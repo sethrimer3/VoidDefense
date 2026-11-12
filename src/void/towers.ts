@@ -628,6 +628,40 @@ export class VoidCombatManager {
       }
     }
 
+    // 1b. Apply falling-chunk impact damage to turrets, friendly units, and Void organisms
+    if (physics.pendingImpacts.length > 0) {
+      for (let k = 0; k < physics.pendingImpacts.length; k++) {
+        const imp = physics.pendingImpacts[k];
+        for (let i = 0; i < this.towers.length; i++) {
+          const t = this.towers[i];
+          const nx = Math.max(t.x, Math.min(imp.x, t.x + t.w));
+          const ny = Math.max(t.y, Math.min(imp.y, t.y + t.h));
+          if (dist(imp.x - nx, imp.y - ny) <= imp.radius) {
+            t.hp -= imp.damage;
+          }
+        }
+        for (let i = this.agents.length - 1; i >= 0; i--) {
+          const a = this.agents[i];
+          if (dist(a.x - imp.x, a.y - imp.y) <= imp.radius + 1.0) {
+            a.hp -= imp.damage;
+            if (a.hp <= 0) {
+              this.agents.splice(i, 1);
+            }
+          }
+        }
+        for (let i = this.organisms.length - 1; i >= 0; i--) {
+          const o = this.organisms[i];
+          if (dist(o.x - imp.x, o.y - imp.y) <= imp.radius + 2.5) {
+            o.hp -= imp.damage;
+            if (o.hp <= 0) {
+              this.organisms.splice(i, 1);
+            }
+          }
+        }
+      }
+      physics.pendingImpacts.length = 0;
+    }
+
     // 2. Check if any tower sits on Void and destroy it (spawning a falling tower chunk into the abyss)
     for (let i = this.towers.length - 1; i >= 0; i--) {
       const t = this.towers[i];
@@ -926,6 +960,7 @@ export class VoidCombatManager {
         const bId = world.buildingAt[idx];
         if (bId >= 0) {
           const b = world.buildings[bId];
+          if (physics.isBrinkBuilding(bId)) score += 90;
           if (tech.strategicMasonry && b?.isSkyscraper) score += 60;
           if (hpDeficit === 0 && b && b.development < tech.maxDevelopmentCeiling) {
             score += 25;
@@ -945,17 +980,19 @@ export class VoidCombatManager {
       const d = dist(tx - a.x, ty - a.y);
       if (d <= pixels(1.8)) {
         const idx = a.targetCell;
+        const bId = world.buildingAt[idx];
+        if (bId >= 0) {
+          // Shore up the building to slow brink spalling and extend cantilever support
+          physics.shoreBuilding(bId, tick + 180);
+        }
         if (world.hp[idx] < world.maxHp[idx]) {
           world.hp[idx] = Math.min(world.maxHp[idx], world.hp[idx] + Math.round(45 * tech.masonRepairMultiplier));
           world.grid.markIndexDirty(idx);
-        } else {
-          const bId = world.buildingAt[idx];
-          if (bId >= 0) {
-            const b = world.buildings[bId];
-            if (b && b.development < tech.maxDevelopmentCeiling) {
-              b.development = Math.min(tech.maxDevelopmentCeiling, b.development + 0.08 * tech.masonRepairMultiplier);
-              world.grid.markIndexDirty(idx);
-            }
+        } else if (bId >= 0) {
+          const b = world.buildings[bId];
+          if (b && b.development < tech.maxDevelopmentCeiling) {
+            b.development = Math.min(tech.maxDevelopmentCeiling, b.development + 0.08 * tech.masonRepairMultiplier);
+            world.grid.markIndexDirty(idx);
           }
         }
         if (!tech.matterSynthesis) a.carryingMatter = 0;

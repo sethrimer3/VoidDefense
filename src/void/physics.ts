@@ -8,6 +8,7 @@ import { ARCH_PALETTES, FLOORS_PER_PIXEL } from "./elevation.ts";
 import { hash01, ORTHO } from "./grid.ts";
 import {
   CellMaterial,
+  type ChunkImpact,
   type DebrisFragment,
   type DustPuff,
   type FallingChunk,
@@ -87,8 +88,25 @@ export class VoidPhysics {
   /** Set of building IDs that lost at least one pixel this tick and need a local connectivity check. */
   private readonly damagedBuildings = new Set<number>();
   private readonly cellLostBuildings = new Set<number>();
+  /** Buildings shored up by Mason engineers (`buildingId -> shoredUntilTick`) to slow spalling & extend cantilever span. */
+  readonly shoredBuildings = new Map<number, number>();
+  /** Ground impact events emitted by falling chunks this tick for `VoidCombatManager` to apply to towers, units, and organisms. */
+  readonly pendingImpacts: ChunkImpact[] = [];
   /** Monotonic tick counter for deterministic spalling rolls. */
   private supportTick = 0;
+
+  /** Shores up `buildingId` until `untilTick`, slowing brink spalling and adding +1 px cantilever support. */
+  shoreBuilding(buildingId: number, untilTick: number): void {
+    const prev = this.shoredBuildings.get(buildingId) ?? 0;
+    if (untilTick > prev) {
+      this.shoredBuildings.set(buildingId, untilTick);
+    }
+  }
+
+  /** Returns true if `buildingId` is currently tracked as damaged/brink-exposed. */
+  isBrinkBuilding(buildingId: number): boolean {
+    return this.damagedBuildings.has(buildingId);
+  }
   /** Support tick of the most recent large structural collapse (>= 20 columns in one tick). */
   lastLargeCollapseTick = 0;
   /** Pre-allocated pool of 1-pixel grey dust puffs emitted when building columns lose floors. */
@@ -362,12 +380,15 @@ export class VoidPhysics {
         const pal = palettes[b.variant % palettes.length];
         const bCenterX = b.x + b.w * 0.5;
         const bCenterY = b.y + b.h * 0.5;
+        const isShored = (this.shoredBuildings.get(bId) ?? 0) >= this.supportTick;
+        const shoreSpanBonus = isShored ? 1 : 0;
+        const shoreSpallScale = isShored ? 0.25 : 1.0;
 
         if (overhanging.length > 0) {
           for (let i = 0; i < overhanging.length; i++) {
             const c = overhanging[i];
             const floors = columnFloors[c];
-            const maxSpan = 1 + Math.floor(floors / 8);
+            const maxSpan = 1 + Math.floor(floors / 8) + shoreSpanBonus;
             const cx = c % w;
             const cy = (c / w) | 0;
             let held = false;
@@ -405,8 +426,8 @@ export class VoidPhysics {
               );
             } else {
               hasBrinkOrOverhang = true;
-              // Overhanging cantilever spalls from the top
-              if (hash01(world.seed, 940, this.supportTick, c) < 0.42) {
+              // Overhanging cantilever spalls from the top (slowed 75% when shored by Mason engineers)
+              if (hash01(world.seed, 940, this.supportTick, c) < 0.42 * shoreSpallScale) {
                 columnsCollapsedThisTick++;
                 const loss = 1 + (hash01(world.seed, 941, this.supportTick, c) < 0.35 ? 1 : 0);
                 columnFloors[c] = Math.max(0, floors - loss);
@@ -451,7 +472,7 @@ export class VoidPhysics {
             // (preserving ground cell HP/salvage until Void or splinter collapse finishes the foundation)
             if (
               columnFloors[c] > 1 &&
-              hash01(world.seed, 942, this.supportTick, c) < 0.14 * adjVoid
+              hash01(world.seed, 942, this.supportTick, c) < 0.14 * adjVoid * shoreSpallScale
             ) {
               columnsCollapsedThisTick++;
               const oldFloors = columnFloors[c];
@@ -631,6 +652,65 @@ export class VoidPhysics {
 
       if (!onVoid && ch.z <= 0) {
         ch.z = 0;
+        if (ch.bounces === 0 && Math.abs(ch.vz) > 10) {
+          const mass = Math.max(1, ch.w * ch.h);
+          const impactDamage = Math.max(4, Math.round(mass * Math.abs(ch.vz) * 0.35));
+
+          // Crack streets, damage ground/building cells, and emit smoke clouds & debris on solid impact
+          if (material[idx] === CellMaterial.STREET) {
+            hp[idx] = Math.max(1, hp[idx] - impactDamage);
+            world.grid.markIndexDirty(idx);
+          } else if (buildingAt[idx] >= 0 || material[idx] === CellMaterial.WALL) {
+            hp[idx] = Math.max(0, hp[idx] - impactDamage);
+            world.grid.markIndexDirty(idx);
+            if (hp[idx] === 0 && buildingAt[idx] >= 0) {
+              this.damagedBuildings.add(buildingAt[idx]);
+            }
+          }
+
+          // Smoke cloud puffs around ground impact
+          const puffCount = Math.min(5, 2 + mass);
+          for (let k = 0; k < puffCount; k++) {
+            const ox = (hash01(world.seed, 960, i, k) - 0.5) * 2.5;
+            const oy = (hash01(world.seed, 961, i, k) - 0.5) * 2.5;
+            this.spawnDustPuff(
+              ch.x + ox,
+              ch.y + oy,
+              0.5 + k * 0.4,
+              k % 2 === 0 ? "#5c6574" : "#4a525e",
+            );
+          }
+
+          // Debris sparks on heavy impact
+          if (this.debris.length < 750) {
+            const dAng = hash01(world.seed, 962, i, this.supportTick) * Math.PI * 2;
+            const dSpd = pixels(4.5);
+            this.debris.push({
+              x: ch.x,
+              y: ch.y,
+              px: ch.x,
+              py: ch.y,
+              vx: Math.cos(dAng) * dSpd,
+              vy: Math.sin(dAng) * dSpd,
+              portalX: ch.x + Math.cos(dAng) * 6,
+              portalY: ch.y + Math.sin(dAng) * 6,
+              color: ch.color,
+              glowColor: "rgba(180, 190, 210, 0.35)",
+              size: 1.0,
+              life: 0,
+              maxLife: 0.35,
+            });
+          }
+
+          // Queue impact for towers, friendly agents, and Void organisms
+          this.pendingImpacts.push({
+            x: ch.x,
+            y: ch.y,
+            radius: Math.max(1.5, ch.w),
+            damage: impactDamage,
+          });
+        }
+
         if (ch.bounces === 0 && Math.abs(ch.vz) > 8) {
           ch.vz = -ch.vz * 0.25;
           ch.vx *= 0.45;

@@ -15,6 +15,7 @@ import { getScenario } from "../src/void/maps.ts";
 import { isOccludedByLedge, ledgeFrontDepthAt } from "../src/void/ledge.ts";
 import { CellMaterial } from "../src/void/model.ts";
 import { MAX_FALLING_CHUNKS, VOID_ABYSS_Z } from "../src/void/physics.ts";
+import { computeCityIncomePerCycle } from "../src/void/scoring.ts";
 import { VoidSim } from "../src/void/sim.ts";
 import { emptyTechWallet } from "../src/void/tech/wallet.ts";
 import { VoidWorld } from "../src/void/world.ts";
@@ -302,6 +303,108 @@ test("Phase 4: pooled dust puffs, large-collapse camera shake trigger, and Void 
     physics.lastLargeCollapseTick > prevTick,
     "Collapsing >= 20 columns in one tick must advance lastLargeCollapseTick",
   );
+});
+
+test("Phase 5: floor-based income, chunk fall damage (streets/turrets/units/organisms), and engineer shoring", () => {
+  const sim = new VoidSim("tutorialBreach", "underSiege", emptyTechWallet());
+  const { world, physics, combat, tech } = sim;
+  const { w } = world.grid;
+
+  // 1. Income scales with remaining columnFloors (1 floor = $1 per 5s = $0.40 per 2s cycle)
+  const fullIncome = computeCityIncomePerCycle(world, tech);
+  for (let i = 0; i < world.columnFloors.length; i++) {
+    if (world.columnFloors[i] > 2) {
+      world.columnFloors[i] = Math.floor(world.columnFloors[i] / 2);
+    }
+  }
+  const halfIncome = computeCityIncomePerCycle(world, tech);
+  assert.ok(halfIncome < fullIncome, `Expected halved floors to reduce income (${halfIncome} < ${fullIncome})`);
+
+  // 2. Ground impact cracks streets, damages turrets/agents/organisms, and emits smoke clouds
+  let streetX = -1;
+  let streetY = -1;
+  for (let y = 10; y < world.grid.h - 10 && streetX < 0; y++) {
+    for (let x = 10; x < w - 10; x++) {
+      if (world.material[y * w + x] === CellMaterial.STREET) {
+        streetX = x;
+        streetY = y;
+        break;
+      }
+    }
+  }
+  assert.ok(streetX >= 0, "Expected a street cell");
+  const streetIdx = streetY * w + streetX;
+  const streetHpBefore = world.hp[streetIdx];
+
+  combat.towers.push({
+    uid: 9999,
+    type: "matterCannon",
+    x: streetX,
+    y: streetY,
+    w: 2,
+    h: 2,
+    hp: 100,
+    maxHp: 100,
+    paid: 10,
+    placedAtTick: 1,
+    cooldown: 0,
+  });
+  combat.agents.push({
+    id: 9998,
+    kind: "rifleman",
+    homeUid: 9999,
+    x: streetX + 0.5,
+    y: streetY + 0.5,
+    hp: 100,
+    maxHp: 100,
+    cooldown: 0,
+    targetCell: -1,
+    carryingMatter: 0,
+  });
+  combat.organisms.push({
+    id: 9997,
+    kind: "voidBee",
+    x: streetX + 0.5,
+    y: streetY + 0.5,
+    vx: 0,
+    vy: 0,
+    hp: 100,
+    maxHp: 100,
+    targetX: streetX,
+    targetY: streetY,
+    cooldown: 0,
+  });
+
+  for (const d of physics.dustPuffs) d.active = false;
+  const heavyChunk = physics.spawnFallingChunk(
+    streetX + 0.5,
+    streetY + 0.5,
+    2,
+    0,
+    0,
+    -60,
+    2,
+    2,
+    "#5c6574",
+    "#ff8c29",
+    "fade",
+  );
+  for (let t = 0; t < 5 && heavyChunk.bounces === 0 && heavyChunk.active; t++) {
+    physics.stepFallingChunks(world, 1 / 30);
+  }
+  assert.ok(world.hp[streetIdx] < streetHpBefore, "Heavy falling chunk must crack street HP");
+  assert.ok(physics.dustPuffs.some((d) => d.active), "Impact must emit smoke cloud dust puffs");
+  assert.ok(physics.pendingImpacts.length >= 1, "Impact must queue damage for combat entities");
+
+  combat.step(world, physics, sim.voidField, sim.tick + 1, 1 / 30, tech, false);
+  assert.ok(combat.towers.find((t) => t.uid === 9999)!.hp < 100, "Impact must damage nearby turret");
+  assert.ok(combat.agents.find((a) => a.id === 9998)!.hp < 100, "Impact must damage nearby friendly unit");
+  assert.ok(combat.organisms.find((o) => o.id === 9997)!.hp < 100, "Impact must damage nearby Void organism");
+
+  // 3. Engineer shoring registers building support until future tick
+  const b = world.buildings[0];
+  physics.shoreBuilding(b.id, 500);
+  assert.equal(physics.shoredBuildings.get(b.id), 500);
 });
 
 
