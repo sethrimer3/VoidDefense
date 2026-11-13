@@ -40,6 +40,7 @@ Constructed via clean DOM template strings in `src/void/ui.ts` and styled in `sr
 ## Save Persistence & Isolation
 
 - **Key:** All game progress, technology purchases, Sparks balances, mission milestones, settings, and profiles persist in `localStorage` under `voiddefense.v1`.
+- **Resistance Map:** the fourth tab (formerly Sectors & Mode, `VoidTab` `"map"`, page `#void-page-map`) shows the campaign map (`src/void/map/`) above the play-style picker and command settings. Deploying is refused for locked sectors. A victory banner offers "Advance on the Resistance Map". Optional `VoidSave.mapRevealed` counts the trails already drawn on for the player, so each new trail draws on once; absent means 0.
 - **Legacy Preservation & Safe Migration (`src/void/save.ts`):**
   - If `voiddefense.v1` does not exist on initial launch, the loader checks `towerdefense.v1` for existing player profiles and visual settings (`reduceMotion`, `pixelFont`, `soundOn`).
   - These values are gracefully imported into the initial `voiddefense.v1` payload.

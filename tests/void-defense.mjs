@@ -9,7 +9,7 @@
  *    - `void-v3-closeup-zoom.png`: Close-up (`3.2x` zoom) on the active Void frontier & units.
  *    - `void-v5-reduced-effects.png`: Same scene with Reduce Motion / Reduced Effects enabled.
  *    - `void-battle-portrait.png` (`390x844`) & `void-battle-landscape.png` (`844x390`).
- *    - `void-network-desktop.png` & `void-operations-desktop.png`.
+ *    - `void-network-desktop.png`, `void-operations-desktop.png` & `void-map-desktop.png`.
  * 2. Zero HUD currency overlap and strict page visibility isolation (only `.void-page.active` visible).
  * 3. Save isolation (`voiddefense.v1` vs `towerdefense.v1`).
  * 4. Busy siege frame-time benchmark on `384x512` and `512x768` worlds. */
@@ -226,12 +226,13 @@ try {
     await page.waitForTimeout(250);
     await page.screenshot({ path: path.join(OUT_DIR, `void-operations-${vp.name}.png`) });
 
-    // Open Sectors & Mode tab
-    await page.click('[data-void-tab="sectors"]');
-    await page.waitForTimeout(200);
-    const thumbCount = await page.locator("canvas.void-sector-thumb").count();
-    assert.equal(thumbCount, 8, "Expected 8 sector preview thumbnails");
-    await page.screenshot({ path: path.join(OUT_DIR, `void-sectors-${vp.name}.png`) });
+    // Open the Resistance Map tab: one map canvas and a briefing for the frontier sector
+    await page.click('[data-void-tab="map"]');
+    await page.waitForTimeout(300);
+    assert.equal(await page.locator("canvas.void-map-canvas").count(), 1, "Expected the Resistance Map canvas");
+    assert.equal(await page.locator('[data-void-tab="map"]').innerText(), "Resistance Map");
+    assert.ok(await page.locator("[data-map-deploy]").count() >= 1, "Expected a Deploy button for an open sector");
+    await page.screenshot({ path: path.join(OUT_DIR, `void-map-${vp.name}.png`) });
 
     if (vp.name === "desktop") {
       // V5: Enable Reduce Motion & Ambient Flicker and capture reduced-effects comparison
@@ -252,7 +253,7 @@ try {
       width: vp.width,
       height: vp.height,
       nodeCount,
-      thumbCount,
+      mapCanvases: 1,
       ok: true,
     };
 

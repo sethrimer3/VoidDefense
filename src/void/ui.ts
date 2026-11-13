@@ -4,7 +4,6 @@
 import { cleanName, defaultFlag, escapeText, flagSvg, randomPlayerName } from "../profile/model.ts";
 import { play } from "../sound.ts";
 import { VoidSoundEngine } from "./audio.ts";
-import { SCENARIOS } from "./maps.ts";
 import type {
   PlayStyleMode,
   RunOutcome,
@@ -13,6 +12,8 @@ import type {
   TowerTypeId,
   VoidProfile,
 } from "./model.ts";
+import { ResistanceMapView } from "./map/view.ts";
+import { sectorUnlocked } from "./map/progress.ts";
 import { ResistanceOperationsView } from "./operations/scene.ts";
 import { VoidRenderer, type DragPreview } from "./render.ts";
 import { type VoidSave } from "./save.ts";
@@ -21,7 +22,7 @@ import { VoidTechTreeView } from "./tech/tech-ui.ts";
 import { availableCurrencies, totalEarnedSparks } from "./tech/wallet.ts";
 import { STRIKE_SPECS, TOWER_SPECS } from "./towers.ts";
 
-export type VoidTab = "battle" | "network" | "operations" | "sectors";
+export type VoidTab = "battle" | "network" | "operations" | "map";
 
 /** Paints a crisp 20x20 pixel-art icon for each tower, strike, or blueprint card. */
 function paintCardIcon(canvas: HTMLCanvasElement, kind: string): void {
@@ -148,6 +149,7 @@ export class VoidApp {
   renderer!: VoidRenderer;
   private techView!: VoidTechTreeView;
   private opsView!: ResistanceOperationsView;
+  private mapView: ResistanceMapView | null = null;
   private soundEngine = new VoidSoundEngine();
 
   private selectedTowerUid: number | null = null;
@@ -250,13 +252,13 @@ export class VoidApp {
 
         <section id="void-page-network" class="void-page"></section>
         <section id="void-page-operations" class="void-page"></section>
-        <section id="void-page-sectors" class="void-page"></section>
+        <section id="void-page-map" class="void-page"></section>
 
         <div class="void-nav" role="tablist" aria-label="Resistance Navigation">
           <button type="button" data-void-tab="battle" class="selected">Defense Feed</button>
           <button type="button" data-void-tab="network">Global Tech Network</button>
           <button type="button" data-void-tab="operations">Resistance Ops</button>
-          <button type="button" data-void-tab="sectors">Sectors & Mode</button>
+          <button type="button" data-void-tab="map">Resistance Map</button>
         </div>
       </main>
       <dialog id="void-profile-dialog" class="void-dialog"></dialog>
@@ -332,7 +334,6 @@ export class VoidApp {
     });
 
     this.renderPalette();
-    this.renderSectorsPage();
     this.refreshHUD();
   }
 
@@ -346,7 +347,7 @@ export class VoidApp {
     });
     if (tab === "network") this.techView.render();
     if (tab === "operations") this.opsView.renderStatus();
-    if (tab === "sectors") this.renderSectorsPage();
+    if (tab === "map") this.renderMapPage();
     this.refreshHUD();
   }
 
@@ -903,6 +904,7 @@ export class VoidApp {
       }
       <div class="void-outcome-actions">
         <button type="button" class="primary-btn" data-out-retry>Deploy Again</button>
+        ${outcome.status === "won" ? `<button type="button" class="primary-btn" data-out-map>Advance on the Resistance Map</button>` : ""}
         <button type="button" class="secondary-btn" data-out-tech>Spend Upgrades in Global Network</button>
       </div>
     `;
@@ -910,14 +912,42 @@ export class VoidApp {
       this.startNewRun(this.sim.scenario.id);
     banner.querySelector<HTMLButtonElement>("[data-out-tech]")!.onclick = () =>
       this.navigate("network");
+    const toMap = banner.querySelector<HTMLButtonElement>("[data-out-map]");
+    if (toMap) toMap.onclick = () => this.navigate("map");
   }
 
-  private renderSectorsPage(): void {
-    const secPage = this.root.querySelector<HTMLElement>("#void-page-sectors")!;
+  private renderMapPage(): void {
+    const page = this.root.querySelector<HTMLElement>("#void-page-map")!;
+    if (!this.mapView) {
+      page.innerHTML = `
+        <div class="void-sectors-wrap">
+          <section class="void-map-section">
+            <h3>Resistance Map</h3>
+            <div data-map-host></div>
+          </section>
+          <div data-map-extras></div>
+        </div>
+      `;
+      this.mapView = new ResistanceMapView(page.querySelector<HTMLElement>("[data-map-host]")!, {
+        wallet: () => this.save.wallet,
+        devMode: () => this.save.settings.devMode,
+        reduceMotion: () => this.save.settings.reduceMotion,
+        selectedScenario: () => this.save.selectedScenario,
+        revealed: () => this.save.mapRevealed ?? 0,
+        setRevealed: (n) => {
+          this.save.mapRevealed = n;
+          this.persist();
+        },
+        deploy: (id) => {
+          if (sectorUnlocked(this.save.wallet, id, this.save.settings.devMode)) this.startNewRun(id);
+        },
+      });
+    }
+    this.mapView.show();
+    const secPage = page.querySelector<HTMLElement>("[data-map-extras]")!;
     const currentMode: PlayStyleMode = this.save.profile?.mode ?? "underSiege";
 
     secPage.innerHTML = `
-      <div class="void-sectors-wrap">
         <section class="void-mode-selector">
           <h3>Deployment Play Style (Changeable Between Runs)</h3>
           <div class="void-mode-cards">
@@ -933,36 +963,6 @@ export class VoidApp {
           <small>Note: Best survival percentages and attempt counts are tracked separately per mode. Each sector has <b>one shared Sparks of Defiance entitlement</b> (up to 3 Sparks), equal to the highest tier reached in either mode.</small>
         </section>
 
-        <section class="void-sector-list">
-          <h3>Metropolitan Breach Sectors</h3>
-          <div class="void-sector-grid">
-            ${SCENARIOS.map((sc) => {
-              const prog = this.save.wallet.scenarios[sc.id];
-              const stars = prog?.sparksTier ?? 0;
-              const siegeBest = prog?.underSiege.bestPreserved ?? 0;
-              const watchBest = prog?.buildAndWatch.bestPreserved ?? 0;
-              return `
-                <article class="void-sector-card ${this.save.selectedScenario === sc.id ? "active" : ""}">
-                  <header>
-                    <strong>${sc.name}</strong>
-                    <span class="void-sector-stars">${sc.endless ? "ENDLESS" : `${stars}/3 SPARKS`}</span>
-                  </header>
-                  <canvas class="void-sector-thumb" width="96" height="54" data-sector-thumb="${sc.id}"></canvas>
-                  <p>${sc.subtitle}</p>
-                  <div class="void-sector-stats">
-                    ${
-                      sc.endless
-                        ? `<span>Best Survival: <b>${this.save.wallet.endlessBestSeconds}s</b> (${this.save.wallet.endlessAttempts} runs)</span>`
-                        : `<span>Under Siege Best: <b>${siegeBest.toFixed(1)}%</b></span>
-                           <span>Build & Watch Best: <b>${watchBest.toFixed(1)}%</b></span>`
-                    }
-                  </div>
-                  <button type="button" class="primary-btn" data-launch-sector="${sc.id}">Deploy to ${sc.name.split(":")[0]}</button>
-                </article>
-              `;
-            }).join("")}
-          </div>
-        </section>
         <section class="void-settings-panel">
           <h3>Resistance Command Settings</h3>
           <div class="void-settings-row">
@@ -979,7 +979,6 @@ export class VoidApp {
             <label><input type="checkbox" data-set-dev ${this.save.settings.devMode ? "checked" : ""} /> Developer Mode (Unlock All Towers/Strikes & Unlimited Supplies)</label>
           </div>
         </section>
-      </div>
     `;
 
     secPage.querySelector<HTMLInputElement>("[data-set-sound]")!.onchange = (e) => {
@@ -1012,66 +1011,10 @@ export class VoidApp {
         const m = btn.dataset.selectMode as PlayStyleMode;
         if (this.save.profile) this.save.profile.mode = m;
         this.startNewRun(this.save.selectedScenario, m);
-        this.renderSectorsPage();
+        this.renderMapPage();
       };
     });
 
-    secPage.querySelectorAll<HTMLButtonElement>("[data-launch-sector]").forEach((btn) => {
-      btn.onclick = () => {
-        this.startNewRun(btn.dataset.launchSector as ScenarioId);
-      };
-    });
-
-    secPage.querySelectorAll<HTMLCanvasElement>("[data-sector-thumb]").forEach((canvas) => {
-      const scId = canvas.dataset.sectorThumb as ScenarioId;
-      const sc = SCENARIOS.find((s) => s.id === scId);
-      if (!sc) return;
-      const c = canvas.getContext("2d")!;
-      c.fillStyle = "#121824";
-      c.fillRect(0, 0, 96, 54);
-      // Draw stylized metropolitan avenues & multi-hue skyscrapers
-      for (let y = 4; y < 50; y += 10) {
-        for (let x = 4; x < 92; x += 14) {
-          c.fillStyle = (x + y) % 3 === 0 ? "#36465a" : "#4a3d33";
-          c.fillRect(x, y, 11, 7);
-          c.fillStyle = "#ffbe55";
-          c.fillRect(x + 2, y + 2, 2, 1);
-          c.fillRect(x + 6, y + 4, 2, 1);
-        }
-      }
-      // Countryside band around each portal, then the breach crater with its event-horizon ring
-      const band = sc.countryside ?? { ruralCells: 30, suburbCells: 16 };
-      const scale = 96 / sc.worldW;
-      for (const p of sc.portals) {
-        const px = Math.round(p.xFrac * 96);
-        const py = Math.round(p.yFrac * 54);
-        const r = Math.max(5, Math.round(p.radius * scale));
-        const rural = Math.round((p.radius + band.ruralCells) * scale);
-        c.fillStyle = "#4b7f2f";
-        c.beginPath();
-        c.arc(px, py, rural, 0, Math.PI * 2);
-        c.fill();
-        c.fillStyle = "#2f6b36";
-        for (let k = 0; k < 7; k++) {
-          const a = (k / 7) * Math.PI * 2 + p.xFrac * 5;
-          c.fillRect(px + Math.cos(a) * rural * 0.7 - 1, py + Math.sin(a) * rural * 0.7 - 1, 3, 2);
-        }
-        c.fillStyle = p.activateAtSeconds > 0 ? "rgba(255, 120, 50, 0.35)" : "#04020a";
-        c.beginPath();
-        c.arc(px, py, r, 0, Math.PI * 2);
-        c.fill();
-        c.strokeStyle = p.activateAtSeconds > 0 ? "#ff8c29" : "#ff38b8";
-        c.lineWidth = 1.4;
-        c.stroke();
-        if (p.activateAtSeconds === 0) {
-          c.strokeStyle = "rgba(165, 80, 255, 0.5)";
-          c.lineWidth = 1;
-          c.beginPath();
-          c.arc(px, py, r + 3, 0, Math.PI * 2);
-          c.stroke();
-        }
-      }
-    });
   }
 
   private openProfileDialog(firstTime: boolean): void {
@@ -1169,6 +1112,8 @@ export class VoidApp {
         this.techView.frame(nowMs);
       } else if (!document.hidden && this.tab === "operations") {
         this.opsView.frame(nowMs);
+      } else if (!document.hidden && this.tab === "map") {
+        this.mapView?.frame(nowMs);
       }
     }
   }

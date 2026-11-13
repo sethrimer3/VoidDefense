@@ -20,6 +20,9 @@ Run individual tests or pattern matches using the pinned random seed harness:
 # Core Void Defense simulation, towers, physics, resistance operations, tech wallet, saves
 node --experimental-transform-types --import ./tests/pin-random.ts --test tests/void-defense.test.ts
 
+# Resistance Map campaign rules, trails and save field
+node --experimental-transform-types --import ./tests/pin-random.ts --test tests/void-map.test.ts
+
 # Resistance Ops crew (rooms, ladders, duties, staffing)
 node --experimental-transform-types --import ./tests/pin-random.ts --test tests/void-operations.test.ts
 

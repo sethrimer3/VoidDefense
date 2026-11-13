@@ -33,6 +33,8 @@ export type VoidSave = {
   selectedScenario: ScenarioId;
   wallet: VoidTechWallet;
   settings: Settings;
+  /** Resistance Map trails already drawn on for the player (optional; 0 when absent). */
+  mapRevealed?: number;
 };
 
 export function defaultVoidSave(): VoidSave {
@@ -89,6 +91,8 @@ export function decodeVoidSave(raw: string | null): VoidSave {
     out.selectedScenario = s.selectedScenario;
   }
   out.settings = decodeSettings(s.settings);
+  const revealed = int(s.mapRevealed, 0, 0, 64);
+  if (revealed > 0) out.mapRevealed = revealed;
 
   const w = s.wallet;
   if (w && typeof w === "object") {

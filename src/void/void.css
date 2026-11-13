@@ -878,7 +878,7 @@
   cursor: pointer;
 }
 
-/* ── Sectors & Mode View ── */
+/* ── Resistance Map View ── */
 .void-sectors-wrap {
   flex: 1;
   overflow-y: auto;
@@ -948,42 +948,95 @@
   line-height: 1.35;
 }
 
-.void-sector-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 0.85rem;
+/* The map keeps its 16:9 shape inside the Mine-style brass frame. */
+.void-map-view {
+  flex: none;
+  aspect-ratio: 16 / 9;
+  max-height: 62vh;
+  margin: 9px auto;
+  width: calc(100% - 18px);
+  max-width: calc(62vh * 16 / 9);
 }
 
-.void-sector-card {
+.void-map-canvas {
+  cursor: pointer;
+}
+
+.void-map-card {
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
   gap: 0.55rem;
+  margin-top: 0.6rem;
   padding: 0.85rem;
-  background:
-    linear-gradient(180deg, #131822 0%, #090c12 100%);
+  background: linear-gradient(180deg, #131822 0%, #090c12 100%);
   border: 1px solid #283345;
   border-top-color: #3b4b66;
   border-radius: 2px;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.8);
-  transition: all 0.15s ease;
 }
 
-.void-sector-card:hover {
-  border-color: #3f5270;
+.void-map-card.urgent {
+  border-color: #ff4a2c;
+  box-shadow: 0 0 12px rgba(255, 74, 44, 0.35);
 }
 
-.void-sector-card.active {
-  border-color: var(--void-neon-orange);
-  box-shadow: 0 0 10px rgba(255, 119, 0, 0.35);
+.void-map-card.state-beaten {
+  border-color: #2f7d8a;
 }
 
-.void-sector-card header {
+.void-map-card header {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
   color: #ff9d00;
   letter-spacing: 0.05em;
+}
+
+.void-map-card header strong {
+  display: block;
+}
+
+.void-map-state {
+  font-size: 0.74rem;
+  color: #8294aa;
+}
+
+.void-map-card.state-open .void-map-state {
+  color: #ff7a5c;
+}
+
+.void-map-card.state-beaten .void-map-state {
+  color: #7fe6f2;
+}
+
+.void-map-state b {
+  display: inline-block;
+  padding: 0 0.35em;
+  color: #fff;
+  background: #e8402a;
+  border-radius: 2px;
+  animation: void-map-urgent 0.9s ease-in-out infinite alternate;
+}
+
+@keyframes void-map-urgent {
+  to { background: #ff7a4a; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .void-map-state b { animation: none; }
+}
+
+.void-map-card p {
+  margin: 0;
+  font-size: 0.8rem;
+  color: #a4b4c8;
+}
+
+.void-map-card .primary-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .void-sector-stars {
@@ -992,21 +1045,6 @@
   font-weight: 700;
   letter-spacing: 0.06em;
   text-shadow: 0 0 6px rgba(0, 229, 255, 0.7);
-}
-
-.void-sector-thumb {
-  width: 100%;
-  height: 72px;
-  border: 1px solid #242e3f;
-  border-radius: 2px;
-  background: #05070a;
-  image-rendering: pixelated;
-}
-
-.void-sector-card p {
-  margin: 0;
-  font-size: 0.8rem;
-  color: #a4b4c8;
 }
 
 .void-sector-stats {

@@ -863,6 +863,9 @@ A tactical orbital strike that drops a large disc of sacrificial bedrock directl
 **Wall Serpent**:
 A multi-segment autonomous mechanical worm that patrols the Void frontier, absorbing erosion and depositing reclaimed matter behind its tail.
 
+**Resistance Map**:
+The campaign map of mostly farmland on which each sector is a futuristic city. Beating a sector opens the next and draws a trail to it; the next city to contain is the **frontier**, marked with an urgent exclamation point.
+
 **Resistance Operations**:
 The non-economic, non-idle cosmetic flavor view showing the Engineering Bay (a giant experimental turret prototype with autonomous welders) and Research Lab (captured Void specimens and researchers) growing alongside tech progression.
 
