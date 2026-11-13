@@ -6,7 +6,7 @@ import { VoidSim } from "../src/void/sim.ts";
 import { emptyTechWallet } from "../src/void/tech/wallet.ts";
 
 test("Hearthseed: monotonic nested footprint, deterministic planting, and no historical building resurrection", () => {
-  const baseSim = new VoidSim("classicCore", "buildWatch", emptyTechWallet());
+  const baseSim = new VoidSim("classicCore", "buildWatch", emptyTechWallet(), true);
   const cx = Math.floor(baseSim.world.grid.w / 2);
   const cy = Math.floor(baseSim.world.grid.h / 2);
   for (let dy = -16; dy <= 16; dy++) {
@@ -20,9 +20,11 @@ test("Hearthseed: monotonic nested footprint, deterministic planting, and no his
   const sets: Set<number>[] = [];
 
   for (let rank = 0; rank <= 3; rank++) {
-    const sim = new VoidSim("classicCore", "buildWatch", emptyTechWallet());
+    const wallet = emptyTechWallet();
+    wallet.ranks.commandCore = 1;
+    wallet.ranks.landfallPayload = rank;
+    const sim = new VoidSim("classicCore", "buildWatch", wallet, true);
     const w = sim.world;
-    const p = new VoidPhysics();
     for (let dy = -16; dy <= 16; dy++) {
       for (let dx = -16; dx <= 16; dx++) {
         const idx = w.grid.index(cx + dx, cy + dy);
@@ -37,9 +39,8 @@ test("Hearthseed: monotonic nested footprint, deterministic planting, and no his
     w.originalMaterial[testIdx] = CellMaterial.BUILDING;
     w.originalBuildingAt[testIdx] = 0;
 
-    const res = p.depositHearthseedIsland(w, cx, cy, rank, 1.15);
-    assert.ok(res.createdCells > 0, `rank ${rank} should create cells`);
-    counts.push(res.createdCells);
+    const ok = sim.castStrike("landfall", cx, cy);
+    assert.equal(ok, true, `rank ${rank} castStrike(landfall) should succeed`);
 
     // Verify no historical building was resurrected
     assert.equal(w.material[testIdx], CellMaterial.RECLAIMED);
@@ -48,15 +49,22 @@ test("Hearthseed: monotonic nested footprint, deterministic planting, and no his
     const s = new Set<number>();
     let hasForest = false;
     let hasField = false;
-    for (let i = 0; i < w.grid.size; i++) {
+    for (let i = 0; i < w.grid.count; i++) {
       if (w.material[i] === CellMaterial.RECLAIMED && baseSim.world.material[i] === CellMaterial.VOID) {
         s.add(i);
         if (w.landCover[i] === LandCover.FOREST) hasForest = true;
         if (w.landCover[i] === LandCover.FIELD_H || w.landCover[i] === LandCover.FIELD_V) hasField = true;
       }
     }
+    counts.push(s.size);
     sets.push(s);
 
+    if (rank >= 1) {
+      assert.ok(hasForest, `rank ${rank} should create FOREST cover`);
+    }
+    if (rank >= 2) {
+      assert.ok(hasField, `rank ${rank} should create FIELD_H or FIELD_V cover`);
+    }
     assert.notEqual(w.landCover[testIdx], LandCover.NONE, `rank ${rank} should set landCover`);
   }
 

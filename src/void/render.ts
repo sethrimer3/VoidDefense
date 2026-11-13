@@ -1356,6 +1356,49 @@ export class VoidRenderer {
       }
     }
 
+    // 7a0. Seamwalker frozen-Void cells (dark purple interior, rigid amber seams, U-shaped staple marks)
+    if (sim.voidField.frozenVoidCells.size > 0) {
+      const gw = world.grid.w;
+      for (const [idx, rem] of sim.voidField.frozenVoidCells) {
+        if (world.material[idx] !== CellMaterial.VOID) continue;
+        const cx = idx % gw;
+        const cy = (idx / gw) | 0;
+        const expiring = rem < 0.6 && !this.reduceEffects && ((sim.tick >> 2) & 1) === 1;
+        // Dark motionless interior
+        c.fillStyle = expiring ? "#2c1744" : "#1c0f2e";
+        c.fillRect(cx, cy, 1, 1);
+        // Rigid angular amber-orange seam & U-shaped staple mark
+        c.fillStyle = expiring ? "#ffcf70" : "#f29d38";
+        c.fillRect(cx, cy, 1, 0.22);
+        c.fillRect(cx, cy + 0.22, 0.2, 0.45);
+        c.fillRect(cx + 0.8, cy + 0.22, 0.2, 0.45);
+      }
+    }
+
+    // 7a1. Countervoid Heart luminous flowing orange field (distinct from dark stapled frozen Void)
+    if (sim.voidField.countervoidCells.size > 0) {
+      const gw = world.grid.w;
+      const gh = world.grid.h;
+      const phase = this.reduceEffects ? 0 : sim.tick * 0.14;
+      for (const idx of sim.voidField.countervoidCells) {
+        const cx = idx % gw;
+        const cy = (idx / gw) | 0;
+        const wave = this.reduceEffects ? 0.5 : 0.5 + 0.5 * Math.sin(phase + cx * 0.7 + cy * 0.5);
+        c.fillStyle = wave > 0.6 ? "rgba(255, 168, 56, 0.42)" : "rgba(255, 118, 24, 0.28)";
+        c.fillRect(cx, cy, 1, 1);
+        // Flowing luminous filament + frontier contact sparks against purple Void
+        const touchesVoid =
+          (cx > 0 && world.material[idx - 1] === CellMaterial.VOID) ||
+          (cx + 1 < gw && world.material[idx + 1] === CellMaterial.VOID) ||
+          (cy > 0 && world.material[idx - gw] === CellMaterial.VOID) ||
+          (cy + 1 < gh && world.material[idx + gw] === CellMaterial.VOID);
+        if (touchesVoid) {
+          c.fillStyle = "#ffe6a3";
+          c.fillRect(cx + 0.2, cy + 0.2, 0.6, 0.6);
+        }
+      }
+    }
+
     // 7a2. Chrono Cannon upward reconstruction & returning projectile
     for (const ef of combat.chronoEffects) {
       const p = Math.min(1, ef.life / Math.max(0.05, ef.maxLife));
@@ -1507,6 +1550,36 @@ export class VoidRenderer {
           topY + t.h * 0.5 + Math.sin(handAng) * (t.h * 0.32),
         );
         c.stroke();
+      } else if (t.type === "echoMine") {
+        c.fillStyle = "#2b2530";
+        c.fillRect(t.x + 0.35, topY + 0.35, t.w - 0.7, t.h - 0.7);
+        const pulse = this.reduceEffects ? 0.65 : 0.45 + 0.55 * Math.abs(Math.sin(sim.tick * 0.12 + t.uid));
+        c.fillStyle = `rgba(255, 136, 48, ${pulse.toFixed(2)})`;
+        c.fillRect(t.x + t.w * 0.5 - 0.55, topY + t.h * 0.5 - 0.55, 1.1, 1.1);
+        c.strokeStyle = "rgba(255, 178, 82, 0.45)";
+        c.lineWidth = 0.25;
+        c.beginPath();
+        c.arc(t.x + t.w * 0.5, topY + t.h * 0.5, t.w * 0.55, 0, Math.PI * 2);
+        c.stroke();
+      } else if (t.type === "countervoidHeart") {
+        c.fillStyle = "#1f1528";
+        c.fillRect(t.x + 0.2, topY + 0.2, t.w - 0.4, t.h - 0.4);
+        c.strokeStyle = "#ff9a34";
+        c.lineWidth = 0.35;
+        c.strokeRect(t.x + 0.2, topY + 0.2, t.w - 0.4, t.h - 0.4);
+        const beat = this.reduceEffects ? 0.8 : 0.65 + 0.35 * Math.sin(sim.tick * 0.16);
+        c.fillStyle = beat > 0.75 ? "#ffe39c" : "#ff8c24";
+        c.fillRect(t.x + t.w * 0.5 - 0.75, topY + t.h * 0.5 - 0.75, 1.5, 1.5);
+      } else if (t.type === "lanternBearer") {
+        c.fillStyle = "#4d3822";
+        c.fillRect(t.x + 0.35, topY + 0.35, t.w - 0.7, t.h - 0.7);
+        c.fillStyle = "#ffd875";
+        c.fillRect(t.x + t.w * 0.5 - 0.4, topY + t.h * 0.5 - 0.5, 0.8, 1.0);
+      } else if (t.type === "seamwalker") {
+        c.fillStyle = "#3c324a";
+        c.fillRect(t.x + 0.35, topY + 0.35, t.w - 0.7, t.h - 0.7);
+        c.fillStyle = "#f29d38";
+        c.fillRect(t.x + t.w * 0.5 - 0.45, topY + t.h * 0.5 - 0.3, 0.9, 0.6);
       } else {
         c.fillStyle = spec.color;
         c.fillRect(t.x + 0.35, topY + 0.35, t.w - 0.7, t.h - 0.7);
@@ -1560,6 +1633,38 @@ export class VoidRenderer {
         c.fillRect(a.x - 0.9, a.y - 0.9, 1.8, 1.8);
         c.fillStyle = "#ffd166";
         c.fillRect(a.x - 0.4, a.y - 0.4, 0.8, 0.8);
+      } else if (a.kind === "lanternBearer") {
+        // Warm safe-ground footprint halo + tall carried lantern
+        const haloR = pixels(2);
+        c.strokeStyle = "rgba(255, 214, 112, 0.55)";
+        c.lineWidth = 0.25;
+        c.beginPath();
+        c.arc(a.x, a.y, haloR, 0, Math.PI * 2);
+        c.stroke();
+        c.fillStyle = "rgba(255, 200, 92, 0.16)";
+        c.fill();
+        c.fillStyle = "#6e4e2a";
+        c.fillRect(ax, ay, 1, 1);
+        c.fillStyle = "#ffe28a";
+        c.fillRect(ax + 0.5, ay - 1.2, 0.8, 0.9);
+      } else if (a.kind === "seamwalker") {
+        c.fillStyle = "#3e2f52";
+        c.fillRect(ax, ay, 1, 1);
+        c.fillStyle = "#f29d38";
+        c.fillRect(ax, ay - 0.7, 1, 0.6);
+      } else if (a.kind === "jetpack") {
+        // Ground shadow if over land, airborne silhouette offset upward
+        const gIdx = world.grid.inBounds(ax, ay) ? world.grid.index(ax, ay) : -1;
+        if (gIdx >= 0 && world.material[gIdx] !== CellMaterial.VOID) {
+          c.fillStyle = "rgba(0, 0, 0, 0.35)";
+          c.fillRect(a.x - 0.5, a.y + 0.4, 1.0, 0.4);
+        }
+        const flyY = a.y - 1.6;
+        c.fillStyle = "#6ad8ff";
+        c.fillRect(a.x - 0.6, flyY - 0.5, 1.2, 1.0);
+        c.fillStyle = "#ff9a3c";
+        c.fillRect(a.x - 0.65, flyY + 0.45, 0.45, 0.55);
+        c.fillRect(a.x + 0.2, flyY + 0.45, 0.45, 0.55);
       }
     };
 
@@ -1841,6 +1946,25 @@ export class VoidRenderer {
         c.arc(s.x, s.y, r * 0.72, 0, Math.PI * 2);
         c.stroke();
       }
+      // Hearthseed ("landfall") seed-drop -> rising earth -> sprouting sequence
+      if (s.color === "#58c443") {
+        if (t < 0.35 && !this.reduceEffects) {
+          const dropY = s.y - (1 - t / 0.35) * 6;
+          c.fillStyle = "#f2c14e";
+          c.fillRect(s.x - 0.4, dropY - 0.4, 0.8, 0.8);
+        } else if (t < 0.7) {
+          c.strokeStyle = "#b8844c";
+          c.lineWidth = 0.45;
+          c.beginPath();
+          c.arc(s.x, s.y, Math.max(0.6, s.maxRadius * (t - 0.2)), 0, Math.PI * 2);
+          c.stroke();
+        } else {
+          c.fillStyle = "#76e05b";
+          c.fillRect(s.x - 1.0, s.y - 1.0, 0.7, 0.7);
+          c.fillRect(s.x + 0.4, s.y - 0.6, 0.7, 0.7);
+          c.fillRect(s.x - 0.2, s.y + 0.5, 0.7, 0.7);
+        }
+      }
     }
 
     // 13. Draw riflemen & mech laser beams with muzzle & impact flashes
@@ -1921,6 +2045,17 @@ export class VoidRenderer {
           Math.PI * 2,
         );
         c.stroke();
+        if (preview.type === "boundaryPrism") {
+          const px = preview.x + spec.w * 0.5;
+          const py = preview.y + spec.h * 0.5;
+          const len = spec.range + (sim.tech.prismLengthBonus ?? 0);
+          c.strokeStyle = "#8bf6ff";
+          c.lineWidth = 0.45;
+          c.beginPath();
+          c.moveTo(px - len * 0.5, py);
+          c.lineTo(px + len * 0.5, py);
+          c.stroke();
+        }
       } else if (preview.kind === "strike") {
         const spec = STRIKE_SPECS[preview.strike];
         const previewRadius =

@@ -158,7 +158,7 @@ export class VoidField {
 
     // Prune Countervoid cells that were eroded back into purple Void
     for (const idx of this.countervoidCells) {
-      if (world.material[idx] !== CellMaterial.RECLAIMED) {
+      if (world.material[idx] === CellMaterial.VOID || world.material[idx] === CellMaterial.UNCLAIMED) {
         this.countervoidCells.delete(idx);
       }
     }
@@ -254,10 +254,10 @@ export class VoidField {
         if (!world.grid.inBounds(nx, ny)) continue;
         const nIdx = ny * w + nx;
         if (this.countervoidCells.has(nIdx)) continue;
+        if (this.quarantineSeals.length > 0 && this.isEdgeBlockedBySeal(x + 0.5, y + 0.5, nx + 0.5, ny + 0.5)) {
+          continue;
+        }
         if (world.material[nIdx] === CellMaterial.VOID && !this.frozenVoidCells.has(nIdx)) {
-          if (this.quarantineSeals.length > 0 && this.isEdgeBlockedBySeal(x + 0.5, y + 0.5, nx + 0.5, ny + 0.5)) {
-            continue;
-          }
           world.material[nIdx] = CellMaterial.RECLAIMED;
           world.hp[nIdx] = cellHp;
           world.maxHp[nIdx] = cellHp;
@@ -268,6 +268,9 @@ export class VoidField {
           budget--;
           needsRebuild = true;
           break;
+        } else if (world.material[nIdx] !== CellMaterial.VOID && world.material[nIdx] !== CellMaterial.UNCLAIMED) {
+          // Radiate Countervoid conduit across solid land within heart range to reach the Void frontier
+          nextAdd.push(nIdx);
         }
       }
     }

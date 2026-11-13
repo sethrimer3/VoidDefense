@@ -17,7 +17,7 @@ import type {
 import { VoidPhysics } from "./physics.ts";
 import { computeCityIncomePerCycle, evaluateRunOutcome } from "./scoring.ts";
 import { evaluateTech, type EvaluatedTech, type VoidTechWallet } from "./tech/wallet.ts";
-import { STRIKE_SPECS, VoidCombatManager } from "./towers.ts";
+import { STRIKE_SPECS, TOWER_SPECS, VoidCombatManager } from "./towers.ts";
 import { VoidField } from "./void-field.ts";
 import { VoidWorld } from "./world.ts";
 
@@ -233,6 +233,16 @@ export class VoidSim {
       }
       this.physics.recentCellLosses.length = 0;
     }
+
+    // 3c. Step Seamwalker frozen-Void timers and Countervoid Heart opposing frontier
+    const hearts: { x: number; y: number; range: number }[] = [];
+    for (let i = 0; i < this.combat.towers.length; i++) {
+      const t = this.combat.towers[i];
+      if (t.type === "countervoidHeart" && t.hp > 0) {
+        hearts.push({ x: t.x, y: t.y, range: TOWER_SPECS.countervoidHeart.range });
+      }
+    }
+    this.voidField.stepCountervoidField(this.world, TICK_DT, hearts, this.tech);
 
     // 4. Step towers, projectiles, autonomous agents, and cosmic organisms
     this.combat.step(

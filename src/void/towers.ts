@@ -1294,6 +1294,11 @@ export class VoidCombatManager {
   ): void {
     for (let i = this.agents.length - 1; i >= 0; i--) {
       const a = this.agents[i];
+      if (a.hp <= 0) {
+        if (a.kind === "lanternBearer") voidField.releaseLanternCoverage(world, a.x, a.y, pixels(2));
+        this.agents.splice(i, 1);
+        continue;
+      }
       const cellX = Math.floor(a.x);
       const cellY = Math.floor(a.y);
       if (!world.grid.inBounds(cellX, cellY)) {
@@ -1946,7 +1951,7 @@ export class VoidCombatManager {
               if (tUid >= 0) {
                 const tw = this.towers.find((t) => t.uid === tUid);
                 if (tw) tw.hp -= 22;
-              } else if (world.material[idx] !== CellMaterial.VOID) {
+              } else if (world.material[idx] !== CellMaterial.VOID && voidField.lanternRefCount[idx] === 0) {
                 if (world.hp[idx] <= 35) {
                   physics.consumeCellIntoVoid(world, idx, true);
                 } else {

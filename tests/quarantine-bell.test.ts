@@ -36,24 +36,30 @@ test("Quarantine Bell: blocks cross-boundary edges in both directions, allows in
   // Internal-to-internal is NOT blocked
   assert.equal(sim.voidField.isEdgeBlockedBySeal(cx + 0.5, cy + 0.5, cx + 3.5, cy + 0.5), false);
 
-  // Advance 6.1 seconds so the seal expires
-  for (let i = 0; i < 61; i++) {
-    sim.voidField.step(sim.world, sim.physics, sim.scenario, 0.1, i + 1, 1.0, false);
-  }
+  // Advance 6.1 seconds (183 ticks at 30 Hz) so the seal expires
+  sim.stepTicks(183);
   assert.equal(sim.voidField.quarantineSeals.length, 0, "seal should expire after 6s");
   assert.equal(sim.voidField.isEdgeBlockedBySeal(cx + 0.5, cy + 0.5, cx + 10.5, cy + 0.5), false);
 });
 
-test("Quarantine Bell: overlapping seals use independent timers", () => {
-  const sim = new VoidSim("classicCore", "buildWatch", emptyTechWallet(), true);
-  const cx = 50;
-  const cy = 50;
-  sim.voidField.addQuarantineSeal(sim.world, cx, cy, 8, 2.0);
-  sim.voidField.addQuarantineSeal(sim.world, cx + 2, cy, 8, 5.0);
+test("Quarantine Bell: overlapping seals use independent timers and tech upgrades increase duration/radius", () => {
+  const wallet = emptyTechWallet();
+  wallet.ranks.unlockQuarantineBell = 1;
+  wallet.ranks.quarantineDuration = 2;
+  wallet.ranks.quarantineRadius = 1;
+  const sim = new VoidSim("classicCore", "buildWatch", wallet, true);
+  const cx = Math.floor(sim.world.grid.w / 2);
+  const cy = Math.floor(sim.world.grid.h / 2);
+
+  assert.equal(sim.castStrike("quarantineBell", cx + 0.5, cy + 0.5), true);
+  assert.equal(sim.voidField.quarantineSeals.length, 1);
+  const castSeal = sim.voidField.quarantineSeals[0];
+  assert.ok(castSeal.duration > 6.0, "quarantineDuration upgrade increases seal duration");
+  assert.ok(castSeal.radius > 14, "quarantineRadius upgrade increases seal radius");
+
+  sim.voidField.addQuarantineSeal(sim.world, cx + 2, cy, 8, 2.0);
   assert.equal(sim.voidField.quarantineSeals.length, 2);
 
-  for (let i = 0; i < 25; i++) {
-    sim.voidField.step(sim.world, sim.physics, sim.scenario, 0.1, i + 1, 1.0, false);
-  }
-  assert.ok(sim.voidField.quarantineSeals.length <= 1, "first seal expired");
+  sim.stepTicks(75); // 2.5s
+  assert.equal(sim.voidField.quarantineSeals.length, 1, "short seal expired while upgraded cast seal remains");
 });
