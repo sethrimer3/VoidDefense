@@ -4,6 +4,7 @@
  * node a primary visual `parent` for `UpgradeGraph` spring physics, plus optional
  * secondary cross-links for multi-parent requirements. */
 
+import type { PathIcon } from "../../ui/path-icons.ts";
 import type { StrikeId, TowerTypeId } from "../model.ts";
 
 export type TechCurrency = "essence" | "sparks";
@@ -43,7 +44,7 @@ export type TechNodeDef = {
   /** Colour class (`hue-ember`, `hue-steel`, `hue-storm`, `hue-verdant`). */
   hue: "ember" | "steel" | "storm" | "verdant";
   /** Icon key for rendering on the node face. */
-  icon: string;
+  icon: PathIcon | "keep";
   unlocksTower?: TowerTypeId;
   unlocksStrike?: StrikeId;
 };
@@ -330,7 +331,7 @@ export const TECH_NODES: readonly TechNodeDef[] = [
     parent: "unlockGravityAnchor",
     costs: [45],
     hue: "storm",
-    icon: "shield",
+    icon: "frostShield",
     unlocksTower: "voidSiphon",
   },
   {
@@ -343,7 +344,7 @@ export const TECH_NODES: readonly TechNodeDef[] = [
     parent: "unlockVoidSiphon",
     costs: [25, 45],
     hue: "storm",
-    icon: "shield",
+    icon: "frostShield",
   },
   {
     id: "siphonVenting",
@@ -367,7 +368,7 @@ export const TECH_NODES: readonly TechNodeDef[] = [
     parent: "unlockGravityAnchor",
     costs: [50],
     hue: "steel",
-    icon: "prism",
+    icon: "shards",
     unlocksTower: "boundaryPrism",
   },
   {
@@ -380,7 +381,7 @@ export const TECH_NODES: readonly TechNodeDef[] = [
     parent: "unlockBoundaryPrism",
     costs: [25, 45],
     hue: "steel",
-    icon: "prism",
+    icon: "shards",
   },
   {
     id: "prismRedirect",
@@ -392,7 +393,7 @@ export const TECH_NODES: readonly TechNodeDef[] = [
     parent: "unlockBoundaryPrism",
     costs: [30, 50],
     hue: "steel",
-    icon: "prism",
+    icon: "shards",
   },
   {
     id: "unlockChronoCannon",
@@ -466,7 +467,7 @@ export const TECH_NODES: readonly TechNodeDef[] = [
     parent: "unlockGravityAnchor",
     costs: [45],
     hue: "verdant",
-    icon: "shield",
+    icon: "frostShield",
     unlocksTower: "seamwalker",
   },
   {
@@ -628,7 +629,7 @@ export const TECH_NODES: readonly TechNodeDef[] = [
     parent: "commandCore",
     costs: [35],
     hue: "ember",
-    icon: "shield",
+    icon: "frostShield",
     unlocksStrike: "quarantineBell",
   },
   {
@@ -641,7 +642,7 @@ export const TECH_NODES: readonly TechNodeDef[] = [
     parent: "unlockQuarantineBell",
     costs: [25, 45],
     hue: "ember",
-    icon: "shield",
+    icon: "frostShield",
   },
   {
     id: "quarantineRadius",
@@ -653,7 +654,7 @@ export const TECH_NODES: readonly TechNodeDef[] = [
     parent: "unlockQuarantineBell",
     costs: [30, 55],
     hue: "ember",
-    icon: "shield",
+    icon: "frostShield",
   },
   {
     id: "unlockGenesis",
