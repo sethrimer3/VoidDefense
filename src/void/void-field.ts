@@ -124,10 +124,10 @@ export class VoidField {
     }
   }
 
-  /** Freezes a Void cell's propagation for `duration` seconds (Seamwalker staple hold). */
-  freezeVoidCell(cellIdx: number, duration = 4.0): void {
+  /** Freezes a Void cell's propagation for `duration` seconds (bounded Seamwalker staple hold). */
+  freezeVoidCell(cellIdx: number, duration = 2.0): void {
     const prev = this.frozenVoidCells.get(cellIdx) ?? 0;
-    this.frozenVoidCells.set(cellIdx, Math.max(prev, duration));
+    this.frozenVoidCells.set(cellIdx, Math.min(4.0, Math.max(prev, duration)));
   }
 
   /** Advances Seamwalker frozen-Void holds and Countervoid Heart orange frontier. */
@@ -212,6 +212,7 @@ export class VoidField {
     const { w, h, count } = world.grid;
     const mat = world.material;
     const hasSeals = this.quarantineSeals.length > 0;
+    const hasFrozen = this.frozenVoidCells.size > 0;
 
     for (let i = 0; i < count; i++) {
       if (mat[i] === CellMaterial.VOID) {
@@ -223,10 +224,10 @@ export class VoidField {
       const cx = x + 0.5;
       const cy = y + 0.5;
       let contacts = 0;
-      if (x > 0 && mat[i - 1] === CellMaterial.VOID && (!hasSeals || !this.isEdgeBlockedBySeal(cx, cy, cx - 1, cy))) contacts++;
-      if (x + 1 < w && mat[i + 1] === CellMaterial.VOID && (!hasSeals || !this.isEdgeBlockedBySeal(cx, cy, cx + 1, cy))) contacts++;
-      if (y > 0 && mat[i - w] === CellMaterial.VOID && (!hasSeals || !this.isEdgeBlockedBySeal(cx, cy, cx, cy - 1))) contacts++;
-      if (y + 1 < h && mat[i + w] === CellMaterial.VOID && (!hasSeals || !this.isEdgeBlockedBySeal(cx, cy, cx, cy + 1))) contacts++;
+      if (x > 0 && mat[i - 1] === CellMaterial.VOID && (!hasFrozen || !this.frozenVoidCells.has(i - 1)) && (!hasSeals || !this.isEdgeBlockedBySeal(cx, cy, cx - 1, cy))) contacts++;
+      if (x + 1 < w && mat[i + 1] === CellMaterial.VOID && (!hasFrozen || !this.frozenVoidCells.has(i + 1)) && (!hasSeals || !this.isEdgeBlockedBySeal(cx, cy, cx + 1, cy))) contacts++;
+      if (y > 0 && mat[i - w] === CellMaterial.VOID && (!hasFrozen || !this.frozenVoidCells.has(i - w)) && (!hasSeals || !this.isEdgeBlockedBySeal(cx, cy, cx, cy - 1))) contacts++;
+      if (y + 1 < h && mat[i + w] === CellMaterial.VOID && (!hasFrozen || !this.frozenVoidCells.has(i + w)) && (!hasSeals || !this.isEdgeBlockedBySeal(cx, cy, cx, cy + 1))) contacts++;
 
       if (contacts > 0) {
         this.frontierContactCount[i] = contacts;
