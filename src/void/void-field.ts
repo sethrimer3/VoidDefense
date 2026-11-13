@@ -32,7 +32,15 @@
 import { dist } from "../exact.ts";
 import { MATERIAL_RESISTANCE, pixels, VOID_BALANCE, PIXEL_WORK_SCALE } from "./config.ts";
 import { hash01, ORTHO } from "./grid.ts";
-import { CellMaterial, type QuarantineSeal, type ScenarioConfig, type VoidNode, type ZeroContactReason } from "./model.ts";
+import {
+  CellMaterial,
+  type PrismState,
+  type QuarantineSeal,
+  type ScenarioConfig,
+  type SiphonState,
+  type VoidNode,
+  type ZeroContactReason,
+} from "./model.ts";
 import type { VoidPhysics } from "./physics.ts";
 import type { VoidWorld } from "./world.ts";
 
@@ -62,6 +70,7 @@ export class VoidField {
   readonly frozenVoidCells = new Map<number, number>();
   /** Countervoid Heart friendly orange Void cells. */
   readonly countervoidCells = new Set<number>();
+  private countervoidWorkAcc = 0;
   /** Reference count of living Lantern Bearers covering each cell. */
   readonly lanternRefCount: Uint16Array;
   /** 1 if cell was Void/UNCLAIMED when first covered by a Lantern Bearer (temporary footing). */
@@ -130,50 +139,140 @@ export class VoidField {
     this.frozenVoidCells.set(cellIdx, Math.min(4.0, Math.max(prev, duration)));
   }
 
-  /** Advances Seamwalker frozen-Void holds and Countervoid Heart orange frontier. */
-  stepRosterFields(world: VoidWorld, dt: number, heartPositions: { x: number; y: number; range: number }[]): void {
+  /** Advances Seamwalker frozen-Void holds and the finite-budget Countervoid Heart opposing frontier. */
+  stepCountervoidField(
+    world: VoidWorld,
+    dt: number,
+    hearts: { x: number; y: number; range: number }[],
+    tech?: { countervoidOutputMult: number; countervoidPressureMult: number; countervoidLandHpBonus: number },
+  ): void {
+    let needsRebuild = false;
     for (const [idx, rem] of this.frozenVoidCells) {
-      if (rem - dt <= 0) this.frozenVoidCells.delete(idx);
-      else this.frozenVoidCells.set(idx, rem - dt);
-    }
-
-    // Seed & expand Countervoid Heart orange frontier against purple Void
-    const { w, h } = world.grid;
-    for (const hp of heartPositions) {
-      const cx = Math.floor(hp.x);
-      const cy = Math.floor(hp.y);
-      if (world.grid.inBounds(cx, cy)) {
-        this.countervoidCells.add(world.grid.index(cx, cy));
+      if (rem - dt <= 0) {
+        this.frozenVoidCells.delete(idx);
+        needsRebuild = true;
+      } else {
+        this.frozenVoidCells.set(idx, rem - dt);
       }
     }
-    if (heartPositions.length > 0 && this.countervoidCells.size > 0) {
-      const nextAdd: number[] = [];
-      let budget = 16;
-      for (const idx of this.countervoidCells) {
-        if (budget <= 0) break;
-        const x = idx % w;
-        const y = (idx / w) | 0;
-        for (const [dx, dy] of ORTHO) {
-          const nx = x + dx;
-          const ny = y + dy;
-          if (!world.grid.inBounds(nx, ny)) continue;
-          const nIdx = ny * w + nx;
-          if (this.countervoidCells.has(nIdx)) continue;
-          if (world.material[nIdx] === CellMaterial.VOID && !this.frozenVoidCells.has(nIdx)) {
-            world.material[nIdx] = CellMaterial.RECLAIMED;
-            world.hp[nIdx] = 90;
-            world.maxHp[nIdx] = 90;
-            world.buildingAt[nIdx] = -1;
-            world.grid.markIndexDirty(nIdx);
-            nextAdd.push(nIdx);
-            budget--;
-            break;
+
+    // Prune Countervoid cells that were eroded back into purple Void
+    for (const idx of this.countervoidCells) {
+      if (world.material[idx] !== CellMaterial.RECLAIMED) {
+        this.countervoidCells.delete(idx);
+      }
+    }
+
+    const landHpBonus = tech?.countervoidLandHpBonus ?? 0;
+
+    // When no living Countervoid Heart remains, unstabilized Countervoid decays back to Void
+    if (hearts.length === 0) {
+      if (this.countervoidCells.size > 0) {
+        if (landHpBonus > 0) {
+          this.countervoidCells.clear();
+        } else {
+          let decayBudget = Math.max(1, Math.ceil(dt * 24));
+          for (const idx of this.countervoidCells) {
+            if (decayBudget <= 0) break;
+            this.countervoidCells.delete(idx);
+            if (world.material[idx] === CellMaterial.RECLAIMED && this.lanternRefCount[idx] === 0) {
+              world.material[idx] = CellMaterial.VOID;
+              world.hp[idx] = 0;
+              world.buildingAt[idx] = -1;
+              world.grid.markIndexDirty(idx);
+              needsRebuild = true;
+            }
+            decayBudget--;
           }
         }
       }
-      for (const nIdx of nextAdd) this.countervoidCells.add(nIdx);
-      if (nextAdd.length > 0) this.rebuildFrontier(world);
+      if (needsRebuild) this.rebuildFrontier(world);
+      return;
     }
+
+    const { w } = world.grid;
+    const outputMult = tech?.countervoidOutputMult ?? 1;
+    const pressureMult = tech?.countervoidPressureMult ?? 1;
+    const cellHp = 90 + landHpBonus;
+
+    // Seed each living heart's anchor cell into the Countervoid field
+    for (const hp of hearts) {
+      const cx = Math.floor(hp.x);
+      const cy = Math.floor(hp.y);
+      if (world.grid.inBounds(cx, cy)) {
+        const idx = world.grid.index(cx, cy);
+        this.countervoidCells.add(idx);
+        if (world.material[idx] === CellMaterial.VOID || world.material[idx] === CellMaterial.UNCLAIMED) {
+          world.material[idx] = CellMaterial.RECLAIMED;
+          world.hp[idx] = cellHp;
+          world.maxHp[idx] = cellHp;
+          world.buildingAt[idx] = -1;
+          this.lanternCreatedTemp[idx] = 0;
+          world.grid.markIndexDirty(idx);
+          needsRebuild = true;
+        }
+      }
+    }
+
+    // Finite output budget shared across active hearts
+    this.countervoidWorkAcc += hearts.length * 24 * outputMult * dt;
+    let budget = Math.floor(this.countervoidWorkAcc);
+    if (budget <= 0) {
+      if (needsRebuild) this.rebuildFrontier(world);
+      return;
+    }
+    this.countervoidWorkAcc -= budget;
+
+    const nextAdd: number[] = [];
+    for (const idx of this.countervoidCells) {
+      if (budget <= 0) break;
+      const x = idx % w;
+      const y = (idx / w) | 0;
+
+      // Reinforce contested Countervoid cells under purple Void pressure
+      if (world.hp[idx] < world.maxHp[idx]) {
+        world.hp[idx] = Math.min(world.maxHp[idx], world.hp[idx] + 20 * pressureMult * dt);
+      }
+
+      // Check if within range of at least one living heart
+      let inHeartRange = false;
+      for (let hi = 0; hi < hearts.length; hi++) {
+        const hpos = hearts[hi];
+        const dxH = x + 0.5 - hpos.x;
+        const dyH = y + 0.5 - hpos.y;
+        if (dxH * dxH + dyH * dyH <= hpos.range * hpos.range) {
+          inHeartRange = true;
+          break;
+        }
+      }
+      if (!inHeartRange) continue;
+
+      for (const [dx, dy] of ORTHO) {
+        if (budget <= 0) break;
+        const nx = x + dx;
+        const ny = y + dy;
+        if (!world.grid.inBounds(nx, ny)) continue;
+        const nIdx = ny * w + nx;
+        if (this.countervoidCells.has(nIdx)) continue;
+        if (world.material[nIdx] === CellMaterial.VOID && !this.frozenVoidCells.has(nIdx)) {
+          if (this.quarantineSeals.length > 0 && this.isEdgeBlockedBySeal(x + 0.5, y + 0.5, nx + 0.5, ny + 0.5)) {
+            continue;
+          }
+          world.material[nIdx] = CellMaterial.RECLAIMED;
+          world.hp[nIdx] = cellHp;
+          world.maxHp[nIdx] = cellHp;
+          world.buildingAt[nIdx] = -1;
+          this.lanternCreatedTemp[nIdx] = 0;
+          world.grid.markIndexDirty(nIdx);
+          nextAdd.push(nIdx);
+          budget--;
+          needsRebuild = true;
+          break;
+        }
+      }
+    }
+    for (const nIdx of nextAdd) this.countervoidCells.add(nIdx);
+    if (needsRebuild) this.rebuildFrontier(world);
   }
 
   /** Registers a temporary Quarantine Bell seal and immediately updates the frontier. */
@@ -304,6 +403,9 @@ export class VoidField {
       perimeterResonanceBonus: number;
       gravityAnchorMask?: Uint8Array;
       shieldAbsorptionAt?: (cellIdx: number, workAmount: number) => number;
+      prisms?: Iterable<PrismState>;
+      siphons?: Iterable<SiphonState>;
+      siphonIntakeCap?: number;
     },
   ): ZeroContactReason {
     // 1. Check delayed portals activating on this tick
@@ -316,7 +418,10 @@ export class VoidField {
         for (let y = Math.max(0, p.y - p.radius); y <= Math.min(h - 1, p.y + p.radius); y++) {
           for (let x = Math.max(0, p.x - p.radius); x <= Math.min(w - 1, p.x + p.radius); x++) {
             if (dist(x - p.x, y - p.y) <= p.radius) {
-              physics.consumeCellIntoVoid(world, y * w + x, true);
+              const cIdx = y * w + x;
+              if (this.lanternRefCount[cIdx] === 0) {
+                physics.consumeCellIntoVoid(world, cIdx, true);
+              }
             }
           }
         }
@@ -462,12 +567,115 @@ export class VoidField {
 
     const totalMicroWork = Math.round(workAvailable * PIXEL_WORK_SCALE) + this.remainderMicroWork;
     let spentMicroWork = 0;
+    const nFront = this.frontierCells.length;
+    const cellMicroShares = new Float64Array(nFront);
+    const cellIndexToSlot = new Map<number, number>();
 
-    for (let i = 0; i < this.frontierCells.length; i++) {
+    for (let i = 0; i < nFront; i++) {
       const cIdx = this.frontierCells[i];
-      const shareMicro = Math.floor((totalMicroWork * weights[i]) / totalWeightedEdges);
+      cellIndexToSlot.set(cIdx, i);
+      const share = Math.floor((totalMicroWork * weights[i]) / totalWeightedEdges);
+      cellMicroShares[i] = share;
+      spentMicroWork += share;
+    }
+
+    // 5a. Boundary Prism conservative directional pressure redirection (pre-step stable state, no ping-pong)
+    if (opts.prisms) {
+      const redirectedAdd = new Float64Array(nFront);
+      for (const prism of opts.prisms) {
+        const cosA = Math.cos(prism.angleRad);
+        const sinA = Math.sin(prism.angleRad);
+        // Normal pointing toward receiving flank (+n), protected side is (-n)
+        const nx = -sinA;
+        const ny = cosA;
+        const halfLen = prism.planeLength * 0.5;
+        const receivers: number[] = [];
+
+        for (let i = 0; i < nFront; i++) {
+          const cIdx = this.frontierCells[i];
+          const dx = world.grid.xOf(cIdx) + 0.5 - prism.x;
+          const dy = world.grid.yOf(cIdx) + 0.5 - prism.y;
+          const along = dx * cosA + dy * sinA;
+          const perp = dx * nx + dy * ny;
+          if (Math.abs(along) <= halfLen && perp > 0 && perp <= prism.bandWidth * 1.5) {
+            if (!this.isEdgeBlockedBySeal(prism.x, prism.y, world.grid.xOf(cIdx) + 0.5, world.grid.yOf(cIdx) + 0.5)) {
+              receivers.push(i);
+            }
+          }
+        }
+
+        if (receivers.length === 0) continue; // No valid receiving frontier -> keep normal local erosion
+
+        let poolRedirected = 0;
+        for (let i = 0; i < nFront; i++) {
+          const baseShare = cellMicroShares[i];
+          if (baseShare <= 0) continue;
+          const cIdx = this.frontierCells[i];
+          const dx = world.grid.xOf(cIdx) + 0.5 - prism.x;
+          const dy = world.grid.yOf(cIdx) + 0.5 - prism.y;
+          const along = dx * cosA + dy * sinA;
+          const perp = dx * nx + dy * ny;
+          // Protected side (-bandWidth .. 0)
+          if (Math.abs(along) <= halfLen && perp <= 0 && perp >= -prism.bandWidth) {
+            const redir = Math.floor(baseShare * Math.min(0.45, prism.redirectFraction));
+            if (redir > 0) {
+              cellMicroShares[i] -= redir;
+              poolRedirected += redir;
+            }
+          }
+        }
+
+        if (poolRedirected > 0) {
+          const perRec = Math.floor(poolRedirected / receivers.length);
+          let rem = poolRedirected - perRec * receivers.length;
+          for (let r = 0; r < receivers.length; r++) {
+            const add = perRec + (rem > 0 ? 1 : 0);
+            if (rem > 0) rem--;
+            redirectedAdd[receivers[r]] += add;
+          }
+        }
+      }
+      for (let i = 0; i < nFront; i++) {
+        cellMicroShares[i] += redirectedAdd[i];
+      }
+    }
+
+    // 5b. Void Siphon interception into finite storage (no double-counting across overlapping siphons)
+    if (opts.siphons) {
+      const intakeCap = opts.siphonIntakeCap ?? 0.25;
+      for (const siphon of opts.siphons) {
+        if (siphon.phase !== "intake" || siphon.stored >= siphon.maxStorage) continue;
+        const rSq = siphon.radius * siphon.radius;
+        for (let i = 0; i < nFront; i++) {
+          if (siphon.stored >= siphon.maxStorage) break;
+          const curMicro = cellMicroShares[i];
+          if (curMicro <= 0) continue;
+          const cIdx = this.frontierCells[i];
+          const dx = world.grid.xOf(cIdx) + 0.5 - siphon.x;
+          const dy = world.grid.yOf(cIdx) + 0.5 - siphon.y;
+          if (dx * dx + dy * dy > rSq) continue;
+
+          const maxInterceptWork = (curMicro / PIXEL_WORK_SCALE) * intakeCap;
+          const room = siphon.maxStorage - siphon.stored;
+          const interceptedWork = Math.min(room, maxInterceptWork);
+          if (interceptedWork > 0) {
+            const interceptedMicro = Math.min(curMicro, Math.round(interceptedWork * PIXEL_WORK_SCALE));
+            cellMicroShares[i] -= interceptedMicro;
+            siphon.stored += interceptedMicro / PIXEL_WORK_SCALE;
+            if (siphon.stored >= siphon.maxStorage) {
+              siphon.stored = siphon.maxStorage;
+              siphon.phase = "venting";
+              siphon.ventRemaining = siphon.ventDuration;
+            }
+          }
+        }
+      }
+    }
+
+    for (let i = 0; i < nFront; i++) {
+      const cIdx = this.frontierCells[i];
+      const shareMicro = cellMicroShares[i];
       if (shareMicro <= 0) continue;
-      spentMicroWork += shareMicro;
 
       // Optional shield projector absorption before terrain takes damage
       let effectiveMicro = shareMicro;
@@ -493,12 +701,12 @@ export class VoidField {
         const hpLoss = Math.floor(totalCellMicro / costPerHp);
         this.cellMicroWork[cIdx] = totalCellMicro % costPerHp;
         const curHp = world.hp[cIdx];
-        if (hpLoss >= curHp) {
+        if (hpLoss >= curHp && this.lanternRefCount[cIdx] === 0) {
           this.cellMicroWork[cIdx] = 0;
           physics.consumeCellIntoVoid(world, cIdx, true);
         } else {
           const maxHp = Math.max(1, world.maxHp[cIdx]);
-          const nextHp = curHp - hpLoss;
+          const nextHp = Math.max(this.lanternRefCount[cIdx] > 0 ? 1 : 0, curHp - hpLoss);
           world.hp[cIdx] = nextHp;
           const prevStage = curHp / maxHp < 0.4 ? 2 : curHp / maxHp < 0.75 ? 1 : 0;
           const nextStage = nextHp / maxHp < 0.4 ? 2 : nextHp / maxHp < 0.75 ? 1 : 0;

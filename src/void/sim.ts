@@ -206,11 +206,33 @@ export class VoidSim {
         gravityAnchorMask: this.combat.gravityAnchorMask,
         shieldAbsorptionAt: (cIdx, work) =>
           this.combat.absorbWorkWithShields(this.world, cIdx, work, this.tech),
+        prisms: this.combat.prismStates.values(),
+        siphons: this.combat.siphonStates.values(),
+        siphonIntakeCap: this.tech.siphonIntakeCap,
       },
     );
 
     // 3. Step structural integrity & debris fragments
     this.physics.stepStructuralSupport(this.world, TICK_DT);
+
+    // 3b. Ingest Void-caused cell losses into Chrono Cannon bounded journal
+    if (this.physics.recentCellLosses.length > 0) {
+      for (let i = 0; i < this.physics.recentCellLosses.length; i++) {
+        const loss = this.physics.recentCellLosses[i];
+        this.combat.recordChronoLoss(
+          this.elapsedSeconds,
+          "terrain",
+          this.world.grid.xOf(loss.cellIdx) + 0.5,
+          this.world.grid.yOf(loss.cellIdx) + 0.5,
+          loss.cellIdx,
+          loss.material,
+          loss.maxHp,
+          loss.buildingId,
+          loss.columnFloors,
+        );
+      }
+      this.physics.recentCellLosses.length = 0;
+    }
 
     // 4. Step towers, projectiles, autonomous agents, and cosmic organisms
     this.combat.step(

@@ -1356,6 +1356,44 @@ export class VoidRenderer {
       }
     }
 
+    // 7a2. Chrono Cannon upward reconstruction & returning projectile
+    for (const ef of combat.chronoEffects) {
+      const p = Math.min(1, ef.life / Math.max(0.05, ef.maxLife));
+      // Broken clock-ring at target
+      c.strokeStyle = `rgba(242, 193, 78, ${1 - p * 0.7})`;
+      c.lineWidth = 0.55;
+      c.setLineDash([2.0, 1.4]);
+      c.beginPath();
+      c.arc(ef.sx, ef.sy, ef.radius * (1 - p * 0.3), -p * 4, -p * 4 + Math.PI * 1.65);
+      c.stroke();
+      c.setLineDash([]);
+      // Rising reconstruction blocks
+      c.fillStyle = `rgba(255, 226, 138, ${1 - p})`;
+      for (let k = 0; k < 6; k++) {
+        const ang = (k / 6) * Math.PI * 2 + p * 1.5;
+        const rx = ef.sx + Math.cos(ang) * ef.radius * 0.45;
+        const ry = ef.sy + Math.sin(ang) * ef.radius * 0.45 - p * 3.5;
+        c.fillRect(rx - 0.35, ry - 0.35, 0.7, 0.7);
+      }
+      // Contracting reverse flash -> projectile returning FROM restored area BACK INTO barrel
+      if (p < 0.35) {
+        const fp = 1 - p / 0.35;
+        c.strokeStyle = "rgba(255, 243, 209, 0.85)";
+        c.lineWidth = 0.45;
+        c.beginPath();
+        c.arc(ef.sx, ef.sy, Math.max(0.4, ef.radius * 0.5 * fp), 0, Math.PI * 2);
+        c.stroke();
+      } else {
+        const rp = (p - 0.35) / 0.65;
+        const px = ef.sx + (ef.tx - ef.sx) * rp;
+        const py = ef.sy + (ef.ty - ef.sy) * rp;
+        c.fillStyle = "#fff3d1";
+        c.beginPath();
+        c.arc(px, py, 0.9, 0, Math.PI * 2);
+        c.fill();
+      }
+    }
+
     // 7b. Quarantine Bell closed circular seals
     for (const seal of sim.voidField.quarantineSeals) {
       const alpha = Math.max(0.2, Math.min(0.85, seal.remaining / Math.max(0.1, seal.duration)));
@@ -1885,11 +1923,17 @@ export class VoidRenderer {
         c.stroke();
       } else if (preview.kind === "strike") {
         const spec = STRIKE_SPECS[preview.strike];
+        const previewRadius =
+          preview.strike === "landfall"
+            ? pixels(4 + sim.tech.hearthseedRank)
+            : preview.strike === "quarantineBell"
+              ? spec.radius + pixels(sim.tech.quarantineRadiusBonus)
+              : spec.radius;
         c.fillStyle = preview.valid ? "rgba(72, 229, 255, 0.26)" : "rgba(255, 68, 68, 0.28)";
         c.strokeStyle = preview.valid ? "#48e5ff" : "#ff4444";
         c.lineWidth = 0.45;
         c.beginPath();
-        c.arc(preview.x, preview.y, spec.radius, 0, Math.PI * 2);
+        c.arc(preview.x, preview.y, previewRadius, 0, Math.PI * 2);
         c.fill();
         c.stroke();
       } else if (preview.kind === "reticle") {

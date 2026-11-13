@@ -8,6 +8,7 @@ import { ARCH_PALETTES, FLOORS_PER_PIXEL } from "./elevation.ts";
 import { hash01, ORTHO } from "./grid.ts";
 import {
   CellMaterial,
+  type CellMaterialId,
   type ChunkImpact,
   type DebrisFragment,
   type DustPuff,
@@ -76,6 +77,13 @@ const SLAB_URBAN: Record<number, readonly string[]> = {
 export class VoidPhysics {
   readonly debris: DebrisFragment[] = [];
   readonly shockwaves: ShockwaveEffect[] = [];
+  readonly recentCellLosses: {
+    cellIdx: number;
+    material: CellMaterialId;
+    maxHp: number;
+    buildingId: number;
+    columnFloors: number;
+  }[] = [];
   /** Pre-allocated fixed pool of 3D falling chunks (masonry, roof slabs, collapsed towers, fallen units). */
   readonly fallingChunks: FallingChunk[] = Array.from({ length: MAX_FALLING_CHUNKS }, () => ({
     active: false,
@@ -247,7 +255,18 @@ export class VoidPhysics {
   consumeCellIntoVoid(world: VoidWorld, idx: number, spawnDebris = true): void {
     const bId = world.buildingAt[idx];
     const prevMat = world.material[idx];
+    const prevMaxHp = world.maxHp[idx];
+    const prevFloors = world.columnFloors[idx];
     const prevCover = world.landCover[idx];
+    if (prevMat !== CellMaterial.VOID && this.recentCellLosses.length < 256) {
+      this.recentCellLosses.push({
+        cellIdx: idx,
+        material: prevMat as CellMaterialId,
+        maxHp: Math.max(40, prevMaxHp),
+        buildingId: bId,
+        columnFloors: prevFloors,
+      });
+    }
     world.material[idx] = CellMaterial.VOID;
     world.hp[idx] = 0;
     world.buildingAt[idx] = -1;

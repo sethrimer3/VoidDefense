@@ -127,6 +127,9 @@ export type VoidNode = {
   y: number;
   hp: number;
   maxHp: number;
+  canTargetAir?: boolean;
+  lureUid?: number;
+  lureUntilTick?: number;
   radius: number;
 };
 
@@ -149,6 +152,9 @@ export type VoidOrganism = {
   vy: number;
   hp: number;
   maxHp: number;
+  canTargetAir?: boolean;
+  lureUid?: number;
+  lureUntilTick?: number;
   targetX: number;
   targetY: number;
   cooldown: number;
@@ -274,6 +280,9 @@ export type PlacedTower = {
   h: number;
   hp: number;
   maxHp: number;
+  canTargetAir?: boolean;
+  lureUid?: number;
+  lureUntilTick?: number;
   paid: number;
   placedAtTick: number;
   cooldown: number;
@@ -288,11 +297,20 @@ export type WallBlueprint = {
   cells: number[];
 };
 
-export type AgentKind = "engineer" | "rifleman" | "rocketeer" | "heavyMech" | "wallSerpent";
+export type AgentKind =
+  | "engineer"
+  | "rifleman"
+  | "rocketeer"
+  | "heavyMech"
+  | "wallSerpent"
+  | "lanternBearer"
+  | "seamwalker"
+  | "jetpack";
 
 export type Agent = {
   id: number;
   kind: AgentKind;
+  layer?: "ground" | "air";
   homeUid: number;
   x: number;
   y: number;
@@ -300,6 +318,9 @@ export type Agent = {
   vy: number;
   hp: number;
   maxHp: number;
+  canTargetAir?: boolean;
+  lureUid?: number;
+  lureUntilTick?: number;
   carryingMatter: number;
   state: "idle" | "seekSalvage" | "haulToBuild" | "repair" | "patrol" | "attack" | "retreat";
   targetCell: number;
@@ -375,9 +396,25 @@ export type ChronoLossEvent = {
   cellIdx: number;
   material: CellMaterialId;
   maxHp: number;
+  buildingId?: number;
+  columnFloors?: number;
+  agentKind?: AgentKind;
+  homeUid?: number;
+  agentId?: number;
   unitHp?: number;
   unitMaxHp?: number;
   claimed: boolean;
+};
+
+/** Visual sequence for Chrono Cannon upward reconstruction and reverse projectile. */
+export type ChronoRewindEffect = {
+  sx: number;
+  sy: number;
+  tx: number;
+  ty: number;
+  radius: number;
+  life: number;
+  maxLife: number;
 };
 
 export type ScenarioId =

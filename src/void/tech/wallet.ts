@@ -308,6 +308,25 @@ export type EvaluatedTech = {
   shieldExtraRadius: number;
   landfallRadiusMultiplier: number;
   hearthseedRank: number;
+  quarantineDurationBonus: number;
+  quarantineRadiusBonus: number;
+  siphonCapacityMultiplier: number;
+  siphonIntakeCap: number;
+  siphonVentReduction: number;
+  prismLengthBonus: number;
+  prismRedirectCap: number;
+  chronoWindowBonus: number;
+  chronoBudgetBonus: number;
+  chronoRadiusBonus: number;
+  echoLureRadiusBonus: number;
+  echoTargetCapBonus: number;
+  echoBlastDamageMult: number;
+  echoBlastRadiusBonus: number;
+  echoPersistent: boolean;
+  countervoidOutputMult: number;
+  countervoidPressureMult: number;
+  countervoidLandHpBonus: number;
+  unlockedJetpack: boolean;
   strikeCooldownMultiplier: number;
   strikeCostMultiplier: number;
   matterSynthesis: boolean;
@@ -353,6 +372,25 @@ export function evaluateTech(ranks: Readonly<Record<string, number>>): Evaluated
     shieldExtraRadius: r("harmonicShields"),
     landfallRadiusMultiplier: 1 + 0.25 * r("landfallPayload"),
     hearthseedRank: r("landfallPayload"),
+    quarantineDurationBonus: 1.5 * r("quarantineDuration"),
+    quarantineRadiusBonus: 2 * r("quarantineRadius"),
+    siphonCapacityMultiplier: 1 + 0.4 * r("siphonCapacity"),
+    siphonIntakeCap: Math.min(0.4, 0.25 + 0.05 * r("siphonCapacity")),
+    siphonVentReduction: 0.75 * r("siphonVenting"),
+    prismLengthBonus: 2 * r("prismLength"),
+    prismRedirectCap: Math.min(0.45, 0.35 + 0.05 * r("prismRedirect")),
+    chronoWindowBonus: 2 * r("chronoWindow"),
+    chronoBudgetBonus: 12 * r("chronoBudget"),
+    chronoRadiusBonus: 1 * r("chronoRadius"),
+    echoLureRadiusBonus: 2 * r("echoSignal"),
+    echoTargetCapBonus: 3 * r("echoSignal"),
+    echoBlastDamageMult: 1 + 0.5 * r("echoVolatile"),
+    echoBlastRadiusBonus: 1.5 * r("echoVolatile"),
+    echoPersistent: r("echoPersistent") > 0,
+    countervoidOutputMult: 1 + 0.35 * r("countervoidExpansion"),
+    countervoidPressureMult: 1 + 0.3 * r("countervoidStrength"),
+    countervoidLandHpBonus: 35 * r("countervoidLasting"),
+    unlockedJetpack: r("jetpackInfantry") > 0,
     strikeCooldownMultiplier: Math.max(0.4, 1 - 0.12 * r("orbitalCooldowns")),
     strikeCostMultiplier: Math.max(0.5, 1 - 0.1 * r("strikeCapacitors")),
     matterSynthesis: r("matterSynthesis") > 0,

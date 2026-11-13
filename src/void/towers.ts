@@ -8,7 +8,9 @@ import {
   CellMaterial,
   type CellMaterialId,
   type Agent,
+  type AgentKind,
   type ChronoLossEvent,
+  type ChronoRewindEffect,
   type LaserBeam,
   type MatterPellet,
   type OrganismKind,
@@ -349,6 +351,10 @@ export class VoidCombatManager {
   readonly prismStates = new Map<number, PrismState>();
   /** Bounded recent-loss journal for Chrono Cannon recovery. */
   readonly chronoJournal: ChronoLossEvent[] = [];
+  /** Visual rewind effects for Chrono Cannon upward reconstruction & returning shot. */
+  readonly chronoEffects: ChronoRewindEffect[] = [];
+  /** Temporary post-destruction Persistent Echo lures. */
+  readonly persistentEchoes: { x: number; y: number; remaining: number; radius: number }[] = [];
   private nextChronoLossId = 1;
 
   private nextTowerUid = 1;
@@ -366,10 +372,11 @@ export class VoidCombatManager {
   }
 
   /** Checks whether a tower of `type` can be placed with top-left cell `(x, y)`. */
-  initTowerSpecialState(tower: PlacedTower): void {
+  initTowerSpecialState(tower: PlacedTower, tech?: EvaluatedTech): void {
     const cx = tower.x + tower.w * 0.5;
     const cy = tower.y + tower.h * 0.5;
     if (tower.type === "voidSiphon") {
+      const ventDur = Math.max(2.0, 4.0 - (tech?.siphonVentReduction ?? 0));
       this.siphonStates.set(tower.uid, {
         uid: tower.uid,
         x: cx,
@@ -377,9 +384,9 @@ export class VoidCombatManager {
         radius: pixels(9),
         phase: "intake",
         stored: 0,
-        maxStorage: 250,
+        maxStorage: Math.round(250 * (tech?.siphonCapacityMultiplier ?? 1)),
         ventRemaining: 0,
-        ventDuration: 4.0,
+        ventDuration: ventDur,
       });
     } else if (tower.type === "boundaryPrism") {
       this.prismStates.set(tower.uid, {
@@ -387,9 +394,9 @@ export class VoidCombatManager {
         x: cx,
         y: cy,
         angleRad: 0,
-        planeLength: pixels(12),
+        planeLength: pixels(12 + (tech?.prismLengthBonus ?? 0)),
         bandWidth: pixels(3),
-        redirectFraction: 0.35,
+        redirectFraction: tech?.prismRedirectCap ?? 0.35,
       });
     }
   }
@@ -414,6 +421,11 @@ export class VoidCombatManager {
     cellIdx: number,
     material: CellMaterialId,
     maxHp: number,
+    buildingId = -1,
+    columnFloors = 0,
+    agentKind?: AgentKind,
+    homeUid?: number,
+    agentId?: number,
     unitHp?: number,
     unitMaxHp?: number,
   ): void {
@@ -429,6 +441,11 @@ export class VoidCombatManager {
       cellIdx,
       material,
       maxHp,
+      buildingId,
+      columnFloors,
+      agentKind,
+      homeUid,
+      agentId,
       unitHp,
       unitMaxHp,
       claimed: false,
@@ -448,11 +465,12 @@ export class VoidCombatManager {
     }
   }
 
-  stepChronoCannons(world: VoidWorld, voidField: VoidField, dt: number, timeSeconds: number): number {
+  stepChronoCannons(world: VoidWorld, voidField: VoidField, dt: number, timeSeconds: number, tech?: EvaluatedTech): number {
     let restoredTotal = 0;
-    const windowSec = 6.0;
-    const recRadius = pixels(5);
+    const windowSec = 6.0 + (tech?.chronoWindowBonus ?? 0);
+    const recRadius = pixels(5 + (tech?.chronoRadiusBonus ?? 0));
     const recRadiusSq = recRadius * recRadius;
+    const maxBudget = 24 + (tech?.chronoBudgetBonus ?? 0);
 
     for (const t of this.towers) {
       if (t.type !== "chronoCannon") continue;
@@ -477,20 +495,26 @@ export class VoidCombatManager {
       }
       if (!targetLoss) continue;
 
-      let budget = 24;
+      let budget = maxBudget;
       let restoredAny = false;
+      // Pass 1: Restore terrain and building support/floors first
       for (let i = this.chronoJournal.length - 1; i >= 0 && budget > 0; i--) {
         const ev = this.chronoJournal[i];
-        if (ev.claimed || timeSeconds - ev.timeSeconds > windowSec) continue;
+        if (ev.claimed || ev.kind !== "terrain" || timeSeconds - ev.timeSeconds > windowSec) continue;
         const dSq = (ev.x - targetLoss.x) * (ev.x - targetLoss.x) + (ev.y - targetLoss.y) * (ev.y - targetLoss.y);
         if (dSq > recRadiusSq) continue;
 
-        if (ev.kind === "terrain" && world.material[ev.cellIdx] === CellMaterial.VOID) {
+        if (world.material[ev.cellIdx] === CellMaterial.VOID) {
           ev.claimed = true;
           world.material[ev.cellIdx] = ev.material === CellMaterial.VOID ? CellMaterial.RECLAIMED : ev.material;
           world.hp[ev.cellIdx] = ev.maxHp;
           world.maxHp[ev.cellIdx] = Math.max(world.maxHp[ev.cellIdx], ev.maxHp);
-          world.buildingAt[ev.cellIdx] = -1;
+          if (ev.buildingId !== undefined && ev.buildingId >= 0) {
+            world.buildingAt[ev.cellIdx] = ev.buildingId;
+            world.columnFloors[ev.cellIdx] = Math.max(1, ev.columnFloors ?? 1);
+          } else {
+            world.buildingAt[ev.cellIdx] = -1;
+          }
           world.grid.markIndexDirty(ev.cellIdx);
           budget--;
           restoredTotal++;
@@ -498,9 +522,71 @@ export class VoidCombatManager {
         }
       }
 
+      // Pass 2: Restore Void-fallen units onto safe valid ground without duplicate IDs
+      for (let i = this.chronoJournal.length - 1; i >= 0 && budget > 0; i--) {
+        const ev = this.chronoJournal[i];
+        if (ev.claimed || ev.kind !== "unit" || !ev.agentKind || timeSeconds - ev.timeSeconds > windowSec) continue;
+        const dSq = (ev.x - targetLoss.x) * (ev.x - targetLoss.x) + (ev.y - targetLoss.y) * (ev.y - targetLoss.y);
+        if (dSq > recRadiusSq) continue;
+        if (ev.agentId !== undefined && this.agents.some((ag) => ag.id === ev.agentId)) continue;
+
+        // Bounded local safe-ground check
+        const gx = Math.floor(ev.x);
+        const gy = Math.floor(ev.y);
+        let safeX = -1;
+        let safeY = -1;
+        for (let oy = -2; oy <= 2 && safeX < 0; oy++) {
+          for (let ox = -2; ox <= 2; ox++) {
+            const sx = gx + ox;
+            const sy = gy + oy;
+            if (world.grid.inBounds(sx, sy) && world.material[world.grid.index(sx, sy)] !== CellMaterial.VOID) {
+              safeX = sx + 0.5;
+              safeY = sy + 0.5;
+              break;
+            }
+          }
+        }
+        if (safeX < 0) continue;
+
+        ev.claimed = true;
+        const maxHp = ev.unitMaxHp ?? 60;
+        const hp = Math.min(maxHp, Math.max(1, ev.unitHp ?? maxHp * 0.6));
+        this.agents.push({
+          id: ev.agentId ?? this.nextAgentId++,
+          kind: ev.agentKind,
+          homeUid: ev.homeUid ?? -1,
+          x: safeX,
+          y: safeY,
+          vx: 0,
+          vy: 0,
+          hp,
+          maxHp,
+          cooldown: 0.4,
+          carryingMatter: 0,
+          state: "patrol",
+          targetCell: -1,
+          targetNodeId: -1,
+          layer: ev.agentKind === "jetpack" ? "air" : "ground",
+        });
+        budget--;
+        restoredTotal++;
+        restoredAny = true;
+      }
+
       if (restoredAny) {
         t.cooldown = TOWER_SPECS.chronoCannon.cooldownSeconds;
         voidField.rebuildFrontier(world);
+        if (this.chronoEffects.length < 24) {
+          this.chronoEffects.push({
+            sx: targetLoss.x,
+            sy: targetLoss.y,
+            tx,
+            ty,
+            radius: recRadius,
+            life: 0,
+            maxLife: 0.75,
+          });
+        }
       }
     }
     return restoredTotal;
@@ -557,6 +643,7 @@ export class VoidCombatManager {
     if (type === "shieldProjector") {
       this.shieldPools.set(uid, 120);
     }
+    this.initTowerSpecialState(tower, tech);
     this.rebuildGravityMask(world);
     this.spawnInitialAgentsForTower(world, tower, tech);
     world.grid.markRectDirty({ x, y, w: spec.w, h: spec.h });
@@ -574,6 +661,12 @@ export class VoidCombatManager {
     world.grid.markRectDirty({ x: t.x, y: t.y, w: t.w, h: t.h });
     t.x = newX;
     t.y = newY;
+    const ncx = newX + t.w * 0.5;
+    const ncy = newY + t.h * 0.5;
+    const s = this.siphonStates.get(uid);
+    if (s) { s.x = ncx; s.y = ncy; }
+    const p = this.prismStates.get(uid);
+    if (p) { p.x = ncx; p.y = ncy; }
     for (let py = t.y; py < t.y + t.h; py++) {
       for (let px = t.x; px < t.x + t.w; px++) {
         world.towerAt[world.grid.index(px, py)] = uid;
@@ -596,6 +689,7 @@ export class VoidCombatManager {
       }
     }
     this.shieldPools.delete(uid);
+    this.clearTowerSpecialState(uid);
     // Remove agents belonging to this tower
     for (let i = this.agents.length - 1; i >= 0; i--) {
       if (this.agents[i].homeUid === uid) this.agents.splice(i, 1);
@@ -652,6 +746,7 @@ export class VoidCombatManager {
         this.agents.push({
           id: this.nextAgentId++,
           kind: "rifleman",
+          layer: "ground",
           homeUid: tower.uid,
           x: cx + ((i % 3) - 1) * 1.3,
           y: cy + Math.floor(i / 3) * 1.3,
@@ -664,6 +759,67 @@ export class VoidCombatManager {
           targetCell: -1,
           targetNodeId: -1,
           cooldown: (i * 0.15) % 0.6,
+        });
+      }
+      if (tech.unlockedJetpack) {
+        for (let i = 0; i < 2; i++) {
+          this.agents.push({
+            id: this.nextAgentId++,
+            kind: "jetpack",
+            layer: "air",
+            homeUid: tower.uid,
+            x: cx + (i === 0 ? -1.2 : 1.2),
+            y: cy - 1.0,
+            vx: 0,
+            vy: 0,
+            hp: 36,
+            maxHp: 36,
+            carryingMatter: 0,
+            state: "patrol",
+            targetCell: -1,
+            targetNodeId: -1,
+            cooldown: 0.2 * i,
+          });
+        }
+      }
+    } else if (tower.type === "lanternBearer") {
+      for (let i = 0; i < 2; i++) {
+        this.agents.push({
+          id: this.nextAgentId++,
+          kind: "lanternBearer",
+          layer: "ground",
+          homeUid: tower.uid,
+          x: cx + (i === 0 ? -1.0 : 1.0),
+          y: cy + 1.0,
+          vx: 0,
+          vy: 0,
+          hp: 65,
+          maxHp: 65,
+          carryingMatter: 0,
+          state: "patrol",
+          targetCell: -1,
+          targetNodeId: -1,
+          cooldown: 0,
+        });
+      }
+    } else if (tower.type === "seamwalker") {
+      for (let i = 0; i < 2; i++) {
+        this.agents.push({
+          id: this.nextAgentId++,
+          kind: "seamwalker",
+          layer: "ground",
+          homeUid: tower.uid,
+          x: cx + (i === 0 ? -1.0 : 1.0),
+          y: cy + 1.0,
+          vx: 0,
+          vy: 0,
+          hp: 55,
+          maxHp: 55,
+          carryingMatter: 0,
+          state: "patrol",
+          targetCell: -1,
+          targetNodeId: -1,
+          cooldown: 0.3 * i,
         });
       }
     } else if (tower.type === "heavyMechBay") {
@@ -752,6 +908,17 @@ export class VoidCombatManager {
     if (strike === "landfall") {
       const res = physics.depositHearthseedIsland(world, tx, ty, tech.hearthseedRank, 1.15);
       if (res.createdCells === 0) return false;
+      const r = pixels(4 + tech.hearthseedRank);
+      const rCeil = Math.ceil(r) + 1;
+      const { w, h } = world.grid;
+      for (let y = Math.max(0, Math.floor(ty - rCeil)); y <= Math.min(h - 1, Math.ceil(ty + rCeil)); y++) {
+        for (let x = Math.max(0, Math.floor(tx - rCeil)); x <= Math.min(w - 1, Math.ceil(tx + rCeil)); x++) {
+          const idx = y * w + x;
+          if (world.material[idx] !== CellMaterial.VOID) {
+            voidField.lanternCreatedTemp[idx] = 0;
+          }
+        }
+      }
       this.strikeCooldowns[strike] = spec.cooldownSeconds * tech.strikeCooldownMultiplier;
       voidField.rebuildFrontier(world);
       return true;
@@ -760,7 +927,13 @@ export class VoidCombatManager {
     this.strikeCooldowns[strike] = spec.cooldownSeconds * tech.strikeCooldownMultiplier;
 
     if (strike === "quarantineBell") {
-      voidField.addQuarantineSeal(world, tx, ty, spec.radius, 6.0);
+      voidField.addQuarantineSeal(
+        world,
+        tx,
+        ty,
+        spec.radius + pixels(tech.quarantineRadiusBonus),
+        6.0 + tech.quarantineDurationBonus,
+      );
       return true;
     }
 
@@ -902,9 +1075,13 @@ export class VoidCombatManager {
         }
         for (let i = this.agents.length - 1; i >= 0; i--) {
           const a = this.agents[i];
+          if (a.layer === "air") continue; // Ground-only chunk impact ignores airborne jetpack troops
           if (dist(a.x - imp.x, a.y - imp.y) <= imp.radius + 1.0) {
             a.hp -= imp.damage;
             if (a.hp <= 0) {
+              if (a.kind === "lanternBearer") {
+                voidField.releaseLanternCoverage(world, a.x, a.y, pixels(2));
+              }
               this.agents.splice(i, 1);
             }
           }
@@ -941,6 +1118,38 @@ export class VoidCombatManager {
       }
       if (voided > (t.w * t.h) / 2 || t.hp <= 0) {
         const spec = TOWER_SPECS[t.type];
+        const enemyCaused = t.hp <= 0;
+        // Echo Mine: enemy-caused destruction triggers one telegraphed blast (selling/void-collapse without enemy does not)
+        if (t.type === "echoMine" && enemyCaused) {
+          const blastRadius = pixels(6 + tech.echoBlastRadiusBonus);
+          const blastDamage = 95 * tech.echoBlastDamageMult;
+          for (let oi = this.organisms.length - 1; oi >= 0; oi--) {
+            const org = this.organisms[oi];
+            if (dist(org.x - cx, org.y - cy) <= blastRadius) {
+              org.hp -= blastDamage;
+              if (org.hp <= 0) this.organisms.splice(oi, 1);
+            }
+          }
+          if (tech.echoPersistent) {
+            this.persistentEchoes.push({
+              x: cx,
+              y: cy,
+              remaining: 3.0,
+              radius: pixels(10 + tech.echoLureRadiusBonus),
+            });
+          }
+          if (physics.shockwaves.length < 48) {
+            physics.shockwaves.push({
+              x: cx,
+              y: cy,
+              maxRadius: blastRadius,
+              color: "#e87ea1",
+              secondaryColor: "#ffd166",
+              life: 0,
+              maxLife: 0.45,
+            });
+          }
+        }
         const vLen = Math.max(0.5, dist(vxSum, vySum));
         physics.spawnFallingChunk(
           Math.floor(cx),
@@ -955,6 +1164,11 @@ export class VoidCombatManager {
           "#242c3a",
           "void",
         );
+        for (const ag of this.agents) {
+          if (ag.homeUid === t.uid && ag.kind === "lanternBearer") {
+            voidField.releaseLanternCoverage(world, ag.x, ag.y, pixels(2));
+          }
+        }
         this.removeTower(world, t.uid);
       }
     }
@@ -1018,9 +1232,23 @@ export class VoidCombatManager {
     // 6. Step autonomous agents (engineers, riflemen, mechs, wall serpents)
     this.stepAgents(world, physics, voidField, tick, dt, tech);
 
+    // 6b. Step Void Siphon vent cycles and Chrono Cannon rewind
+    this.stepSiphonTimers(dt);
+    this.stepChronoCannons(world, voidField, dt, tick * dt, tech);
+    for (let i = this.chronoEffects.length - 1; i >= 0; i--) {
+      this.chronoEffects[i].life += dt;
+      if (this.chronoEffects[i].life >= this.chronoEffects[i].maxLife) {
+        this.chronoEffects.splice(i, 1);
+      }
+    }
+
     // 7. Step cosmic Void organisms (Worms, Spiders, Blooms, Queen/Bees)
-    if (allowOrganisms) {
-      this.stepOrganisms(world, physics, voidField, tick, dt);
+    for (let i = this.persistentEchoes.length - 1; i >= 0; i--) {
+      this.persistentEchoes[i].remaining -= dt;
+      if (this.persistentEchoes[i].remaining <= 0) this.persistentEchoes.splice(i, 1);
+    }
+    if (allowOrganisms || this.organisms.length > 0) {
+      this.stepOrganisms(world, physics, voidField, tick, dt, tech);
     }
   }
 
@@ -1073,7 +1301,7 @@ export class VoidCombatManager {
         continue;
       }
       const underMat = world.material[world.grid.index(cellX, cellY)];
-      if (underMat === CellMaterial.VOID && a.kind !== "wallSerpent") {
+      if (underMat === CellMaterial.VOID && a.kind !== "wallSerpent" && a.layer !== "air" && a.kind !== "lanternBearer") {
         // Tactical retreat if unlocked, else take Void damage
         if (tech.tacticalRetreat) {
           const home = this.towers.find((t) => t.uid === a.homeUid);
@@ -1106,6 +1334,22 @@ export class VoidCombatManager {
             "#ff42b8",
             "void",
           );
+          this.recordChronoLoss(
+            tick * dt,
+            "unit",
+            a.x,
+            a.y,
+            world.grid.index(cellX, cellY),
+            CellMaterial.VOID,
+            0,
+            -1,
+            0,
+            a.kind,
+            a.homeUid,
+            a.id,
+            a.maxHp * 0.65,
+            a.maxHp,
+          );
           this.agents.splice(i, 1);
           continue;
         }
@@ -1115,6 +1359,10 @@ export class VoidCombatManager {
         this.stepWallSerpent(world, physics, voidField, a, tick, dt, tech);
       } else if (a.kind === "engineer") {
         this.stepEngineer(world, physics, a, tick, dt, tech);
+      } else if (a.kind === "lanternBearer") {
+        this.stepLanternBearer(world, voidField, a, tick, dt);
+      } else if (a.kind === "seamwalker") {
+        this.stepSeamwalker(world, voidField, a, tick, dt);
       } else {
         this.stepCombatAgent(world, voidField, a, tick, dt, tech);
       }
@@ -1264,6 +1512,101 @@ export class VoidCombatManager {
     }
   }
 
+  private stepLanternBearer(
+    world: VoidWorld,
+    voidField: VoidField,
+    a: Agent,
+    tick: number,
+    dt: number,
+  ): void {
+    const covR = pixels(2);
+    // Release previous footing, move toward focus or frontier (including into Void), then re-apply atomically
+    voidField.releaseLanternCoverage(world, a.x, a.y, covR);
+    const home = this.towers.find((t) => t.uid === a.homeUid);
+    const tx = home?.focus?.x ?? (home ? home.x + TOWER_SPECS[home.type].w * 0.5 : a.x);
+    const ty = home?.focus?.y ?? (home ? home.y + TOWER_SPECS[home.type].h * 0.5 : a.y);
+    const dx = tx - a.x;
+    const dy = ty - a.y;
+    const d = dist(dx, dy);
+    if (d > 1.2) {
+      const spd = pixels(8.5);
+      a.x = Math.max(2, Math.min(world.grid.w - 3, a.x + (dx / d) * spd * dt));
+      a.y = Math.max(2, Math.min(world.grid.h - 3, a.y + (dy / d) * spd * dt));
+    } else if (voidField.frontierCells.length > 0 && tick % 2 === 0) {
+      const target = this.pickFrontierTargetNear(world, voidField, a.x, a.y, pixels(16), tick + a.id);
+      if (target) {
+        const fdx = target.x - a.x;
+        const fdy = target.y - a.y;
+        const fd = Math.max(0.1, dist(fdx, fdy));
+        const spd = pixels(6.0);
+        a.x = Math.max(2, Math.min(world.grid.w - 3, a.x + (fdx / fd) * spd * dt));
+        a.y = Math.max(2, Math.min(world.grid.h - 3, a.y + (fdy / fd) * spd * dt));
+      }
+    }
+    voidField.applyLanternCoverage(world, a.x, a.y, covR);
+    // Lantern Bearers never attack.
+  }
+
+  private stepSeamwalker(
+    world: VoidWorld,
+    voidField: VoidField,
+    a: Agent,
+    tick: number,
+    dt: number,
+  ): void {
+    const home = this.towers.find((t) => t.uid === a.homeUid);
+    const focusX = home?.focus?.x ?? (home ? home.x + TOWER_SPECS[home.type].w * 0.5 : a.x);
+    const focusY = home?.focus?.y ?? (home ? home.y + TOWER_SPECS[home.type].h * 0.5 : a.y);
+    const range = pixels(11);
+    const target = this.pickFrontierTargetNear(world, voidField, focusX, focusY, pixels(28), tick + a.id);
+    a.cooldown = Math.max(0, a.cooldown - dt);
+
+    if (target) {
+      const dx = target.x - a.x;
+      const dy = target.y - a.y;
+      const d = Math.max(0.1, dist(dx, dy));
+      if (d > range * 0.75) {
+        const spd = pixels(9.5);
+        const nx = Math.max(2, Math.min(world.grid.w - 3, a.x + (dx / d) * spd * dt));
+        const ny = Math.max(2, Math.min(world.grid.h - 3, a.y + (dy / d) * spd * dt));
+        if (world.material[world.grid.index(Math.floor(nx), Math.floor(ny))] !== CellMaterial.VOID) {
+          a.x = nx;
+          a.y = ny;
+        }
+      }
+      if (d <= range && a.cooldown <= 0) {
+        a.cooldown = 0.75;
+        // Find adjacent Void neighbor of this frontier cell to staple/freeze
+        const fx = world.grid.xOf(target.cellIdx);
+        const fy = world.grid.yOf(target.cellIdx);
+        let frozenAny = false;
+        for (const [ox, oy] of ORTHO) {
+          const vx = fx + ox;
+          const vy = fy + oy;
+          if (!world.grid.inBounds(vx, vy)) continue;
+          const vIdx = world.grid.index(vx, vy);
+          if (world.material[vIdx] === CellMaterial.VOID) {
+            voidField.freezeVoidCell(vIdx, 2.0);
+            frozenAny = true;
+          }
+        }
+        if (frozenAny) {
+          voidField.rebuildFrontier(world);
+          if (this.lasers.length < 180) {
+            this.lasers.push({
+              x0: a.x,
+              y0: a.y,
+              x1: target.x,
+              y1: target.y,
+              ttl: 0.16,
+              color: "#f29d38",
+            });
+          }
+        }
+      }
+    }
+  }
+
   private stepCombatAgent(
     world: VoidWorld,
     voidField: VoidField,
@@ -1273,9 +1616,10 @@ export class VoidCombatManager {
     tech: EvaluatedTech,
   ): void {
     const isMech = a.kind === "heavyMech";
-    const speed = pixels(isMech ? 8.5 : 11.5);
-    const range = pixels(isMech ? 16 : 13) * tech.rifleRangeMultiplier;
-    const damage = (isMech ? 28 * tech.mechDamageMultiplier : 11) * tech.rifleDamageMultiplier;
+    const isJetpack = a.kind === "jetpack";
+    const speed = pixels(isMech ? 8.5 : isJetpack ? 14.5 : 11.5);
+    const range = pixels(isMech ? 16 : isJetpack ? 14 : 13) * tech.rifleRangeMultiplier;
+    const damage = (isMech ? 28 * tech.mechDamageMultiplier : isJetpack ? 16 : 11) * tech.rifleDamageMultiplier;
 
     const home = this.towers.find((t) => t.uid === a.homeUid);
     const focusX = home?.focus?.x ?? (home ? home.x + TOWER_SPECS[home.type].w / 2 : a.x);
@@ -1299,7 +1643,7 @@ export class VoidCombatManager {
       }
     }
 
-    if (!hitOrganism) {
+    if (!hitOrganism && !isJetpack) {
       for (let nIdx = 0; nIdx < voidField.nodes.length; nIdx++) {
         const node = voidField.nodes[nIdx];
         const d = dist(node.x - a.x, node.y - a.y);
@@ -1312,14 +1656,27 @@ export class VoidCombatManager {
       }
     }
 
-    // 2. Otherwise target nearest active Void frontier cell
+    // 2. Otherwise target nearest active Void frontier cell (Jetpack troops attack organisms only!)
     let frontierTarget: { x: number; y: number; cellIdx: number } | null = null;
-    if (!hitOrganism && hitNodeIdx < 0) {
+    if (!hitOrganism && hitNodeIdx < 0 && !isJetpack) {
       frontierTarget = this.pickFrontierTargetNear(world, voidField, focusX, focusY, pixels(36), tick + a.id);
       if (frontierTarget) {
         targetX = frontierTarget.x;
         targetY = frontierTarget.y;
       }
+    } else if (!hitOrganism && isJetpack && this.organisms.length > 0) {
+      // Jetpack flies directly toward nearest organism over any Void/holes
+      let bestOrg = this.organisms[0];
+      let bestD = dist(bestOrg.x - a.x, bestOrg.y - a.y);
+      for (let oi = 1; oi < this.organisms.length; oi++) {
+        const od = dist(this.organisms[oi].x - a.x, this.organisms[oi].y - a.y);
+        if (od < bestD) {
+          bestD = od;
+          bestOrg = this.organisms[oi];
+        }
+      }
+      targetX = bestOrg.x;
+      targetY = bestOrg.y;
     }
 
     if (targetX >= 0) {
@@ -1379,6 +1736,7 @@ export class VoidCombatManager {
     voidField: VoidField,
     tick: number,
     dt: number,
+    tech?: EvaluatedTech,
   ): void {
     // Spawn schedule every 12 seconds if energy permits
     if (tick > 0 && tick % 360 === 0 && this.organisms.length < 24 && voidField.energyRemaining > 350) {
@@ -1437,29 +1795,64 @@ export class VoidCombatManager {
       const o = this.organisms[i];
       const isStationaryCrystal = o.kind === "honeycombCrystal" || o.kind === "nexusCrystal";
 
-      // Retarget nearest tower or frontier
-      if (!isStationaryCrystal && tick % 45 === 0) {
-        if ((o.kind === "constellationSpider" || activeNexus) && this.towers.length > 0) {
-          // Spiders and Nexus-coordinated organisms hunt observed Repair Depots and towers within 70 cells of Void
-          let bestT: PlacedTower | null = null;
-          let bestD = Infinity;
-          for (const t of this.towers) {
-            const d = dist(t.x - o.x, t.y - o.y);
-            if (d > pixels(85)) continue; // Only react to observed/nearby defenses, never omniscient across whole board
-            const weight = t.type === "repairDepot" ? 0.5 : 1.0;
-            if (d * weight < bestD) {
-              bestD = d * weight;
-              bestT = t;
+      // Retarget: Echo Mine lure (bounded simultaneous target budget, short re-evaluation) -> tower -> frontier
+      if (!isStationaryCrystal && tick % 15 === 0) {
+        let lured = false;
+        const lureRadius = pixels(10 + (tech?.echoLureRadiusBonus ?? 0));
+        const maxTargets = 5 + (tech?.echoTargetCapBonus ?? 0);
+        for (const t of this.towers) {
+          if (t.type !== "echoMine") continue;
+          const ecx = t.x + t.w * 0.5;
+          const ecy = t.y + t.h * 0.5;
+          if (dist(o.x - ecx, o.y - ecy) <= lureRadius) {
+            // Count how many organisms are already lured to this mine
+            let curLured = 0;
+            for (const other of this.organisms) {
+              if (other.lureUid === t.uid && other.id !== o.id) curLured++;
+            }
+            if (curLured < maxTargets) {
+              o.lureUid = t.uid;
+              o.lureUntilTick = tick + (o.kind === "nebulaQueen" ? 30 : 90);
+              o.targetX = ecx;
+              o.targetY = ecy;
+              lured = true;
+              break;
             }
           }
-          if (bestT) {
-            o.targetX = bestT.x + TOWER_SPECS[bestT.type].w / 2;
-            o.targetY = bestT.y + TOWER_SPECS[bestT.type].h / 2;
+        }
+        if (!lured && this.persistentEchoes.length > 0) {
+          for (const pe of this.persistentEchoes) {
+            if (dist(o.x - pe.x, o.y - pe.y) <= pe.radius) {
+              o.targetX = pe.x;
+              o.targetY = pe.y;
+              lured = true;
+              break;
+            }
           }
-        } else if (voidField.frontierCells.length > 0) {
-          const pick = voidField.frontierCells[(tick + o.id * 17) % voidField.frontierCells.length];
-          o.targetX = world.grid.xOf(pick) + 0.5;
-          o.targetY = world.grid.yOf(pick) + 0.5;
+        }
+        if (!lured && tick % 45 === 0) {
+          if ((o.kind === "constellationSpider" || activeNexus) && this.towers.length > 0) {
+            // Spiders and Nexus-coordinated organisms hunt observed Repair Depots and towers within 70 cells of Void
+            let bestT: PlacedTower | null = null;
+            let bestD = Infinity;
+            for (const t of this.towers) {
+              const d = dist(t.x - o.x, t.y - o.y);
+              if (d > pixels(85)) continue;
+              const weight = t.type === "repairDepot" ? 0.5 : 1.0;
+              if (d * weight < bestD) {
+                bestD = d * weight;
+                bestT = t;
+              }
+            }
+            if (bestT) {
+              o.targetX = bestT.x + TOWER_SPECS[bestT.type].w / 2;
+              o.targetY = bestT.y + TOWER_SPECS[bestT.type].h / 2;
+            }
+          } else if (voidField.frontierCells.length > 0) {
+            const pick = voidField.frontierCells[(tick + o.id * 17) % voidField.frontierCells.length];
+            o.targetX = world.grid.xOf(pick) + 0.5;
+            o.targetY = world.grid.yOf(pick) + 0.5;
+          }
         }
       }
 
@@ -1528,21 +1921,38 @@ export class VoidCombatManager {
             });
           }
         } else if (o.kind !== "nexusCrystal") {
-          // Erode cell under organism or damage adjacent tower
-          const cx = Math.floor(o.x);
-          const cy = Math.floor(o.y);
-          if (world.grid.inBounds(cx, cy)) {
-            const idx = world.grid.index(cx, cy);
-            const tUid = world.towerAt[idx];
-            if (tUid >= 0) {
-              const tw = this.towers.find((t) => t.uid === tUid);
-              if (tw) tw.hp -= 22;
-            } else if (world.material[idx] !== CellMaterial.VOID) {
-              if (world.hp[idx] <= 35) {
-                physics.consumeCellIntoVoid(world, idx, true);
-              } else {
-                world.hp[idx] -= 35;
-                world.grid.markIndexDirty(idx);
+          // Flying organisms (voidBee, nebulaQueen) can attack airborne jetpack soldiers; ground organisms cannot
+          const canHitAir = o.kind === "voidBee" || o.kind === "nebulaQueen" || o.canTargetAir === true;
+          let hitAir = false;
+          if (canHitAir) {
+            for (let ai = this.agents.length - 1; ai >= 0; ai--) {
+              const ag = this.agents[ai];
+              if (ag.layer !== "air") continue;
+              if (dist(ag.x - o.x, ag.y - o.y) <= pixels(4.5)) {
+                ag.hp -= 12;
+                hitAir = true;
+                if (ag.hp <= 0) this.agents.splice(ai, 1);
+                break;
+              }
+            }
+          }
+          if (!hitAir) {
+            // Erode cell under organism or damage adjacent tower
+            const cx = Math.floor(o.x);
+            const cy = Math.floor(o.y);
+            if (world.grid.inBounds(cx, cy)) {
+              const idx = world.grid.index(cx, cy);
+              const tUid = world.towerAt[idx];
+              if (tUid >= 0) {
+                const tw = this.towers.find((t) => t.uid === tUid);
+                if (tw) tw.hp -= 22;
+              } else if (world.material[idx] !== CellMaterial.VOID) {
+                if (world.hp[idx] <= 35) {
+                  physics.consumeCellIntoVoid(world, idx, true);
+                } else {
+                  world.hp[idx] -= 35;
+                  world.grid.markIndexDirty(idx);
+                }
               }
             }
           }

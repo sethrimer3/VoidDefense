@@ -837,14 +837,38 @@ export class VoidApp {
     const spec = TOWER_SPECS[t.type];
     const refund = this.sim.refundAmount(t.uid);
     const canModify = this.sim.canModifyTowers();
+    let extraInfo = "";
+    if (t.type === "voidSiphon") {
+      const s = this.sim.combat.siphonStates.get(t.uid);
+      if (s) {
+        const pct = Math.round((s.stored / Math.max(1, s.maxStorage)) * 100);
+        extraInfo = `<span>Tank: ${pct}% (${s.phase === "venting" ? `Venting ${s.ventRemaining.toFixed(1)}s` : "Intake"})</span>`;
+      }
+    } else if (t.type === "boundaryPrism") {
+      const p = this.sim.combat.prismStates.get(t.uid);
+      if (p) {
+        const deg = Math.round((p.angleRad * 180) / Math.PI) % 360;
+        extraInfo = `<span>Plane: ${deg}°</span><button type="button" data-insp-rotate class="secondary-btn">Rotate +45°</button>`;
+      }
+    } else if (t.type === "chronoCannon") {
+      extraInfo = `<span>Rewind: ${t.cooldown <= 0 ? "Ready" : `${t.cooldown.toFixed(1)}s`}</span>`;
+    }
     insp.hidden = false;
     insp.innerHTML = `
       <strong>${spec.name} #${t.uid}</strong>
       <span>HP: ${Math.ceil(t.hp)}/${t.maxHp}</span>
+      ${extraInfo}
       <button type="button" data-insp-reticle class="secondary-btn">Set Focus Reticle</button>
       <button type="button" data-insp-sell class="danger-btn" ${canModify ? "" : "disabled"}>Sell (+${refund} SUP)</button>
       <button type="button" data-insp-close class="secondary-btn">X</button>
     `;
+    const rotBtn = insp.querySelector<HTMLButtonElement>("[data-insp-rotate]");
+    if (rotBtn) {
+      rotBtn.onclick = () => {
+        this.sim.combat.rotatePrism(t.uid);
+        this.refreshHUD();
+      };
+    }
     insp.querySelector<HTMLButtonElement>("[data-insp-reticle]")!.onclick = () => {
       this.activeTool = { kind: "setReticle", towerUid: t.uid };
     };
