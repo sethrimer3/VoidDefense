@@ -62,6 +62,10 @@ export class VoidField {
   readonly frozenVoidCells = new Map<number, number>();
   /** Countervoid Heart friendly orange Void cells. */
   readonly countervoidCells = new Set<number>();
+  /** Reference count of living Lantern Bearers covering each cell. */
+  readonly lanternRefCount: Uint16Array;
+  /** 1 if cell was Void/UNCLAIMED when first covered by a Lantern Bearer (temporary footing). */
+  readonly lanternCreatedTemp: Uint8Array;
   /** Temporary suppression timer (from Containment Pulse strike). */
   suppressedSeconds = 0;
 
@@ -73,7 +77,51 @@ export class VoidField {
       : Number.POSITIVE_INFINITY;
     this.cellMicroWork = new Uint32Array(world.grid.count);
     this.frontierContactCount = new Uint8Array(world.grid.count);
+    this.lanternRefCount = new Uint16Array(world.grid.count);
+    this.lanternCreatedTemp = new Uint8Array(world.grid.count);
     this.rebuildFrontier(world);
+  }
+
+  /** Applies Lantern Bearer solid-ground coverage in `radius`, tracking temporary Void provenance. */
+  applyLanternCoverage(world: VoidWorld, cx: number, cy: number, radius: number): void {
+    const { w, h } = world.grid;
+    const rCeil = Math.ceil(radius);
+    const rSq = radius * radius;
+    for (let y = Math.max(0, Math.floor(cy - rCeil)); y <= Math.min(h - 1, Math.ceil(cy + rCeil)); y++) {
+      for (let x = Math.max(0, Math.floor(cx - rCeil)); x <= Math.min(w - 1, Math.ceil(cx + rCeil)); x++) {
+        if ((x - cx) * (x - cx) + (y - cy) * (y - cy) > rSq) continue;
+        const idx = y * w + x;
+        this.lanternRefCount[idx]++;
+        if (world.material[idx] === CellMaterial.VOID || world.material[idx] === CellMaterial.UNCLAIMED) {
+          this.lanternCreatedTemp[idx] = 1;
+          world.material[idx] = CellMaterial.RECLAIMED;
+          world.hp[idx] = 100;
+          world.maxHp[idx] = 100;
+          world.buildingAt[idx] = -1;
+          world.grid.markIndexDirty(idx);
+        }
+      }
+    }
+  }
+
+  /** Releases Lantern Bearer coverage; reverts temporary Void footing when last bearer leaves. */
+  releaseLanternCoverage(world: VoidWorld, cx: number, cy: number, radius: number): void {
+    const { w, h } = world.grid;
+    const rCeil = Math.ceil(radius);
+    const rSq = radius * radius;
+    for (let y = Math.max(0, Math.floor(cy - rCeil)); y <= Math.min(h - 1, Math.ceil(cy + rCeil)); y++) {
+      for (let x = Math.max(0, Math.floor(cx - rCeil)); x <= Math.min(w - 1, Math.ceil(cx + rCeil)); x++) {
+        if ((x - cx) * (x - cx) + (y - cy) * (y - cy) > rSq) continue;
+        const idx = y * w + x;
+        if (this.lanternRefCount[idx] > 0) this.lanternRefCount[idx]--;
+        if (this.lanternRefCount[idx] === 0 && this.lanternCreatedTemp[idx] === 1) {
+          this.lanternCreatedTemp[idx] = 0;
+          world.material[idx] = CellMaterial.VOID;
+          world.hp[idx] = 0;
+          world.grid.markIndexDirty(idx);
+        }
+      }
+    }
   }
 
   /** Freezes a Void cell's propagation for `duration` seconds (Seamwalker staple hold). */

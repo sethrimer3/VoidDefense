@@ -29,3 +29,29 @@ test("Countervoid Heart: seeds friendly orange frontier and reclaims adjacent Vo
   assert.ok(sim.voidField.countervoidCells.size >= 2);
   assert.equal(sim.world.material[nIdx], CellMaterial.RECLAIMED);
 });
+
+test("Lantern Bearer: unconditional footing over Void, overlap refcounting, and pre-existing terrain preservation", () => {
+  const sim = new VoidSim("classicCore", "buildWatch", emptyTechWallet(), true);
+  const vx = 15;
+  const vy = 15;
+  const vIdx = sim.world.grid.index(vx, vy);
+  const sIdx = sim.world.grid.index(vx + 1, vy);
+  sim.world.material[vIdx] = CellMaterial.VOID;
+  sim.world.material[sIdx] = CellMaterial.STREET;
+
+  // Two overlapping bearers
+  sim.voidField.applyLanternCoverage(sim.world, vx, vy, 2);
+  sim.voidField.applyLanternCoverage(sim.world, vx, vy, 2);
+  assert.equal(sim.world.material[vIdx], CellMaterial.RECLAIMED);
+  assert.equal(sim.voidField.lanternRefCount[vIdx], 2);
+
+  // First leaves -> still protected
+  sim.voidField.releaseLanternCoverage(sim.world, vx, vy, 2);
+  assert.equal(sim.world.material[vIdx], CellMaterial.RECLAIMED);
+  assert.equal(sim.voidField.lanternRefCount[vIdx], 1);
+
+  // Second leaves -> temporary Void footing reverts, pre-existing STREET remains intact
+  sim.voidField.releaseLanternCoverage(sim.world, vx, vy, 2);
+  assert.equal(sim.world.material[vIdx], CellMaterial.VOID);
+  assert.equal(sim.world.material[sIdx], CellMaterial.STREET);
+});
