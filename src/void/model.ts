@@ -130,6 +130,7 @@ export type VoidNode = {
   canTargetAir?: boolean;
   lureUid?: number;
   lureUntilTick?: number;
+  lureCooldownUntilTick?: number;
   radius: number;
 };
 
@@ -155,6 +156,7 @@ export type VoidOrganism = {
   canTargetAir?: boolean;
   lureUid?: number;
   lureUntilTick?: number;
+  lureCooldownUntilTick?: number;
   targetX: number;
   targetY: number;
   cooldown: number;
@@ -283,9 +285,11 @@ export type PlacedTower = {
   canTargetAir?: boolean;
   lureUid?: number;
   lureUntilTick?: number;
+  lureCooldownUntilTick?: number;
   paid: number;
   placedAtTick: number;
   cooldown: number;
+  lastDamageCause?: "enemy" | "masonry" | "void";
   /** Optional world-space focus/rally reticle set by the player. */
   focus?: { x: number; y: number };
 };
@@ -321,11 +325,14 @@ export type Agent = {
   canTargetAir?: boolean;
   lureUid?: number;
   lureUntilTick?: number;
+  lureCooldownUntilTick?: number;
   carryingMatter: number;
   state: "idle" | "seekSalvage" | "haulToBuild" | "repair" | "patrol" | "attack" | "retreat";
   targetCell: number;
   targetNodeId: number;
   cooldown: number;
+  coverageRadius?: number;
+  lastSafeHp?: number;
 };
 
 export type MatterPellet = {
@@ -417,6 +424,13 @@ export type ChronoRewindEffect = {
   radius: number;
   life: number;
   maxLife: number;
+  items?: {
+    x: number;
+    y: number;
+    kind: "terrain" | "building" | "unit";
+    agentKind?: AgentKind;
+    floors?: number;
+  }[];
 };
 
 export type ScenarioId =

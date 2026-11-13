@@ -68,8 +68,10 @@ export class VoidField {
   private nextSealId = 1;
   /** Seamwalker-frozen Void cells (cellIdx -> remaining hold seconds). */
   readonly frozenVoidCells = new Map<number, number>();
-  /** Countervoid Heart friendly orange Void cells. */
+  /** Countervoid Heart active orange influence cells. */
   readonly countervoidCells = new Set<number>();
+  /** 1 if cell was converted from VOID/UNCLAIMED by Countervoid (vs pre-existing land). */
+  readonly countervoidCreated: Uint8Array;
   private countervoidWorkAcc = 0;
   /** Reference count of living Lantern Bearers covering each cell. */
   readonly lanternRefCount: Uint16Array;
@@ -88,6 +90,7 @@ export class VoidField {
     this.frontierContactCount = new Uint8Array(world.grid.count);
     this.lanternRefCount = new Uint16Array(world.grid.count);
     this.lanternCreatedTemp = new Uint8Array(world.grid.count);
+    this.countervoidCreated = new Uint8Array(world.grid.count);
     this.rebuildFrontier(world);
   }
 
@@ -165,25 +168,31 @@ export class VoidField {
 
     const landHpBonus = tech?.countervoidLandHpBonus ?? 0;
 
-    // When no living Countervoid Heart remains, unstabilized Countervoid decays back to Void
+    // When no living Countervoid Heart remains, orange influence decays and only Countervoid-created
+    // cells (without Lasting Ground) revert to Void; pre-existing reclaimed/city land is never deleted.
     if (hearts.length === 0) {
       if (this.countervoidCells.size > 0) {
-        if (landHpBonus > 0) {
-          this.countervoidCells.clear();
-        } else {
-          let decayBudget = Math.max(1, Math.ceil(dt * 24));
-          for (const idx of this.countervoidCells) {
-            if (decayBudget <= 0) break;
-            this.countervoidCells.delete(idx);
-            if (world.material[idx] === CellMaterial.RECLAIMED && this.lanternRefCount[idx] === 0) {
-              world.material[idx] = CellMaterial.VOID;
-              world.hp[idx] = 0;
-              world.buildingAt[idx] = -1;
-              world.grid.markIndexDirty(idx);
-              needsRebuild = true;
-            }
-            decayBudget--;
+        let decayBudget = Math.max(1, Math.ceil(dt * 90));
+        for (const idx of this.countervoidCells) {
+          if (decayBudget <= 0) break;
+          this.countervoidCells.delete(idx);
+          if (
+            landHpBonus === 0 &&
+            this.countervoidCreated[idx] === 1 &&
+            world.material[idx] === CellMaterial.RECLAIMED &&
+            this.lanternRefCount[idx] === 0
+          ) {
+            this.countervoidCreated[idx] = 0;
+            world.material[idx] = CellMaterial.VOID;
+            world.hp[idx] = 0;
+            world.buildingAt[idx] = -1;
+            world.grid.markIndexDirty(idx);
+            needsRebuild = true;
+          } else if (landHpBonus > 0) {
+            // Stabilized permanent land: clear temporary provenance
+            this.countervoidCreated[idx] = 0;
           }
+          decayBudget--;
         }
       }
       if (needsRebuild) this.rebuildFrontier(world);
@@ -208,6 +217,7 @@ export class VoidField {
           world.maxHp[idx] = cellHp;
           world.buildingAt[idx] = -1;
           this.lanternCreatedTemp[idx] = 0;
+          this.countervoidCreated[idx] = 1;
           world.grid.markIndexDirty(idx);
           needsRebuild = true;
         }
@@ -263,6 +273,7 @@ export class VoidField {
           world.maxHp[nIdx] = cellHp;
           world.buildingAt[nIdx] = -1;
           this.lanternCreatedTemp[nIdx] = 0;
+          this.countervoidCreated[nIdx] = 1;
           world.grid.markIndexDirty(nIdx);
           nextAdd.push(nIdx);
           budget--;
@@ -582,9 +593,14 @@ export class VoidField {
       spentMicroWork += share;
     }
 
-    // 5a. Boundary Prism conservative directional pressure redirection (pre-step stable state, no ping-pong)
+    // 5a. Boundary Prism conservative directional pressure redirection (order-independent, combined per-source cap)
     if (opts.prisms) {
-      const redirectedAdd = new Float64Array(nFront);
+      const COMBINED_PRISM_REDIRECT_CAP = 0.45;
+      const origShares = new Int32Array(cellMicroShares);
+      const totalWant = new Int32Array(nFront);
+      const redirectedAdd = new Int32Array(nFront);
+      const prismEntries: { receivers: number[]; wantByCell: Map<number, number> }[] = [];
+
       for (const prism of opts.prisms) {
         const cosA = Math.cos(prism.angleRad);
         const sinA = Math.sin(prism.angleRad);
@@ -609,9 +625,10 @@ export class VoidField {
 
         if (receivers.length === 0) continue; // No valid receiving frontier -> keep normal local erosion
 
-        let poolRedirected = 0;
+        const wantByCell = new Map<number, number>();
+        const frac = Math.min(COMBINED_PRISM_REDIRECT_CAP, prism.redirectFraction);
         for (let i = 0; i < nFront; i++) {
-          const baseShare = cellMicroShares[i];
+          const baseShare = origShares[i];
           if (baseShare <= 0) continue;
           const cIdx = this.frontierCells[i];
           const dx = world.grid.xOf(cIdx) + 0.5 - prism.x;
@@ -620,21 +637,37 @@ export class VoidField {
           const perp = dx * nx + dy * ny;
           // Protected side (-bandWidth .. 0)
           if (Math.abs(along) <= halfLen && perp <= 0 && perp >= -prism.bandWidth) {
-            const redir = Math.floor(baseShare * Math.min(0.45, prism.redirectFraction));
-            if (redir > 0) {
-              cellMicroShares[i] -= redir;
-              poolRedirected += redir;
+            const want = Math.floor(baseShare * frac);
+            if (want > 0) {
+              wantByCell.set(i, want);
+              totalWant[i] += want;
             }
           }
         }
+        if (wantByCell.size > 0) {
+          prismEntries.push({ receivers, wantByCell });
+        }
+      }
 
+      for (const entry of prismEntries) {
+        let poolRedirected = 0;
+        for (const [i, want] of entry.wantByCell) {
+          const maxCap = Math.min(origShares[i], Math.floor(origShares[i] * COMBINED_PRISM_REDIRECT_CAP));
+          const tot = totalWant[i];
+          const actual = tot <= maxCap ? want : Math.floor((want * maxCap) / tot);
+          const safeActual = Math.min(actual, cellMicroShares[i]);
+          if (safeActual > 0) {
+            cellMicroShares[i] -= safeActual;
+            poolRedirected += safeActual;
+          }
+        }
         if (poolRedirected > 0) {
-          const perRec = Math.floor(poolRedirected / receivers.length);
-          let rem = poolRedirected - perRec * receivers.length;
-          for (let r = 0; r < receivers.length; r++) {
+          const perRec = Math.floor(poolRedirected / entry.receivers.length);
+          let rem = poolRedirected - perRec * entry.receivers.length;
+          for (let r = 0; r < entry.receivers.length; r++) {
             const add = perRec + (rem > 0 ? 1 : 0);
             if (rem > 0) rem--;
-            redirectedAdd[receivers[r]] += add;
+            redirectedAdd[entry.receivers[r]] += add;
           }
         }
       }

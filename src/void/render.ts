@@ -1447,30 +1447,66 @@ export class VoidRenderer {
       c.arc(ef.sx, ef.sy, ef.radius * (1 - p * 0.3), -p * 4, -p * 4 + Math.PI * 1.65);
       c.stroke();
       c.setLineDash([]);
-      // Rising reconstruction blocks
-      c.fillStyle = `rgba(255, 226, 138, ${1 - p})`;
-      for (let k = 0; k < 6; k++) {
-        const ang = (k / 6) * Math.PI * 2 + p * 1.5;
-        const rx = ef.sx + Math.cos(ang) * ef.radius * 0.45;
-        const ry = ef.sy + Math.sin(ang) * ef.radius * 0.45 - p * 3.5;
-        c.fillRect(rx - 0.35, ry - 0.35, 0.7, 0.7);
+      // Upward reconstruction of real restored objects (buildings, units, terrain)
+      const riseScale = this.reduceEffects ? 0 : 1 - p;
+      const alpha = Math.max(0.2, 1 - p * 0.75);
+      if (ef.items && ef.items.length > 0) {
+        for (const item of ef.items) {
+          if (item.kind === "building") {
+            const floors = Math.max(1, item.floors ?? 1);
+            const h = Math.min(4.5, 1 + floors * 0.85);
+            const iy = item.y + riseScale * 5.0 - h + 1;
+            c.fillStyle = `rgba(196, 168, 118, ${alpha})`;
+            c.fillRect(item.x - 0.15, iy, 1.3, h);
+            c.fillStyle = `rgba(255, 226, 138, ${alpha})`;
+            c.fillRect(item.x - 0.15, iy, 1.3, 0.45);
+          } else if (item.kind === "unit") {
+            const iy = item.y + riseScale * 4.0;
+            const unitColor =
+              item.agentKind === "engineer"
+                ? `rgba(255, 209, 92, ${alpha})`
+                : item.agentKind === "heavyMech"
+                  ? `rgba(122, 252, 255, ${alpha})`
+                  : item.agentKind === "lanternBearer"
+                    ? `rgba(255, 226, 138, ${alpha})`
+                    : item.agentKind === "seamwalker"
+                      ? `rgba(242, 157, 56, ${alpha})`
+                      : `rgba(255, 123, 36, ${alpha})`;
+            c.fillStyle = unitColor;
+            c.fillRect(item.x - 0.5, iy - 0.8, 1.0, 1.2);
+          } else {
+            const iy = item.y + riseScale * 3.0;
+            c.fillStyle = `rgba(212, 180, 92, ${alpha * 0.85})`;
+            c.fillRect(item.x, iy, 1.0, 1.0);
+          }
+        }
+      } else {
+        c.fillStyle = `rgba(255, 226, 138, ${1 - p})`;
+        for (let k = 0; k < 6; k++) {
+          const ang = (k / 6) * Math.PI * 2 + p * 1.5;
+          const rx = ef.sx + Math.cos(ang) * ef.radius * 0.45;
+          const ry = ef.sy + Math.sin(ang) * ef.radius * 0.45 + riseScale * 3.5;
+          c.fillRect(rx - 0.35, ry - 0.35, 0.7, 0.7);
+        }
       }
       // Contracting reverse flash -> projectile returning FROM restored area BACK INTO barrel
-      if (p < 0.35) {
-        const fp = 1 - p / 0.35;
-        c.strokeStyle = "rgba(255, 243, 209, 0.85)";
-        c.lineWidth = 0.45;
-        c.beginPath();
-        c.arc(ef.sx, ef.sy, Math.max(0.4, ef.radius * 0.5 * fp), 0, Math.PI * 2);
-        c.stroke();
-      } else {
-        const rp = (p - 0.35) / 0.65;
-        const px = ef.sx + (ef.tx - ef.sx) * rp;
-        const py = ef.sy + (ef.ty - ef.sy) * rp;
-        c.fillStyle = "#fff3d1";
-        c.beginPath();
-        c.arc(px, py, 0.9, 0, Math.PI * 2);
-        c.fill();
+      if (!this.reduceEffects) {
+        if (p < 0.35) {
+          const fp = 1 - p / 0.35;
+          c.strokeStyle = "rgba(255, 243, 209, 0.85)";
+          c.lineWidth = 0.45;
+          c.beginPath();
+          c.arc(ef.sx, ef.sy, Math.max(0.4, ef.radius * 0.5 * fp), 0, Math.PI * 2);
+          c.stroke();
+        } else {
+          const rp = (p - 0.35) / 0.65;
+          const px = ef.sx + (ef.tx - ef.sx) * rp;
+          const py = ef.sy + (ef.ty - ef.sy) * rp;
+          c.fillStyle = "#fff3d1";
+          c.beginPath();
+          c.arc(px, py, 0.9, 0, Math.PI * 2);
+          c.fill();
+        }
       }
     }
 
@@ -1672,7 +1708,7 @@ export class VoidRenderer {
         c.fillRect(a.x - 0.4, a.y - 0.4, 0.8, 0.8);
       } else if (a.kind === "lanternBearer") {
         // Warm safe-ground footprint halo + tall carried lantern
-        const haloR = pixels(2);
+        const haloR = a.coverageRadius ?? pixels(2 + sim.tech.lanternRadiusBonus);
         c.strokeStyle = "rgba(255, 214, 112, 0.55)";
         c.lineWidth = 0.25;
         c.beginPath();

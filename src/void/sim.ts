@@ -122,7 +122,7 @@ export class VoidSim {
   sellTower(uid: number): boolean {
     if (!this.canModifyTowers()) return false;
     const refund = this.refundAmount(uid);
-    const removed = this.combat.removeTower(this.world, uid);
+    const removed = this.combat.removeTower(this.world, uid, this.voidField);
     if (!removed) return false;
     this.supplies += refund;
     return true;

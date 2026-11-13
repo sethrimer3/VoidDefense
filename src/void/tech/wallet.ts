@@ -326,6 +326,12 @@ export type EvaluatedTech = {
   countervoidOutputMult: number;
   countervoidPressureMult: number;
   countervoidLandHpBonus: number;
+  lanternRadiusBonus: number;
+  lanternHpMultiplier: number;
+  lanternSpeedMultiplier: number;
+  seamwalkerSegmentRadius: number;
+  seamwalkerHoldDuration: number;
+  seamwalkerCooldownMultiplier: number;
   unlockedJetpack: boolean;
   strikeCooldownMultiplier: number;
   strikeCostMultiplier: number;
@@ -390,6 +396,12 @@ export function evaluateTech(ranks: Readonly<Record<string, number>>): Evaluated
     countervoidOutputMult: 1 + 0.35 * r("countervoidExpansion"),
     countervoidPressureMult: 1 + 0.3 * r("countervoidStrength"),
     countervoidLandHpBonus: 35 * r("countervoidLasting"),
+    lanternRadiusBonus: Math.min(1.0, 0.5 * r("lanternEscortRadius")),
+    lanternHpMultiplier: 1 + 0.35 * r("lanternSurvivability"),
+    lanternSpeedMultiplier: 1 + 0.2 * r("lanternStride"),
+    seamwalkerSegmentRadius: Math.min(2, r("seamwalkerWidth")),
+    seamwalkerHoldDuration: Math.min(3.2, 2.0 + 0.6 * r("seamwalkerHold")),
+    seamwalkerCooldownMultiplier: Math.max(0.55, 1 - 0.18 * r("seamwalkerCadence")),
     unlockedJetpack: r("jetpackInfantry") > 0,
     strikeCooldownMultiplier: Math.max(0.4, 1 - 0.12 * r("orbitalCooldowns")),
     strikeCostMultiplier: Math.max(0.5, 1 - 0.1 * r("strikeCapacitors")),
