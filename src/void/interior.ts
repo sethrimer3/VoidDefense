@@ -117,24 +117,24 @@ export function sampleStarNest(u: number, v: number): number {
 }
 
 /** Recolors a Star Nest fractal intensity into Void Defense's cosmic spectrum:
- * - Low-mid: rich violet & magenta nebula filaments
- * - High: hot pink/magenta nebulae
- * - Peak: brilliant cyan & white-cyan star cores
+ * - Low-mid: calm deep indigo & violet nebula floor
+ * - High: subtle plum & magenta filaments
+ * - Peak: restrained violet-cyan dust at peak fractal ridges
  */
 export function starNestColor(intensity: number, jitter = 0): string {
-  if (intensity > 0.85) {
-    return jitter % 2 === 0 ? "#d8fbff" : "#7afcff"; // Brilliant white-cyan star cores
+  if (intensity > 0.88) {
+    return jitter % 3 === 0 ? "#88d8e8" : "#b84fd9";
   }
-  if (intensity > 0.65) {
-    return jitter % 2 === 0 ? "#ff5ee8" : "#df56ff"; // Hot magenta filaments
+  if (intensity > 0.68) {
+    return jitter % 2 === 0 ? "#7d2eb8" : "#622296";
   }
-  if (intensity > 0.42) {
-    return jitter % 3 === 0 ? "#c73ef5" : "#9d2edb"; // Vibrant violet
+  if (intensity > 0.45) {
+    return jitter % 3 === 0 ? "#4c1c78" : "#3a145e";
   }
-  if (intensity > 0.22) {
-    return jitter % 2 === 0 ? "#7a22bb" : "#631fa3"; // Deep violet
+  if (intensity > 0.24) {
+    return jitter % 2 === 0 ? "#280f45" : "#1f0b38";
   }
-  return "#4a187a"; // Base deep purple
+  return "#150726";
 }
 
 /** Pre-computed seeded spiral wisp parameters for each portal (kept for compatibility). */
@@ -214,22 +214,22 @@ export function computeVoidInterior(
         const dx = px - p.x;
         const dy = py - p.y;
         const r = Math.hypot(dx, dy);
-        if (r <= coreR + 0.8 || r >= maxReach) continue;
+        if (r <= coreR + 1.8 || r >= maxReach) continue;
 
         const theta = Math.atan2(dy, dx);
 
         // Star Nest coordinates: map radial/polar space with subtle gravitational swirl
-        const swirlAngle = theta + animTime * (0.8 / (1.0 + r * 0.15));
+        const swirlAngle = theta + animTime * (0.65 / (1.0 + r * 0.15));
         const logR = Math.log(r + 1.0);
 
         // Torus UV mapped across Star Nest volumetric fractal
-        const u = ((swirlAngle / (Math.PI * 2)) * 2.0 + logR * 0.4 + animTime * 0.04) % 1;
-        const v = (r * 0.05 - animTime * 0.03) % 1;
+        const u = ((swirlAngle / (Math.PI * 2)) * 2.0 + logR * 0.4 + animTime * 0.03) % 1;
+        const v = (r * 0.05 - animTime * 0.025) % 1;
 
         const intensity = sampleStarNest(u, v);
 
-        // Only render visible fractal filaments and star cores (spatially coherent, not noisy mess)
-        if (intensity > 0.28) {
+        // Only render coherent nebula filaments (calm hierarchy, never noisy confetti)
+        if (intensity > 0.48) {
           const jitter = (px * 7 + py * 13) & 15;
           const color = starNestColor(intensity, jitter);
           occupied.add(idx);

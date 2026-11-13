@@ -15,7 +15,7 @@ function hash2(ix: number, iy: number): number {
 
 const smooth = (t: number) => t * t * (3 - 2 * t);
 
-function valueNoise(x: number, y: number): number {
+export function valueNoise(x: number, y: number): number {
   const x0 = Math.floor(x), y0 = Math.floor(y);
   const fx = smooth(x - x0), fy = smooth(y - y0);
   return hash2(x0, y0) * (1 - fx) * (1 - fy) + hash2(x0 + 1, y0) * fx * (1 - fy)

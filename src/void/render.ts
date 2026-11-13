@@ -29,6 +29,7 @@ import {
   TOWER_ELEVATION_PX,
 } from "./elevation.ts";
 import { isOccludedByLedge, paintVoidLedge } from "./ledge.ts";
+import { valueNoise } from "./portal-noise.ts";
 import { computeOrganismContour, computeNodeContour } from "./contour.ts";
 import {
   generateWispsForPortals,
@@ -789,7 +790,7 @@ export class VoidRenderer {
       const radius = np.p?.radius ?? 12;
       const core = Math.max(3.6, radius * 0.42);
       if (np.d < core) color = "#000000";
-      else if (np.d < core + 1) color = "#ff4fd8";
+      else if (np.d < core + 1) color = "#5e2194";
       else {
         // Sample the recolored Star Nest volumetric fractal field
         const logR = Math.log(np.d + 1.0);
@@ -804,13 +805,13 @@ export class VoidRenderer {
         color = starNestColor(compositeIntensity, (x * 7 + y * 13) & 15);
       }
     } else if (mat === CellMaterial.UNCLAIMED) {
-      color = cover === LandCover.RIVER ? (r < 0.2 ? "#58b0e6" : "#2f78b8") : "#0f2c44";
+      color = cover === LandCover.RIVER ? (r < 0.2 ? "#4a9bd1" : "#2b6ca3") : "#11293d";
     } else if (mat === CellMaterial.WALL || mat === CellMaterial.BARRIER) {
-      color = mat === CellMaterial.BARRIER ? "#48e5ff" : (x + y) % 3 === 0 ? "#ff922b" : "#5c6d85";
+      color = mat === CellMaterial.BARRIER ? "#48c9e0" : (x + y) % 4 === 0 ? "#788ca8" : "#5a6b82";
     } else if (mat === CellMaterial.RECLAIMED) {
-      color = r < 0.3 ? "#b08b54" : "#80643e";
+      color = r < 0.3 ? "#9e7e4e" : "#7d623c";
     } else if (mat === CellMaterial.SALVAGE) {
-      color = r < 0.25 ? "#ff8c29" : r < 0.6 ? "#6e472b" : "#463b43";
+      color = r < 0.18 ? "#995c38" : r < 0.55 ? "#5e4334" : "#3d353a";
     } else if (b) {
       // In oblique view, paintCell paints only the building's ground footprint
       // (foundation slab, plaza paving, or dark base). Roofs, roof features, and south
@@ -827,27 +828,35 @@ export class VoidRenderer {
         world.buildingAt[idx - w] !== bId ||
         world.buildingAt[idx + w] !== bId;
       color = edge ? pal.podium : pal.shadeEdge;
-      if (hp < 0.4) color = r < 0.3 ? "#ff42b8" : "#12091c";
-      else if (hp < 0.75 && r < 0.35) color = "#ff8c29";
+      if (hp < 0.4) color = r < 0.2 ? "#7a2fb8" : "#221a24";
+      else if (hp < 0.75 && r < 0.22) color = "#4a3b30";
     } else if (mat === CellMaterial.STREET) {
       if (hp < 0.85 && (x + y) % 2 === 0) {
-        color = "#1e232e";
+        color = "#252b38";
       } else if (world.streetTier[idx] === 8) {
         color = cover === LandCover.BRIDGE
-          ? (x + y) % 3 === 0 ? "#4a3422" : "#8a6a48"
-          : r < 0.25 ? "#c9a66f" : "#9a7549";
+          ? (x + y) % 3 === 0 ? "#523b28" : "#876948"
+          : valueNoise(x * 0.25, y * 0.25) > 0.55 ? "#a38152" : "#8c6d45";
       } else {
-        color = world.streetTier[idx] === 4 ? "#050608" : "#040507";
+        color = world.streetTier[idx] === 4 ? "#171c26" : "#131720";
       }
     } else if (mat === CellMaterial.PARK) {
+      const patch = valueNoise(x * 0.14 + (world.seed & 255), y * 0.14);
       switch (cover) {
-        case LandCover.NONE: color = (x + y) % 4 === 0 ? "#1b332b" : "#090d12"; break;
-        case LandCover.FOREST: color = r < 0.2 ? "#5fae5a" : r < 0.7 ? "#2f6b36" : "#1a3d22"; break;
-        case LandCover.FIELD_H: color = y % 3 === 0 ? "#8c6a3a" : "#dfab3c"; break;
-        case LandCover.FIELD_V: color = x % 3 === 0 ? "#8c6a3a" : "#b7c24a"; break;
-        case LandCover.ORCHARD: color = x % 3 === 0 && y % 3 === 0 ? "#ff7a3a" : "#3d8a48"; break;
-        case LandCover.SILO: color = x % 3 === 0 ? "#e2e8f0" : "#6b7684"; break;
-        default: color = r < 0.2 ? "#639c3f" : r < 0.6 ? "#4b7f2f" : "#467a2c";
+        case LandCover.NONE:
+          color = patch > 0.55 ? "#294a33" : "#223d2b";
+          break;
+        case LandCover.FOREST: {
+          const canopy = valueNoise(x * 0.38 + (world.seed & 127), y * 0.38);
+          color = canopy > 0.64 ? "#3a6e3b" : canopy > 0.36 ? "#29542e" : "#1c3d22";
+          break;
+        }
+        case LandCover.FIELD_H: color = y % 3 === 0 ? "#695238" : "#c99b3c"; break;
+        case LandCover.FIELD_V: color = x % 3 === 0 ? "#695238" : "#a8b347"; break;
+        case LandCover.ORCHARD: color = x % 4 === 1 && y % 4 === 1 ? "#c96e3b" : "#35753f"; break;
+        case LandCover.SILO: color = x % 3 === 0 ? "#cfd8e3" : "#65707d"; break;
+        default:
+          color = patch > 0.65 ? "#507d39" : patch > 0.35 ? "#467032" : "#3d632b";
       }
     }
     if (mat !== CellMaterial.VOID && isWheat(cover) && bId < 0) color = farmSoilColor(x, y, cover, this.farmScorch[idx]);
@@ -866,7 +875,7 @@ export class VoidRenderer {
       c.fillRect(x, y, 1, 1);
     }
     if (distance <= 3) {
-      c.fillStyle = r < 0.15 ? "#ffd6ff" : r < 0.5 ? "#b23fe6" : "#6a1fb0";
+      c.fillStyle = distance <= 1 ? "#4b2170" : "#34184f";
       c.fillRect(x, y, 1, 1);
     }
   }
@@ -945,7 +954,8 @@ export class VoidRenderer {
     const dt = this.lastTimeMs > 0 ? Math.min(0.08, (nowMs - this.lastTimeMs) * 0.001) : 0.016;
     this.lastTimeMs = nowMs;
 
-    const TRAIL_LEN = pixels(16);
+    const closeZoom = this.cam.s >= 2.0;
+    const TRAIL_LEN = closeZoom ? pixels(4) : pixels(2);
     for (const cyc of this.cycles) {
       if (cyc.corridorIdx >= this.corridors.length) continue;
       const corr = this.corridors[cyc.corridorIdx];
@@ -955,30 +965,19 @@ export class VoidRenderer {
       cyc.dist = (cyc.dist + cyc.speed * dt) % pLen;
       const headIdx = Math.floor(cyc.dist);
 
-      // Draw fading Tron tail along corridor path
+      // Subtle commuter headlights along avenues (richer tail at close zoom)
       for (let t = TRAIL_LEN; t >= 0; t--) {
         const segIdx = ((headIdx - t) % pLen + pLen) % pLen;
         const pt = corr.path[segIdx];
         if (!pt) continue;
         if (world.material[world.grid.index(pt.x, pt.y)] !== CellMaterial.STREET) continue;
 
-        const age = t / TRAIL_LEN;
         if (t === 0) {
-          // Brilliant white quantum head with orange halo
-          c.fillStyle = "#ffffff";
-          c.fillRect(pt.x + 0.1, pt.y + 0.1, 0.8, 0.8);
-        } else if (age < 0.25) {
-          c.fillStyle = "#ffe49e";
-          c.fillRect(pt.x + 0.2, pt.y + 0.2, 0.6, 0.6);
-        } else if (age < 0.55) {
-          c.fillStyle = cyc.color;
+          c.fillStyle = closeZoom ? "#e6d2a2" : "rgba(215, 195, 150, 0.72)";
+          c.fillRect(pt.x, pt.y, 1, 1);
+        } else if (closeZoom) {
+          c.fillStyle = "rgba(175, 130, 75, 0.35)";
           c.fillRect(pt.x + 0.25, pt.y + 0.25, 0.5, 0.5);
-        } else if (age < 0.8) {
-          c.fillStyle = "#cc440a";
-          c.fillRect(pt.x + 0.35, pt.y + 0.35, 0.3, 0.3);
-        } else {
-          c.fillStyle = "#661e05";
-          c.fillRect(pt.x + 0.4, pt.y + 0.4, 0.2, 0.2);
         }
       }
     }
@@ -1004,19 +1003,20 @@ export class VoidRenderer {
       const micro = voidField.cellMicroWork[cIdx];
       const intensity = Math.min(1, 0.25 + micro * PIXEL_AREA / 450);
 
-      c.fillStyle = `rgba(200, 60, 255, ${(0.08 + 0.26 * intensity * pulse).toFixed(3)})`;
-      c.fillRect(fx - 0.2, fy - 0.2, 1.4, 1.4);
+      c.fillStyle = `rgba(178, 62, 232, ${(0.1 + 0.28 * intensity * pulse).toFixed(3)})`;
+      c.fillRect(fx, fy, 1, 1);
 
-      // Matter-annihilation spark glints (warm orange & cyan & hot pink)
-      if (((fx * 7 + fy * 13 + Math.floor(animTime * 12)) & 7) === 0) {
-        c.fillStyle = ((fx + fy) & 1) === 0 ? "#ff9e38" : ((fx * 3 + fy) & 1) === 0 ? "#48e5ff" : "#ff5ce1";
-        c.fillRect(fx + 0.25, fy + 0.25, 0.5, 0.5);
+      // Subtle localized purple frontier spark on actively eroding cells
+      if (intensity > 0.55 && ((fx * 7 + fy * 13 + Math.floor(animTime * 6)) & 15) === 0) {
+        c.fillStyle = "#e08aff";
+        c.fillRect(fx, fy, 1, 1);
       }
     }
 
     if (!this.reduceEffects && voidField.frontierCells.length > 0) {
-      const slot = Math.floor(animTime * 9);
-      const boltCount = Math.min(12, 2 + ((voidField.frontierCells.length / 90) | 0));
+      // Short crackling purple Void tendrils at the active frontier
+      const slot = Math.floor(animTime * 4);
+      const boltCount = Math.min(5, Math.max(1, Math.floor(voidField.frontierCells.length / 45)));
       for (let b = 0; b < boltCount; b++) {
         const cIdx = voidField.frontierCells[hash(world.seed, 760, slot, b) % voidField.frontierCells.length];
         const sx = world.grid.xOf(cIdx) + 0.5;
@@ -1039,83 +1039,52 @@ export class VoidRenderer {
           else if (cIdx >= w && world.material[cIdx - w] === CellMaterial.VOID) dy = -1;
           else dy = 1;
         }
-        const len = 3 + hash01(world.seed, 761, slot, b) * 4.5;
+        const len = 2.5 + hash01(world.seed, 761, slot, b) * 3.5;
         const segs = 4;
-        const flick = 0.55 + 0.45 * hash01(world.seed, 762, slot, b);
-        for (let pass = 0; pass < 2; pass++) {
-          c.strokeStyle = pass === 0 ? `rgba(255, 90, 230, ${(0.85 * flick).toFixed(3)})` : `rgba(255, 235, 255, ${(0.9 * flick).toFixed(3)})`;
-          c.lineWidth = pass === 0 ? 0.34 : 0.13;
-          c.beginPath();
-          c.moveTo(sx, sy);
-          for (let k = 1; k <= segs; k++) {
-            const t = k / segs;
-            const jit = (hash01(world.seed, 763, slot, b, k) - 0.5) * 1.6;
-            c.lineTo(sx + dx * len * t - dy * jit, sy + dy * len * t + dx * jit);
-          }
-          c.stroke();
+        const flick = 0.45 + 0.35 * hash01(world.seed, 762, slot, b);
+        c.strokeStyle = `rgba(186, 78, 240, ${(0.75 * flick).toFixed(3)})`;
+        c.lineWidth = 0.28;
+        c.beginPath();
+        c.moveTo(sx, sy);
+        for (let k = 1; k <= segs; k++) {
+          const t = k / segs;
+          const jit = (hash01(world.seed, 763, slot, b, k) - 0.5) * 1.4;
+          c.lineTo(sx + dx * len * t - dy * jit, sy + dy * len * t + dx * jit);
         }
-        c.fillStyle = "#ffffff";
-        c.fillRect(sx + dx * len - 0.3, sy + dy * len - 0.3, 0.6, 0.6);
+        c.stroke();
       }
 
-      // Twinkling stars inside the anomaly (sampled within the Void's bounding box)
+      // Sparse, dim cosmic stars inside the calm Void interior
       if (vx1 >= vx0 && vy1 >= vy0) {
-        const slow = Math.floor(animTime * 0.5);
-        for (let i = 0; i < 40; i++) {
+        const slow = Math.floor(animTime * 0.4);
+        for (let i = 0; i < 12; i++) {
           const tx = vx0 + Math.floor(hash01(world.seed, 770, slow, i) * (vx1 - vx0 + 1));
           const ty = vy0 + Math.floor(hash01(world.seed, 771, slow, i) * (vy1 - vy0 + 1));
           if (!world.grid.inBounds(tx, ty) || world.material[ty * w + tx] !== CellMaterial.VOID) continue;
-          const tw = Math.abs(Math.sin(animTime * (2 + hash01(world.seed, 772, i) * 3) + i));
-          const tint = i % 3 === 0 ? "122, 252, 255" : i % 3 === 1 ? "255, 148, 232" : "255, 255, 255";
-          c.fillStyle = `rgba(${tint}, ${(0.25 + 0.75 * tw).toFixed(3)})`;
-          const sz = 0.35 + 0.3 * tw;
-          c.fillRect(tx + 0.5 - sz * 0.5, ty + 0.5 - sz * 0.5, sz, sz);
+          const tw = Math.abs(Math.sin(animTime * (1.5 + hash01(world.seed, 772, i) * 2) + i));
+          const tint = i % 2 === 0 ? "180, 140, 235" : "220, 195, 255";
+          c.fillStyle = `rgba(${tint}, ${(0.15 + 0.35 * tw).toFixed(3)})`;
+          c.fillRect(tx, ty, 1, 1);
         }
       }
     }
 
     lap("frontier");
 
-    // 4. The black hole: lightless core, photon ring, layered event-horizon rings, tilted
-    //    accretion arcs, lensed light streaks and orbiting sparkles around each portal
+    // Living, moving Void interior: subtle inward-flowing nebula wisps behind the portal silhouette
+    if (this.wispsWorld !== world) {
+      this.wispsWorld = world;
+      this.interiorWisps = generateWispsForPortals(world);
+    }
+    const interiorWisps = computeVoidInterior(world, this.interiorWisps, animTime, this.reduceEffects);
+    paintVoidInterior(c, interiorWisps);
+    paintVoidRipples(c, world, physics.voidRipples, this.reduceEffects);
+    lap("interior");
+
+    // 4. The black hole: strong lightless core, crisp photon rim, and a single restrained accretion arc
     for (const p of world.portals) {
       if (p.active) {
         const coreR = Math.max(3.6, p.radius * 0.42);
-        const reach = p.radius * 1.9;
-
-        if (!this.reduceEffects) {
-          // Soft layered halo rings fading outward, breathing slowly
-          const halo = [2.4, 4.3, 6.8, 10.2];
-          for (let k = 0; k < halo.length; k++) {
-            const r = coreR + halo[k] * (1 + 0.025 * Math.sin(animTime * 1.1 + k * 1.9));
-            c.strokeStyle = `rgba(165, 80, 255, ${(0.3 - k * 0.055).toFixed(3)})`;
-            c.lineWidth = 0.35 + k * 0.12;
-            c.beginPath();
-            c.arc(p.x, p.y, r, 0, Math.PI * 2);
-            c.stroke();
-          }
-
-          // Lensed light streaks: short arcs orbiting at different radii and speeds
-          for (let sIdx = 0; sIdx < 18; sIdx++) {
-            const r = coreR + 1.6 + hash01(world.seed, 781, p.id, sIdx) * reach;
-            const speed = (0.12 + hash01(world.seed, 782, p.id, sIdx) * 0.35) * (sIdx % 2 === 0 ? 1 : -1);
-            const a0 = hash01(world.seed, 783, p.id, sIdx) * Math.PI * 2 + animTime * speed;
-            const span = 0.25 + hash01(world.seed, 784, p.id, sIdx) * 0.7;
-            const hue = sIdx % 4;
-            c.strokeStyle =
-              hue === 0
-                ? "rgba(122, 252, 255, 0.55)"
-                : hue === 1
-                  ? "rgba(255, 92, 225, 0.55)"
-                  : hue === 2
-                    ? "rgba(176, 102, 255, 0.5)"
-                    : "rgba(255, 240, 255, 0.45)";
-            c.lineWidth = 0.22 + hash01(world.seed, 785, p.id, sIdx) * 0.2;
-            c.beginPath();
-            c.arc(p.x, p.y, r, a0, a0 + span);
-            c.stroke();
-          }
-        }
 
         // Lightless core
         c.fillStyle = "#000000";
@@ -1123,46 +1092,33 @@ export class VoidRenderer {
         c.arc(p.x, p.y, coreR, 0, Math.PI * 2);
         c.fill();
 
-        // Photon ring, magenta event horizon, violet glow ring
-        c.strokeStyle = "#fff0ff";
+        // Crisp photon rim & restrained violet-magenta event horizon
+        c.strokeStyle = "rgba(230, 185, 255, 0.78)";
         c.lineWidth = 0.32;
         c.beginPath();
         c.arc(p.x, p.y, coreR + 0.05, 0, Math.PI * 2);
         c.stroke();
-        c.strokeStyle = "#ff3fd0";
-        c.lineWidth = 0.6;
+        c.strokeStyle = "rgba(195, 62, 190, 0.65)";
+        c.lineWidth = 0.55;
         c.beginPath();
-        c.arc(p.x, p.y, coreR + 0.55 + 0.1 * pulse, 0, Math.PI * 2);
-        c.stroke();
-        c.strokeStyle = "rgba(170, 60, 255, 0.65)";
-        c.lineWidth = 0.9;
-        c.beginPath();
-        c.arc(p.x, p.y, coreR + 1.35, 0, Math.PI * 2);
+        c.arc(p.x, p.y, coreR + 0.65 + 0.08 * pulse, 0, Math.PI * 2);
         c.stroke();
 
-        // Tilted accretion arcs: cyan and gold, counter-rotating
-        c.save();
-        c.translate(p.x, p.y);
-        c.rotate(animTime * 0.5 + p.id);
-        c.strokeStyle = "#5ee7ff";
-        c.lineWidth = 0.45;
-        c.beginPath();
-        c.ellipse(0, 0, coreR + 2.1, coreR * 0.72, 0, Math.PI * 0.1, Math.PI * 1.55);
-        c.stroke();
-        c.rotate(-animTime * 0.95);
-        c.strokeStyle = "#ffb347";
-        c.lineWidth = 0.4;
-        c.beginPath();
-        c.ellipse(0, 0, coreR + 1.4, coreR * 0.9, 0.6, Math.PI * 0.5, Math.PI * 1.9);
-        c.stroke();
-        c.restore();
-
+        // Single restrained tilted accretion arc
         if (!this.reduceEffects) {
-          // Orbiting sparkles removed in favor of clean fractal Star Nest field
+          c.save();
+          c.translate(p.x, p.y);
+          c.rotate(animTime * 0.42 + p.id);
+          c.strokeStyle = "rgba(110, 215, 240, 0.5)";
+          c.lineWidth = 0.4;
+          c.beginPath();
+          c.ellipse(0, 0, coreR + 1.9, coreR * 0.72, 0, Math.PI * 0.15, Math.PI * 1.45);
+          c.stroke();
+          c.restore();
         }
       } else {
         // Telegraphed warning ring for delayed secondary portal
-        c.strokeStyle = `rgba(255, 120, 45, ${0.45 + 0.4 * pulse})`;
+        c.strokeStyle = `rgba(195, 85, 235, ${0.4 + 0.35 * pulse})`;
         c.lineWidth = 0.5;
         c.setLineDash([1.5, 1.5]);
         c.beginPath();
@@ -1173,16 +1129,6 @@ export class VoidRenderer {
     }
 
     lap("portals");
-
-    // Living, moving Void interior: inward-flowing spiral wisps & traveling bands
-    if (this.wispsWorld !== world) {
-      this.wispsWorld = world;
-      this.interiorWisps = generateWispsForPortals(world);
-    }
-    const interiorWisps = computeVoidInterior(world, this.interiorWisps, animTime, this.reduceEffects);
-    paintVoidInterior(c, interiorWisps);
-    paintVoidRipples(c, world, physics.voidRipples, this.reduceEffects);
-    lap("interior");
 
     // Exposed strata and undercuts sit in front of the nebula and interior wisps, below the ground lip.
     paintVoidLedge(c, world, voidField.frontierCells);
@@ -1353,12 +1299,12 @@ export class VoidRenderer {
       if (!world.grid.inBounds(tipX, tipY) || !isWheat(world.landCover[world.grid.index(tipX, tipY)]) ||
           world.material[world.grid.index(tipX, tipY)] === CellMaterial.VOID || world.buildingAt[world.grid.index(tipX, tipY)] >= 0) continue;
       c.fillStyle = "#6c7137"; c.fillRect(x, y, 1, 1);
-      c.fillStyle = (x + y) % 4 === 0 ? "#f2d47c" : "#cfaa51";
+      c.fillStyle = (x + y) % 4 === 0 ? "#dfc068" : "#c49f4a";
       c.fillRect(tipX, tipY, 1, 1);
-      if (!close && (x + y) % 4 === 0) { c.fillStyle = "#fff0ad"; c.fillRect(tipX, tipY - 1, 1, 1); }
+      if (closeZoom && !close && (x + y) % 4 === 0) { c.fillStyle = "#edd585"; c.fillRect(tipX, tipY - 1, 1, 1); }
     }
 
-    // 7a. Farmland livestock: 0.5-px pixel-art sheep and cows on intact farmland/meadow
+    // 7a. Farmland livestock: sparse pixel-art sheep and cows on intact meadow/farmland
     const { w: gw, h: gh } = world.grid;
     for (let gy = 0; gy < gh; gy += 2) {
       for (let gx = 0; gx < gw; gx += 2) {
@@ -1367,14 +1313,17 @@ export class VoidRenderer {
         const lc = world.landCover[idx];
         if (lc !== LandCover.FIELD_H && lc !== LandCover.FIELD_V && lc !== LandCover.MEADOW) continue;
         const hVal = ((gx * 73856093) ^ (gy * 19349663) ^ (world.seed * 83492791)) >>> 0;
-        const threshold = lc === LandCover.MEADOW ? 0.06 : 0.14;
+        const threshold = lc === LandCover.MEADOW ? 0.025 : 0.015;
         if ((hVal % 1000) / 1000 >= threshold) continue;
         const isCow = ((hVal >>> 10) & 1) === 1;
         const ax = gx + 0.25;
         const ay = gy + 0.25;
-        if (isCow) {
+        if (!closeZoom) {
+          c.fillStyle = isCow ? "#d8d0c0" : "#e3ded3";
+          c.fillRect(gx, gy, 1, 1);
+        } else if (isCow) {
           // 0.5-px pixel-art cow (4x2 half-pixels = 2.0 x 1.0 world px)
-          c.fillStyle = "#f2ede2";
+          c.fillStyle = "#e8e2d5";
           c.fillRect(ax, ay, 1.5, 1.0);
           c.fillStyle = "#3b281c";
           c.fillRect(ax + 0.5, ay, 0.5, 0.5); // spot
@@ -1383,7 +1332,7 @@ export class VoidRenderer {
           c.fillRect(ax + 1.0, ay + 1.0, 0.5, 0.5); // front leg
         } else {
           // 0.5-px pixel-art sheep (3x2 half-pixels = 1.5 x 1.0 world px)
-          c.fillStyle = "#f7f5ee";
+          c.fillStyle = "#edeae2";
           c.fillRect(ax, ay, 1.5, 1.0);
           c.fillStyle = "#2c2623";
           c.fillRect(ax + 1.5, ay + 0.25, 0.5, 0.5); // head
@@ -1393,7 +1342,7 @@ export class VoidRenderer {
       }
     }
 
-    // 7a0. Seamwalker frozen-Void cells (dark purple interior, rigid amber seams, U-shaped staple marks)
+    // 7a0. Seamwalker frozen-Void cells (dark stationary purple interior with angular amber staples)
     if (sim.voidField.frozenVoidCells.size > 0) {
       const gw = world.grid.w;
       for (const [idx, rem] of sim.voidField.frozenVoidCells) {
@@ -1402,13 +1351,13 @@ export class VoidRenderer {
         const cy = (idx / gw) | 0;
         const expiring = rem < 0.6 && !this.reduceEffects && ((sim.tick >> 2) & 1) === 1;
         // Dark motionless interior
-        c.fillStyle = expiring ? "#2c1744" : "#1c0f2e";
+        c.fillStyle = expiring ? "#26123d" : "#160b26";
         c.fillRect(cx, cy, 1, 1);
-        // Rigid angular amber-orange seam & U-shaped staple mark
-        c.fillStyle = expiring ? "#ffcf70" : "#f29d38";
-        c.fillRect(cx, cy, 1, 0.22);
-        c.fillRect(cx, cy + 0.22, 0.2, 0.45);
-        c.fillRect(cx + 0.8, cy + 0.22, 0.2, 0.45);
+        // Whole-pixel angular amber staple marks on alternating 2x2 grid
+        if ((cx & 1) === 0 && (cy & 1) === 0) {
+          c.fillStyle = expiring ? "#ffcf70" : "#e09132";
+          c.fillRect(cx, cy, 1, 1);
+        }
       }
     }
 
@@ -1421,9 +1370,9 @@ export class VoidRenderer {
         const cx = idx % gw;
         const cy = (idx / gw) | 0;
         const wave = this.reduceEffects ? 0.5 : 0.5 + 0.5 * Math.sin(phase + cx * 0.7 + cy * 0.5);
-        c.fillStyle = wave > 0.6 ? "rgba(255, 168, 56, 0.42)" : "rgba(255, 118, 24, 0.28)";
+        c.fillStyle = wave > 0.65 ? "#ffa238" : wave > 0.35 ? "#eb7a1e" : "#c75914";
         c.fillRect(cx, cy, 1, 1);
-        // Flowing luminous filament + frontier contact sparks against purple Void
+        // Frontier contact sparks against purple Void
         const touchesVoid =
           (cx > 0 && world.material[idx - 1] === CellMaterial.VOID) ||
           (cx + 1 < gw && world.material[idx + 1] === CellMaterial.VOID) ||
@@ -1431,7 +1380,7 @@ export class VoidRenderer {
           (cy + 1 < gh && world.material[idx + gw] === CellMaterial.VOID);
         if (touchesVoid) {
           c.fillStyle = "#ffe6a3";
-          c.fillRect(cx + 0.2, cy + 0.2, 0.6, 0.6);
+          c.fillRect(cx, cy, 1, 1);
         }
       }
     }
@@ -1687,14 +1636,22 @@ export class VoidRenderer {
       const ax = Math.floor(a.x);
       const ay = Math.floor(a.y);
       if (a.kind === "rifleman") {
-        c.fillStyle = "#ff7b24";
+        c.fillStyle = "rgba(10, 12, 16, 0.65)";
+        c.fillRect(ax, ay + 1, 1, 1);
+        c.fillStyle = "#ff8b33";
         c.fillRect(ax, ay, 1, 1);
+        c.fillStyle = "#ffe4b5";
+        c.fillRect(ax, ay - 1, 1, 1);
       } else if (a.kind === "engineer") {
+        c.fillStyle = "rgba(10, 12, 16, 0.65)";
+        c.fillRect(ax, ay + 1, 1, 1);
         c.fillStyle = a.carryingMatter > 0 ? "#48e5ff" : "#ffd15c";
         c.fillRect(ax, ay - 1, 1, 1);
         c.fillStyle = "#d9822b";
         c.fillRect(ax, ay, 1, 1);
       } else if (a.kind === "heavyMech") {
+        c.fillStyle = "#161b24";
+        c.fillRect(ax - 1, ay, 2, 2);
         c.fillStyle = "#ff9e30";
         c.fillRect(ax - 1, ay - 1, 2, 2);
         c.fillStyle = "#7afcff";
@@ -1709,27 +1666,27 @@ export class VoidRenderer {
       } else if (a.kind === "lanternBearer") {
         // Warm safe-ground footprint halo + tall carried lantern
         const haloR = a.coverageRadius ?? pixels(2 + sim.tech.lanternRadiusBonus);
-        c.strokeStyle = "rgba(255, 214, 112, 0.55)";
+        c.strokeStyle = "rgba(255, 214, 112, 0.36)";
         c.lineWidth = 0.25;
         c.beginPath();
         c.arc(a.x, a.y, haloR, 0, Math.PI * 2);
         c.stroke();
-        c.fillStyle = "rgba(255, 200, 92, 0.16)";
+        c.fillStyle = "rgba(255, 200, 92, 0.10)";
         c.fill();
-        c.fillStyle = "#6e4e2a";
+        c.fillStyle = "#593e22";
         c.fillRect(ax, ay, 1, 1);
-        c.fillStyle = "#ffe28a";
-        c.fillRect(ax + 0.5, ay - 1.2, 0.8, 0.9);
+        c.fillStyle = "#ffe599";
+        c.fillRect(ax, ay - 1, 1, 1);
       } else if (a.kind === "seamwalker") {
         c.fillStyle = "#3e2f52";
         c.fillRect(ax, ay, 1, 1);
         c.fillStyle = "#f29d38";
-        c.fillRect(ax, ay - 0.7, 1, 0.6);
+        c.fillRect(ax, ay - 1, 1, 1);
       } else if (a.kind === "jetpack") {
         // Ground shadow if over land, airborne silhouette offset upward
         const gIdx = world.grid.inBounds(ax, ay) ? world.grid.index(ax, ay) : -1;
         if (gIdx >= 0 && world.material[gIdx] !== CellMaterial.VOID) {
-          c.fillStyle = "rgba(0, 0, 0, 0.35)";
+          c.fillStyle = "rgba(0, 0, 0, 0.45)";
           c.fillRect(a.x - 0.5, a.y + 0.4, 1.0, 0.4);
         }
         const flyY = a.y - 1.6;
@@ -2082,34 +2039,42 @@ export class VoidRenderer {
 
     // 14. Torn-off land drifting into the anomaly: heavy slabs keep their terrain colour
     //     (grass, crops, pavement, lit masonry) with a dark underside and violet rim; small
-    //     prismatic sparks streak along curved streamlines
+    //     sparks fade as they cross the black-hole event horizon so the core stays dark.
     for (const d of physics.debris) {
+      let swallowed = false;
+      for (const p of activePortals) {
+        const coreR = Math.max(3.6, p.radius * 0.42);
+        if (dist(d.x - p.x, d.y - p.y) < coreR * 0.92) {
+          swallowed = true;
+          break;
+        }
+      }
+      if (swallowed) continue;
+
       const slab = d.size >= 1.0 && d.maxLife > 1.5;
       if (slab) {
         const sz = d.size * Math.max(0.35, 1 - (d.life / d.maxLife) * 0.6);
         const half = sz * 0.5;
-        c.fillStyle = "rgba(150, 50, 230, 0.4)";
+        c.fillStyle = "rgba(150, 50, 230, 0.35)";
         c.fillRect(d.x - half - 0.18, d.y - half - 0.18, sz + 0.36, sz + 0.36);
         c.fillStyle = d.color;
         c.fillRect(d.x - half, d.y - half, sz, sz);
         c.fillStyle = "rgba(0, 0, 0, 0.5)";
         c.fillRect(d.x - half, d.y + half - 0.24, sz, 0.24);
         c.fillRect(d.x + half - 0.24, d.y - half, 0.24, sz);
-        if (!this.reduceEffects && ((Math.floor(animTime * 10) + ((d.x * 7) | 0)) & 3) === 0) {
-          c.fillStyle = "#ff8df0";
-          c.fillRect(d.x - 0.15, d.y - 0.15, 0.3, 0.3);
-        }
       } else {
+        c.globalAlpha = 0.55;
         if (!this.reduceEffects) {
           c.strokeStyle = d.glowColor;
-          c.lineWidth = d.size * 0.95;
+          c.lineWidth = d.size * 0.75;
           c.beginPath();
           c.moveTo(d.px, d.py);
           c.lineTo(d.x, d.y);
           c.stroke();
         }
         c.fillStyle = d.color;
-        c.fillRect(d.x - d.size * 0.5, d.y - d.size * 0.5, d.size, d.size);
+        c.fillRect(d.x - d.size * 0.4, d.y - d.size * 0.4, d.size * 0.8, d.size * 0.8);
+        c.globalAlpha = 1;
       }
     }
 

@@ -41,7 +41,8 @@ Cosmic organisms (such as the Queen Bee, Bee Swarms, Nebula Worms, and Constella
 `src/void/interior.ts` renders the living dynamics inside the Void field using a recolored, pixelated Star Nest volumetric fractal:
 - Adapts the Star Nest volumetric raymarch fractal (Pablo Roman Andrioli; Sign99 `starNestBackground.ts`) into a toroidal 96×96 discrete field with 11 folding iterations and 8 raymarch steps.
 - Torus UV sampling is polar-mapped around active portals with Keplerian-like accretion swirl ($\propto 1 / (1 + 0.15r)$) and logarithmic depth coordinates.
-- Recolored along the cosmic Void spectrum: deep indigo/violet nebula beds, hot magenta filaments, and brilliant cyan/white star cores at peak fractal ridges.
+- Recolored along the cosmic Void spectrum: calm deep indigo/violet nebula beds (`#150726`–`#4c1c78`), restrained plum/magenta filaments (`#622296`–`#7d2eb8`), and subtle violet-cyan dust only at peak fractal ridges (`intensity > 0.88`).
+- Interior wisps (`computeVoidInterior`) draw behind portal cores (`intensity > 0.48`, `r > coreR + 1.8`) so the `#000000` black-hole silhouette, photon rim, and single accretion arc remain crisp.
 - Inward motion halts under Reduced Motion settings, freezing the fractal field in place without visual artifacts.
 
 ## Tech DAG & Magic Circles
@@ -54,3 +55,16 @@ The technology screen features interactive visual components:
 ## Living farms
 
 `farms.ts` supplies coherent wheat gusts and local unit displacement. `VoidWorld.wheatCells` indexes generated fields and Hearthseed crops; the dynamic wheat pass uses spatial buckets for ground agents, organisms and civilians, without changing collision. Wheat heads part around nearby actors, pause with simulation time, and stop swaying under Reduced Motion. Crops use warm furrow soil even on reclaimed islands. Homestead/barn sprites retain the normal depth atlas and hit masks, with a minimum two-pixel full-view rise, tiled roofs, plaster/timber facades, doors and warm windows. Fire draws elevated flames at farm roofs and persistent scorch on field ground.
+
+## Art Direction, Palette, Effect & Zoom Rules
+
+- **Solid 2.5D Buildings (`src/void/elevation.ts`):** Urban `ARCH_PALETTES` use readable architectural materials (slate-steel, limestone, gunmetal, industrial brick, pale concrete, granite) with clear value separation between roof (`crown`/`mid`/`podium`), sunlit north/west parapet (`litEdge`), shaded south/east rim (`shadeEdge`), and slate asphalt streets (`#131720`/`#171c26`). Warm amber/gold accents (`neonEdge`/`neonCore`) are reserved for selective windows, lobbies, and rooftop beacons rather than full-perimeter outlines.
+- **Coherent Terrain (`src/void/render.ts`):** Grass meadows (`#3d632b`–`#507d39`), manicured parks (`#223d2b`–`#294a33`), and forest canopies (`#1c3d22`–`#3a6e3b`) use smooth `valueNoise` patches rather than per-cell random speckling.
+- **Semantic Color & Shape Vocabulary:**
+  - **Purple (`#150726`–`#b84fd9`):** Hostile Void interior, tendrils, and localized frontier.
+  - **Flowing Orange (`#c75914`–`#ffa238` + `#ffe6a3` contact sparks):** Friendly living Countervoid field.
+  - **Dark Stationary Void with Angular Amber Staples (`#160b26` + `#e09132` 2×2 grid marks):** Seamwalker Frozen Void, visually distinct from Countervoid.
+  - **Warm Localized Lantern Light (`#ffe599` / `rgba(255, 200, 92, 0.10)`):** Safe footing around Lantern Bearers.
+  - **Gold Clock Motifs & Reverse Motion (`#f2c14e`):** Chrono recovery.
+- **Zoom-Aware Detail (`this.cam.s >= 2.0`):** Overview (`cam.s < 2.0`) emphasizes building masses, terrain zones, frontier, units, and projectiles with quiet 1-px traffic/livestock; close zoom (`cam.s >= 2.0`) reveals traffic tails, sub-pixel livestock anatomy, and finer wheat stalk highlights without popping.
+- **Responsive HUD (`src/void/void.css`):** Narrow viewports (`<= 820px`) place `.void-hud-top-right` (Pause/Speed/Retry) in normal flex flow below `.void-hud-top` so controls never overlap survival/telemetry readouts, with compact vertical spacing on phone portrait and landscape (`max-height: 460px`).

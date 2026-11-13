@@ -33,133 +33,133 @@ export type ArchPalette = {
 export const ARCH_PALETTES: Record<MetroBuilding["archStyle"], readonly ArchPalette[]> = {
   glassTower: [
     {
-      podium: "#0a0e14",
-      mid: "#101622",
-      crown: "#161f30",
-      litEdge: "#1f304d",
-      shadeEdge: "#04060a",
-      neonEdge: "#ff7b1a",
-      neonCore: "#ffbe55",
-      roofAccent: "#ff8c29",
+      podium: "#2a3545",
+      mid: "#364459",
+      crown: "#475973",
+      litEdge: "#6882a6",
+      shadeEdge: "#171e29",
+      neonEdge: "#c98038",
+      neonCore: "#e8be72",
+      roofAccent: "#566b8a",
     },
     {
-      podium: "#080c14",
-      mid: "#0d1420",
-      crown: "#131d2e",
-      litEdge: "#1a2c47",
-      shadeEdge: "#030508",
-      neonEdge: "#ff922b",
-      neonCore: "#ffd685",
-      roofAccent: "#ffa94d",
+      podium: "#253142",
+      mid: "#314157",
+      crown: "#415673",
+      litEdge: "#617ea6",
+      shadeEdge: "#141b26",
+      neonEdge: "#c98642",
+      neonCore: "#edd08c",
+      roofAccent: "#50698a",
     },
   ],
   artDecoSetback: [
     {
-      podium: "#0c0a0c",
-      mid: "#141014",
-      crown: "#1c161d",
-      litEdge: "#2b202c",
-      shadeEdge: "#050305",
-      neonEdge: "#ff5e1a",
-      neonCore: "#ffaa4d",
-      roofAccent: "#ff7426",
+      podium: "#3d342e",
+      mid: "#4f433b",
+      crown: "#63544a",
+      litEdge: "#857265",
+      shadeEdge: "#211c18",
+      neonEdge: "#bf7839",
+      neonCore: "#e6b86e",
+      roofAccent: "#736256",
     },
     {
-      podium: "#0d0b09",
-      mid: "#16110d",
-      crown: "#1f1813",
-      litEdge: "#2e231b",
-      shadeEdge: "#050403",
-      neonEdge: "#ff6d1f",
-      neonCore: "#ffbe55",
-      roofAccent: "#ff8c33",
+      podium: "#42382f",
+      mid: "#54473c",
+      crown: "#69594b",
+      litEdge: "#8c7866",
+      shadeEdge: "#241e19",
+      neonEdge: "#c47e3d",
+      neonCore: "#ecc47d",
+      roofAccent: "#7a6858",
     },
   ],
   cyberArcology: [
     {
-      podium: "#080a12",
-      mid: "#0d111c",
-      crown: "#141928",
-      litEdge: "#1c253d",
-      shadeEdge: "#030408",
-      neonEdge: "#ff852b",
-      neonCore: "#ffcf70",
-      roofAccent: "#ff9933",
+      podium: "#272d3b",
+      mid: "#333b4d",
+      crown: "#424d63",
+      litEdge: "#5f6e8c",
+      shadeEdge: "#141821",
+      neonEdge: "#c47739",
+      neonCore: "#e6b065",
+      roofAccent: "#505d78",
     },
     {
-      podium: "#0a0812",
-      mid: "#100d1c",
-      crown: "#18142a",
-      litEdge: "#221c3d",
-      shadeEdge: "#040308",
-      neonEdge: "#ff5424",
-      neonCore: "#ffa066",
-      roofAccent: "#ff6e38",
+      podium: "#2d2a3d",
+      mid: "#3a374f",
+      crown: "#4a4663",
+      litEdge: "#69648a",
+      shadeEdge: "#181621",
+      neonEdge: "#bf6843",
+      neonCore: "#e3a174",
+      roofAccent: "#595475",
     },
   ],
   foundryComplex: [
     {
-      podium: "#0f0806",
-      mid: "#170c0a",
-      crown: "#22110d",
-      litEdge: "#331812",
-      shadeEdge: "#050202",
-      neonEdge: "#ff4d12",
-      neonCore: "#ff9047",
-      roofAccent: "#ff6122",
+      podium: "#3d2924",
+      mid: "#4f352e",
+      crown: "#63433b",
+      litEdge: "#825a4f",
+      shadeEdge: "#211512",
+      neonEdge: "#cf692d",
+      neonCore: "#eb9f5b",
+      roofAccent: "#734e44",
     },
     {
-      podium: "#0e0906",
-      mid: "#160e0a",
-      crown: "#20140e",
-      litEdge: "#2f1e14",
-      shadeEdge: "#050302",
-      neonEdge: "#ff5e1a",
-      neonCore: "#ffaa4d",
-      roofAccent: "#ff7426",
+      podium: "#3b2c23",
+      mid: "#4d392d",
+      crown: "#614839",
+      litEdge: "#80604d",
+      shadeEdge: "#1f1712",
+      neonEdge: "#c97434",
+      neonCore: "#e8ac64",
+      roofAccent: "#705342",
     },
   ],
   solarTerrace: [
     {
-      podium: "#090d12",
-      mid: "#0e141c",
-      crown: "#141d28",
-      litEdge: "#1b2838",
-      shadeEdge: "#030508",
-      neonEdge: "#ff7426",
-      neonCore: "#ffbe55",
-      roofAccent: "#ff8c33",
+      podium: "#2c3740",
+      mid: "#394752",
+      crown: "#495b69",
+      litEdge: "#688094",
+      shadeEdge: "#171e24",
+      neonEdge: "#c47e3d",
+      neonCore: "#e6b86e",
+      roofAccent: "#586d7d",
     },
     {
-      podium: "#070b10",
-      mid: "#0c111a",
-      crown: "#121926",
-      litEdge: "#182336",
-      shadeEdge: "#020406",
-      neonEdge: "#ff802b",
-      neonCore: "#ffc96b",
-      roofAccent: "#ff9938",
+      podium: "#28333d",
+      mid: "#34424f",
+      crown: "#445666",
+      litEdge: "#627b91",
+      shadeEdge: "#151b21",
+      neonEdge: "#c78642",
+      neonCore: "#ebc37a",
+      roofAccent: "#52687a",
     },
   ],
   civicDome: [
     {
-      podium: "#080c10",
-      mid: "#0d131a",
-      crown: "#131b24",
-      litEdge: "#1a2533",
-      shadeEdge: "#030406",
-      neonEdge: "#ff8c2b",
-      neonCore: "#ffd685",
-      roofAccent: "#ffa242",
+      podium: "#363e47",
+      mid: "#46505c",
+      crown: "#596675",
+      litEdge: "#7a8b9e",
+      shadeEdge: "#1b2026",
+      neonEdge: "#c98b3e",
+      neonCore: "#edd084",
+      roofAccent: "#69798a",
     },
   ],
   homestead: [
-    { podium: "#8c3a2a", mid: "#a8432f", crown: "#c45a42", litEdge: "#d8765a", shadeEdge: "#3a1410", neonEdge: "#ffbe55", neonCore: "#ffbe55", roofAccent: "#ffe9a8" },
-    { podium: "#4a505d", mid: "#5b6372", crown: "#6f7889", litEdge: "#8d97a8", shadeEdge: "#1c2027", neonEdge: "#ffbe55", neonCore: "#ffbe55", roofAccent: "#ffe9a8" },
-    { podium: "#7a5436", mid: "#8f6442", crown: "#a87a52", litEdge: "#c49468", shadeEdge: "#2c1c10", neonEdge: "#ffbe55", neonCore: "#ffbe55", roofAccent: "#ffe9a8" },
+    { podium: "#8c3a2a", mid: "#a8432f", crown: "#c45a42", litEdge: "#d8765a", shadeEdge: "#3a1410", neonEdge: "#e09c48", neonCore: "#f2ca79", roofAccent: "#ffe9a8" },
+    { podium: "#4a505d", mid: "#5b6372", crown: "#6f7889", litEdge: "#8d97a8", shadeEdge: "#1c2027", neonEdge: "#e09c48", neonCore: "#f2ca79", roofAccent: "#ffe9a8" },
+    { podium: "#7a5436", mid: "#8f6442", crown: "#a87a52", litEdge: "#c49468", shadeEdge: "#2c1c10", neonEdge: "#e09c48", neonCore: "#f2ca79", roofAccent: "#ffe9a8" },
   ],
   barn: [
-    { podium: "#8e2c22", mid: "#ad3528", crown: "#c64534", litEdge: "#f2e8d8", shadeEdge: "#3a100c", neonEdge: "#ffbe55", neonCore: "#ffbe55", roofAccent: "#f2e8d8" },
+    { podium: "#8e2c22", mid: "#ad3528", crown: "#c64534", litEdge: "#f2e8d8", shadeEdge: "#3a100c", neonEdge: "#e09c48", neonCore: "#f2ca79", roofAccent: "#f2e8d8" },
   ],
 };
 
@@ -291,33 +291,32 @@ export function roofColorAt(
     if (right === 1 && bottom === 1 && hp > 0.3) color = pal.neonCore;
   } else {
     color = inset >= pixels(2) ? pal.crown : inset >= pixels(1) ? pal.mid : pal.podium;
-    const edge =
-      x === 0 ||
-      y === 0 ||
-      x + 1 === w ||
-      y + 1 === h ||
-      world.buildingAt[idx - 1] !== b.id ||
-      world.buildingAt[idx + 1] !== b.id ||
-      world.buildingAt[idx - w] !== b.id ||
-      world.buildingAt[idx + w] !== b.id;
-    if (edge) color = (x + y) % 4 === 0 ? pal.neonCore : pal.neonEdge;
-    else if (inset === pixels(1) && Math.min(b.w, b.h) >= pixels(4)) color = pal.neonEdge;
-    else if (x === cx || y === cy) color = pal.roofAccent;
+    const nEdge = y === 0 || world.buildingAt[idx - w] !== b.id;
+    const wEdge = x === 0 || world.buildingAt[idx - 1] !== b.id;
+    const sEdge = y + 1 === h || world.buildingAt[idx + w] !== b.id;
+    const eEdge = x + 1 === w || world.buildingAt[idx + 1] !== b.id;
+
+    // Sunlit north/west parapet bevel vs shaded south/east rim for crisp 2.5D massing
+    if (sEdge || eEdge) color = pal.shadeEdge;
+    else if (nEdge || wEdge) color = pal.litEdge;
+    else if (inset === pixels(1) && Math.min(b.w, b.h) >= pixels(4)) color = pal.roofAccent;
 
     if (inset >= pixels(1)) {
       const dx = x - cx;
       const dy = y - cy;
       if (b.roofFeature === "helipad" && Math.abs(dx) <= 2 && Math.abs(dy) <= 2) {
-        color = Math.abs(dx) === 2 || dy === 0 ? "#ffd166" : pal.crown;
-      } else if (b.roofFeature === "skyGarden" && (lx + ly) % 3 !== 0) color = "#357542";
-      else if (b.roofFeature === "solarArray" && ly % 3 === 0) color = "#48a8dc";
-      else if (dx === 0 && dy === 0) color = "#ffffff";
+        color = Math.abs(dx) === 2 || dy === 0 ? "#d9b252" : pal.mid;
+      } else if (b.roofFeature === "skyGarden" && (lx + ly) % 3 !== 0) color = "#3b6e42";
+      else if (b.roofFeature === "solarArray" && ly % 3 === 0) color = "#437ea6";
+      else if (dx === 0 && dy === 0) color = pal.litEdge;
+      else if (Math.abs(dx) <= 1 && Math.abs(dy) <= 1 && (lx + ly) % 2 === 0) color = pal.roofAccent;
     }
-    if (b.development > 1.05 && inset === 0 && (x + y) % 3 === 0) color = pal.neonCore;
+    // Restrained rooftop beacon/mechanical accent on developed towers
+    if (b.development > 1.05 && lx === 1 && ly === 1) color = pal.neonCore;
   }
 
-  if (hp < 0.4) color = r < 0.3 ? "#ff42b8" : "#12091c";
-  else if (hp < 0.75 && r < 0.35) color = "#ff8c29";
+  if (hp < 0.4) color = r < 0.18 ? "#8c38d4" : "#221a24";
+  else if (hp < 0.75 && r < 0.22) color = "#4a3b30";
   return color;
 }
 
@@ -333,8 +332,8 @@ export function facadeColorAt(
   hpRatio: number,
   pal: ArchPalette,
 ): string {
-  if (hpRatio < 0.4 && hash01(world.seed, 962, x, yFoot, fRow) < 0.28) {
-    return "#ff42b8";
+  if (hpRatio < 0.4 && hash01(world.seed, 962, x, yFoot, fRow) < 0.18) {
+    return "#8c38d4";
   }
   // 1-px darker edge column on east/west sides suggests 3D volume
   if (isSideBorder) {
@@ -348,21 +347,21 @@ export function facadeColorAt(
   }
   // Base lobby / awning row at ground level
   if (fRow === 0) {
-    return (x + b.variant) % 4 === 0 && hpRatio > 0.35 ? pal.neonEdge : pal.shadeEdge;
+    return (x + b.variant) % 5 === 0 && hpRatio > 0.35 ? pal.neonEdge : pal.shadeEdge;
   }
-  // Neon cornice band right under a setback terrace or crown
+  // Subtle cornice band right under a setback terrace or crown
   if (fRow === elev - 1 && (b.archStyle === "cyberArcology" || b.archStyle === "artDecoSetback")) {
-    return (x + b.id) % 3 === 0 ? pal.neonCore : pal.neonEdge;
+    return pal.litEdge;
   }
   // Window columns every 2 px
   const lx = x - b.x;
   const isWindowCol = lx % 2 === 1;
   if (isWindowCol) {
     const litRoll = hash01(world.seed, 965, b.id, lx, fRow);
-    if (litRoll < 0.42 && hpRatio > 0.3) {
-      return litRoll < 0.14 ? pal.neonCore : pal.litEdge;
+    if (litRoll < 0.24 && hpRatio > 0.3) {
+      return litRoll < 0.08 ? pal.neonCore : pal.litEdge;
     }
-    return pal.podium;
+    return pal.shadeEdge;
   }
   return fRow % 2 === 0 ? pal.mid : pal.podium;
 }

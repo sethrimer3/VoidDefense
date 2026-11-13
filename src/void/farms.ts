@@ -9,7 +9,7 @@ export function isWheat(cover: number): boolean {
 
 /** Coherent gusts with a local push away from people; never changes collision. */
 export function wheatLean(x: number, y: number, time: number, nearby: readonly { x: number; y: number }[]): number {
-  let lean = Math.sin(time * 1.8 + x * 0.18 + y * 0.11) * 0.65;
+  let lean = Math.sin(time * 1.4 + x * 0.14 + y * 0.09) * 0.5;
   for (const unit of nearby) {
     const dx = x - unit.x, dy = y - unit.y;
     const d = Math.hypot(dx, dy);
@@ -19,9 +19,9 @@ export function wheatLean(x: number, y: number, time: number, nearby: readonly {
 }
 
 export function farmSoilColor(x: number, y: number, cover: number, scorch: number): string {
-  if (scorch) return (x + y) % 3 === 0 ? "#49372d" : "#292823";
+  if (scorch) return (x + y) % 3 === 0 ? "#423229" : "#292621";
   const row = cover === LandCover.FIELD_H ? y % 3 : x % 3;
-  return row === 0 ? "#796044" : (x * 3 + y) % 5 === 0 ? "#b09a56" : "#9a7f45";
+  return row === 0 ? "#695238" : row === 1 ? "#8a7244" : "#967d49";
 }
 
 export class FarmFires {
