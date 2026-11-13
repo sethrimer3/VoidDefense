@@ -62,3 +62,5 @@ npm run test:defense  # Full browser QA and performance benchmark
 - **Deterministic Randomness.** Fixed-seed stream generation via `src/random.ts` and `src/void/grid.ts` preloaded via `tests/pin-random.ts`, guaranteeing repeatable simulations and regression tests.
 - **Typography & UI.** Alembic custom pixel font (`assets/fonts/Alembic/`) built directly into vector TrueType outlines (`scripts/pixel-font/build.ts`), paired with Cinzel fallback and responsive CSS (`src/style.css`, `src/theme.css`).
 - **Save Isolation.** `src/void/save.ts` persists into `voiddefense.v1` while leaving legacy `towerdefense.v1` in browser storage intact and safely adopting player callsigns and visual accessibility preferences on initial launch.
+
+Farm fields have wind-swept wheat that parts around ground units, raised farmhouse facades, and simulation-driven energy-weapon fires that scorch crops and damage farm structures.

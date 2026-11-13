@@ -101,3 +101,7 @@ Rebuild the custom Alembic pixel font TrueType files from source glyph pixel row
 npm run font
 # node --experimental-transform-types scripts/pixel-font/build.ts
 ```
+
+### Farms
+
+`node --experimental-transform-types --import ./tests/pin-random.ts --test tests/farms.test.ts` checks live energy ignition, deterministic spread, pause, ruins, farm depth and unit parting. With the dev server running, `PLAYWRIGHT_EXECUTABLE=/usr/bin/chromium npm run test:farms` checks desktop/phone farm scenes and writes wheat, parting, fire and scorched screenshots to `test-results/void-farms/`.

@@ -889,3 +889,5 @@ A pooled piece of collapsed masonry, roof, tower, or terrain that detaches from 
 
 **Civilian**:
 A cosmetic 1-pixel person on city streets near the active Void frontier who flees away from encroaching Void and falls into the abyss if the street beneath them is consumed.
+
+- **Farm scorch**: Charred crop soil or farm remains left by energy-ignited fire during a run.

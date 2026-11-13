@@ -914,6 +914,7 @@ export class VoidPhysics {
         world.hp[idx] = islandHp;
         world.maxHp[idx] = islandHp;
         world.landCover[idx] = LandCover.GRASS;
+        world.farmScorch[idx] = 0;
         world.grid.markRadiusDirty(idx, CORRUPTION_REACH);
 
         createdCells++;
@@ -970,6 +971,9 @@ export class VoidPhysics {
           world.landCover[c.idx] = LandCover.MEADOW;
         }
       }
+    }
+    for (const c of created) {
+      if (world.landCover[c.idx] === LandCover.FIELD_H || world.landCover[c.idx] === LandCover.FIELD_V) world.wheatCells.add(c.idx);
     }
     if (clampedRank >= 1 && !plantedForest && firstInteriorIdx >= 0) {
       world.landCover[firstInteriorIdx] = LandCover.FOREST;

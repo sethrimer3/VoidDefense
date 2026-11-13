@@ -16,6 +16,7 @@
  *   mechs, shells, shockwaves and lasers.
  * - Integer camera zoom/pan math and precision placement Loupe. */
 
+import { farmSoilColor, isWheat, wheatLean } from "./farms.ts";
 import { dist } from "../exact.ts";
 import {
   ARCH_PALETTES,
@@ -116,6 +117,7 @@ export class VoidRenderer {
   private readonly ctx: CanvasRenderingContext2D;
   private readonly terrainLayer: HTMLCanvasElement;
   private readonly sceneLayer: HTMLCanvasElement;
+  private farmScorch: Uint8Array = new Uint8Array(0);
   private readonly sceneCtx: CanvasRenderingContext2D;
   private readonly pixelCtx: CanvasRenderingContext2D;
   private readonly tctx: CanvasRenderingContext2D;
@@ -848,6 +850,7 @@ export class VoidRenderer {
         default: color = r < 0.2 ? "#639c3f" : r < 0.6 ? "#4b7f2f" : "#467a2c";
       }
     }
+    if (mat !== CellMaterial.VOID && isWheat(cover) && bId < 0) color = farmSoilColor(x, y, cover, this.farmScorch[idx]);
     c.fillStyle = color;
     c.fillRect(x, y, 1, 1);
     if (mat === CellMaterial.VOID) return;
@@ -909,6 +912,7 @@ export class VoidRenderer {
     showMagnifier: boolean,
   ): void {
     const { world, voidField, combat, physics } = sim;
+    this.farmScorch = sim.farms.scorch;
     const T = this.lastTimings;
     let tMark = performance.now();
     const lap = (name: string): void => {
@@ -1321,12 +1325,45 @@ export class VoidRenderer {
       }
     }
 
+    // Living wheat: sparse crop index, spatial buckets for ground-unit parting.
+    // Use simulation time so pause and speed apply; reduced motion retains parted paths.
+    const farmTime = this.reduceEffects ? 0 : sim.elapsedSeconds;
+    const walkers = new Map<number, { x: number; y: number }[]>();
+    const bucketW = Math.ceil(world.grid.w / 8);
+    for (const a of [...combat.agents.filter(a => a.layer !== "air"), ...combat.organisms.filter(a => a.kind !== "voidBee" && a.kind !== "nebulaQueen"), ...this.civilians.filter(a => a.active && a.z === 0)]) {
+      const key = Math.floor(a.y / 8) * bucketW + Math.floor(a.x / 8);
+      const bucket = walkers.get(key) ?? [];
+      bucket.push(a); walkers.set(key, bucket);
+    }
+    for (const idx of world.wheatCells) {
+      const x = idx % world.grid.w, y = Math.floor(idx / world.grid.w);
+      if ((x & 1) || (y & 1) || world.material[idx] === CellMaterial.VOID ||
+          world.material[idx] === CellMaterial.SALVAGE || world.buildingAt[idx] >= 0 ||
+          !isWheat(world.landCover[idx]) || sim.farms.scorch[idx]) continue;
+      const nearby: { x: number; y: number }[] = [];
+      const bx = Math.floor(x / 8), by = Math.floor(y / 8);
+      for (let oy = -1; oy <= 1; oy++) for (let ox = -1; ox <= 1; ox++) {
+        if (bx + ox < 0 || bx + ox >= bucketW || by + oy < 0) continue;
+        const bucket = walkers.get((by + oy) * bucketW + bx + ox);
+        if (bucket) nearby.push(...bucket);
+      }
+      const lean = Math.round(wheatLean(x, y, farmTime, nearby));
+      const close = nearby.some(a => Math.hypot(a.x - x, a.y - y) < 1.3);
+      const tipX = x + lean, tipY = y - (close ? 0 : 1);
+      if (!world.grid.inBounds(tipX, tipY) || !isWheat(world.landCover[world.grid.index(tipX, tipY)]) ||
+          world.material[world.grid.index(tipX, tipY)] === CellMaterial.VOID || world.buildingAt[world.grid.index(tipX, tipY)] >= 0) continue;
+      c.fillStyle = "#6c7137"; c.fillRect(x, y, 1, 1);
+      c.fillStyle = (x + y) % 4 === 0 ? "#f2d47c" : "#cfaa51";
+      c.fillRect(tipX, tipY, 1, 1);
+      if (!close && (x + y) % 4 === 0) { c.fillStyle = "#fff0ad"; c.fillRect(tipX, tipY - 1, 1, 1); }
+    }
+
     // 7a. Farmland livestock: 0.5-px pixel-art sheep and cows on intact farmland/meadow
     const { w: gw, h: gh } = world.grid;
     for (let gy = 0; gy < gh; gy += 2) {
       for (let gx = 0; gx < gw; gx += 2) {
         const idx = gy * gw + gx;
-        if (world.material[idx] === CellMaterial.VOID) continue;
+        if (world.material[idx] === CellMaterial.VOID || sim.farms.scorch[idx]) continue;
         const lc = world.landCover[idx];
         if (lc !== LandCover.FIELD_H && lc !== LandCover.FIELD_V && lc !== LandCover.MEADOW) continue;
         const hVal = ((gx * 73856093) ^ (gy * 19349663) ^ (world.seed * 83492791)) >>> 0;
@@ -1678,6 +1715,21 @@ export class VoidRenderer {
     const rawScene = this.sceneCtx;
     if (atlas) {
       rawScene.drawImage(atlas, 0, 0);
+    }
+
+    // Fire is authoritative; flames/smoke are bounded visual witnesses, including elevated farm roofs.
+    for (const [idx, fire] of sim.farms.active) {
+      const x = world.grid.xOf(idx), y = world.grid.yOf(idx);
+      if (world.material[idx] === CellMaterial.VOID) continue;
+      const b = world.buildings[world.buildingAt[idx]];
+      const rise = b ? elevationOf(b, this.buildingHeight) : 0;
+      const fy = y - rise;
+      const flicker = this.reduceEffects ? 0 : (Math.floor(sim.elapsedSeconds * 9) + idx) % 3;
+      c.fillStyle = "#d55b28"; c.fillRect(x, fy - 1, 1, 2);
+      c.fillStyle = "#ffe1a0"; c.fillRect(x, fy - 1 - (flicker === 0 ? 1 : 0), 1, 1);
+      if (!this.reduceEffects && idx % 3 === 0) {
+        c.fillStyle = "#635b56"; c.fillRect(x + flicker - 1, fy - 3 - Math.floor(fire.age % 2), 1, 1);
+      }
     }
 
     // Draw above-ground falling chunks (`z >= 0`) and fleeing street civilians (`z >= 0`)

@@ -14,6 +14,7 @@ import type {
   TowerTypeId,
   ZeroContactReason,
 } from "./model.ts";
+import { FarmFires } from "./farms.ts";
 import { VoidPhysics } from "./physics.ts";
 import { computeCityIncomePerCycle, evaluateRunOutcome } from "./scoring.ts";
 import { evaluateTech, type EvaluatedTech, type VoidTechWallet } from "./tech/wallet.ts";
@@ -27,6 +28,7 @@ export class VoidSim {
   readonly tech: EvaluatedTech;
   readonly world: VoidWorld;
   readonly physics: VoidPhysics;
+  readonly farms: FarmFires;
   readonly voidField: VoidField;
   readonly combat: VoidCombatManager;
 
@@ -56,6 +58,7 @@ export class VoidSim {
     this.tech = evaluateTech(wallet.ranks);
     this.world = new VoidWorld(this.scenario);
     this.physics = new VoidPhysics();
+    this.farms = new FarmFires(this.world);
     this.voidField = new VoidField(this.world, this.scenario);
     this.combat = new VoidCombatManager(this.world.grid.count);
 
@@ -254,6 +257,8 @@ export class VoidSim {
       this.tech,
       allowOrganisms,
     );
+
+    this.farms.step(TICK_DT, this.combat.lasers);
 
     this.reason = statusReason;
 
