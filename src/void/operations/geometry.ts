@@ -14,8 +14,8 @@ export const BULKHEAD = { x0: 124, x1: 132, door: 18 };
 export const LAB = { x0: 132, x1: OPS_W };
 /** The scaffold's decks, lowest first: crew stand on the row above `y`. */
 export const DECKS = [
-  { y: 100, x0: 6, x1: 46 },
-  { y: 76, x0: 6, x1: 46 },
+  { y: 100, x0: 6, x1: 58 },
+  { y: 76, x0: 6, x1: 60 },
 ] as const;
 export const LADDER_X = 9;
 /** The prototype's footprint on the floor and its armoured housing. */
