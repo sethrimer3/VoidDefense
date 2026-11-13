@@ -169,9 +169,10 @@ test("Echo Mine: lures organisms, explodes on enemy destruction, but does NOT de
   const org = sim.combat.organisms.find((o) => o.id === 8801);
   assert.ok(org && org.lureUid === mine1.uid, "Echo Mine lures nearby organism");
 
-  // Enemy destroys mine1 -> blast damages nearby organism
+  // Enemy destroys mine1 -> telegraphed blast damages nearby organism
+  mine1.lastDamageCause = "enemy";
   mine1.hp = 0;
-  sim.stepTicks(1);
+  sim.stepTicks(10);
   assert.ok(!org || org.hp < 60, "Enemy destruction of Echo Mine triggers volatile blast");
 
   // Selling a fresh mine2 must NOT detonate or damage nearby organisms

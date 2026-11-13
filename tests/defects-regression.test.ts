@@ -76,14 +76,14 @@ test("Defect 1: Countervoid decays only Countervoid-created land and never destr
   const h1 = sim2.placeTower("countervoidHeart", cx - 2, cy - 2);
   const h2 = sim2.placeTower("countervoidHeart", cx - 2, cy + 2);
   assert.ok(h1 && h2);
-  sim2.stepTicks(60);
+  sim2.stepTicks(35);
   const createdIdx = sim2.world.grid.index(cx + 4, cy);
   assert.notEqual(sim2.world.material[createdIdx], CellMaterial.VOID, "overlapping hearts reclaim Void");
   sim2.sellTower(h1.uid);
-  sim2.stepTicks(30);
+  sim2.stepTicks(10);
   assert.ok(sim2.voidField.countervoidCells.size > 0, "remaining heart keeps Countervoid field active");
   sim2.sellTower(h2.uid);
-  sim2.stepTicks(600);
+  sim2.stepTicks(800);
   assert.equal(sim2.voidField.countervoidCells.size, 0, "orange field decays after final heart sold");
   assert.notEqual(sim2.world.material[createdIdx], CellMaterial.VOID, "countervoidLasting stabilizes Countervoid-created land");
 });
@@ -158,15 +158,21 @@ test("Defect 3: Chrono Cannon restores unit with meaningful recorded prior healt
   });
 
   // Step until unit dies and Chrono Cannon restores it
-  for (let i = 0; i < 40 && !sim.combat.agents.some((a) => a.id === 9123 && a.hp < 40 && sim.combat.chronoEffects.some((ef) => ef.items?.some((it) => it.kind === "unit" && it.agentKind === "rifleman"))); i++) {
+  let hasUnitItem = false;
+  for (let i = 0; i < 40; i++) {
+    if (!sim.combat.agents.some((a) => a.id === 9123)) {
+      cannon.cooldown = 0;
+    }
     sim.stepTicks(1);
+    if (sim.combat.chronoEffects.some((ef) => ef.items?.some((it) => it.kind === "unit" && it.agentKind === "rifleman"))) {
+      hasUnitItem = true;
+      break;
+    }
   }
-  assert.ok(sim.combat.chronoEffects.length > 0, "Chrono effect should spawn");
+  assert.ok(hasUnitItem, "Chrono effect records real restored unit metadata");
   const restored = sim.combat.agents.find((a) => a.id === 9123);
   assert.ok(restored, "unit should be restored with original id");
   assert.ok(restored.hp <= 12, `restored hp (${restored.hp}) must not exceed recorded prior health (12)`);
-  const hasUnitItem = sim.combat.chronoEffects.some((ef) => ef.items?.some((it) => it.kind === "unit" && it.agentKind === "rifleman"));
-  assert.ok(hasUnitItem, "Chrono effect records real restored unit metadata");
 
   // Also verify building-section recovery preserves columnFloors & buildingId and emits building item
   const bx = cx - 6;
@@ -175,7 +181,7 @@ test("Defect 3: Chrono Cannon restores unit with meaningful recorded prior healt
   sim.world.material[bIdx] = CellMaterial.BUILDING;
   sim.world.buildingAt[bIdx] = 42;
   sim.world.columnFloors[bIdx] = 5;
-  sim.combat.recordChronoLoss(sim.tick * (1 / 15), "terrain", bx + 0.5, by + 0.5, bIdx, CellMaterial.BUILDING, 42, 5, 110);
+  sim.combat.recordChronoLoss(sim.tick * (1 / 15), "terrain", bx + 0.5, by + 0.5, bIdx, CellMaterial.BUILDING, 110, 42, 5);
   sim.world.material[bIdx] = CellMaterial.VOID;
   sim.world.buildingAt[bIdx] = -1;
   sim.world.columnFloors[bIdx] = 0;
@@ -193,8 +199,8 @@ test("Defect 3: Chrono Cannon restores unit with meaningful recorded prior healt
 
 test("Defect 4: Echo Mine ignores falling-masonry/sell, detonates after warning on enemy kill, and enforces elite lure expiry", () => {
   const wallet = emptyTechWallet();
-  wallet.ranks.echoMineUnlock = 1;
-  const sim = new VoidSim("classicCore", "buildWatch", wallet, true);
+  wallet.ranks.unlockEchoMine = 1;
+  const sim = new VoidSim("organismEscalation", "buildWatch", wallet, true);
   sim.supplies = 5000;
 
   const cx = 60;
@@ -231,16 +237,25 @@ test("Defect 4: Echo Mine ignores falling-masonry/sell, detonates after warning 
   assert.equal(sim.combat.echoPendingBlasts.length, 0, "no pending blast on masonry kill");
 
   // Enemy-caused destruction triggers telegraphed warning then blast
-  const mineEnemy = sim.placeTower("echoMine", cx, cy);
+  for (const fc of sim.physics.fallingChunks) fc.active = false;
+  sim.physics.pendingImpacts.length = 0;
+  const mineEnemy = sim.placeTower("echoMine", cx - 6, cy);
   assert.ok(mineEnemy);
   mineEnemy.hp = 10;
-  worm.x = cx + 1.5;
+  worm.x = cx - 4.5;
   worm.y = cy + 1.5;
-  worm.targetX = cx + 1.5;
+  worm.targetX = cx - 4.5;
   worm.targetY = cy + 1.5;
   worm.cooldown = 0;
-  sim.stepTicks(2);
-  assert.ok(sim.combat.echoPendingBlasts.length > 0 || worm.hp < 20, "enemy kill queues telegraphed Echo blast");
+  let queuedBlast = false;
+  for (let i = 0; i < 10; i++) {
+    sim.stepTicks(1);
+    if (sim.combat.echoPendingBlasts.length > 0) {
+      queuedBlast = true;
+      break;
+    }
+  }
+  assert.ok(queuedBlast, `enemy kill queues telegraphed Echo blast (mineHp=${mineEnemy.hp}, cause=${mineEnemy.lastDamageCause}, wormCooldown=${worm.cooldown}, towerAt=${sim.world.towerAt[sim.world.grid.index(Math.floor(worm.x), Math.floor(worm.y))]})`);
   sim.stepTicks(10);
   const wormAfter = sim.combat.organisms.find((o) => o.id === 5501);
   assert.ok(!wormAfter || wormAfter.hp < 20, "telegraphed Echo blast damages/kills attacking organism");

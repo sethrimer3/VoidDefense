@@ -20,8 +20,8 @@ Run individual tests or pattern matches using the pinned random seed harness:
 # Core Void Defense simulation, towers, physics, resistance operations, tech wallet, saves
 node --experimental-transform-types --import ./tests/pin-random.ts --test tests/void-defense.test.ts
 
-# Specialized towers, strikes, and infantry roster integration tests
-node --experimental-transform-types --import ./tests/pin-random.ts --test tests/towers-new.test.ts tests/roster-new.test.ts tests/quarantine-bell.test.ts tests/hearthseed.test.ts
+# Specialized towers, strikes, infantry roster, and defect regression tests
+node --experimental-transform-types --import ./tests/pin-random.ts --test tests/towers-new.test.ts tests/roster-new.test.ts tests/quarantine-bell.test.ts tests/hearthseed.test.ts tests/defects-regression.test.ts
 
 # Cosmic enemy contours, living interior wisps, Queen Bee and Bee Swarm noise outlines
 node --experimental-transform-types --import ./tests/pin-random.ts --test tests/void-visuals.test.ts

@@ -1381,6 +1381,7 @@ export class VoidCombatManager {
             a.y += (dy / d) * pixels(12) * dt;
           }
         }
+        const hpBeforeVoid = a.hp;
         a.hp -= 18 * dt;
         if (a.hp <= 0) {
           const aColor =
@@ -1402,7 +1403,7 @@ export class VoidCombatManager {
             "#ff42b8",
             "void",
           );
-          const preVoidHp = Math.max(1, Math.min(a.maxHp, a.lastSafeHp ?? a.maxHp));
+          const preVoidHp = Math.max(1, Math.min(a.maxHp, a.lastSafeHp ?? hpBeforeVoid));
           this.recordChronoLoss(
             tick * dt,
             "unit",
@@ -1651,15 +1652,14 @@ export class VoidCombatManager {
       }
       if (d <= range && a.cooldown <= 0) {
         a.cooldown = 0.75 * tech.seamwalkerCooldownMultiplier;
-        // Staple adjacent Void cells within segment radius of this frontier cell
+        // Staple adjacent Void cells (orthogonal neighbors at base, widening with seamwalkerSegmentRadius)
         const fx = world.grid.xOf(target.cellIdx);
         const fy = world.grid.yOf(target.cellIdx);
         const segR = tech.seamwalkerSegmentRadius;
         const holdDuration = tech.seamwalkerHoldDuration;
         let frozenAny = false;
-        for (let oy = -segR; oy <= segR; oy++) {
-          for (let ox = -segR; ox <= segR; ox++) {
-            if (ox * ox + oy * oy > segR * segR + 1) continue;
+        if (segR <= 0) {
+          for (const [ox, oy] of ORTHO) {
             const vx = fx + ox;
             const vy = fy + oy;
             if (!world.grid.inBounds(vx, vy)) continue;
@@ -1667,6 +1667,20 @@ export class VoidCombatManager {
             if (world.material[vIdx] === CellMaterial.VOID) {
               voidField.freezeVoidCell(vIdx, holdDuration);
               frozenAny = true;
+            }
+          }
+        } else {
+          for (let oy = -segR; oy <= segR; oy++) {
+            for (let ox = -segR; ox <= segR; ox++) {
+              if (ox * ox + oy * oy > segR * segR + 1) continue;
+              const vx = fx + ox;
+              const vy = fy + oy;
+              if (!world.grid.inBounds(vx, vy)) continue;
+              const vIdx = world.grid.index(vx, vy);
+              if (world.material[vIdx] === CellMaterial.VOID) {
+                voidField.freezeVoidCell(vIdx, holdDuration);
+                frozenAny = true;
+              }
             }
           }
         }
