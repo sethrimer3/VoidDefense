@@ -171,11 +171,14 @@ export class VoidRenderer {
   private civilianSpawnSlot = 0;
   private lastSeenCollapseTick = 0;
   private shakeMs = 0;
+  private shakeCooldownUntil = 0;
 
   /** Camera state: `s` = zoom multiplier (1 = fit board), `x, y` = canvas pixel pan. */
   readonly cam = { s: 1, x: 0, y: 0 };
   px = 4; // device pixels per cell at zoom 1
   static readonly MAX_ZOOM = 7;
+  /** Camera zoom at or above which a large building collapse may shake the view. */
+  static readonly SHAKE_MIN_ZOOM = 2;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -208,6 +211,14 @@ export class VoidRenderer {
     const scale = zoom * this.px;
     // Keep the full-city overview fitted; close zoom uses uniform device-pixel blocks.
     return zoom > 1 && scale >= 1 ? Math.max(1, Math.round(scale)) : scale;
+  }
+
+  /** True when world pixel (`fx`, `fy`) is inside the visible canvas. */
+  private isWorldPointOnScreen(fx: number, fy: number): boolean {
+    const scale = this.pixelScale();
+    const x = fx * scale + this.cam.x;
+    const y = fy * scale + this.cam.y;
+    return x >= 0 && y >= 0 && x <= this.canvas.width && y <= this.canvas.height;
   }
 
   toCell(clientX: number, clientY: number): { fx: number; fy: number; cx: number; cy: number } {
@@ -2140,11 +2151,18 @@ export class VoidRenderer {
       }
     }
 
-    // 1 device-pixel camera shake when >= 20 building columns collapse in one tick (disabled under reduceEffects)
+    // Slight 1 device-pixel camera shake, only when the player is zoomed in close and a
+    // significant share of an on-screen building collapses at once (disabled under reduceEffects).
     if (physics.lastLargeCollapseTick > this.lastSeenCollapseTick) {
       this.lastSeenCollapseTick = physics.lastLargeCollapseTick;
-      if (!this.reduceEffects) {
-        this.shakeMs = 120;
+      if (
+        !this.reduceEffects &&
+        this.cam.s >= VoidRenderer.SHAKE_MIN_ZOOM &&
+        nowMs >= this.shakeCooldownUntil &&
+        this.isWorldPointOnScreen(physics.lastLargeCollapseX, physics.lastLargeCollapseY)
+      ) {
+        this.shakeMs = 90;
+        this.shakeCooldownUntil = nowMs + 900;
       }
     }
     let shakeX = 0;
@@ -2152,9 +2170,12 @@ export class VoidRenderer {
     if (this.shakeMs > 0) {
       this.shakeMs = Math.max(0, this.shakeMs - dt * 1000);
       if (!this.reduceEffects && this.shakeMs > 0) {
-        const phase = Math.floor(nowMs / 30);
-        shakeX = (phase & 1) === 0 ? 1 : -1;
-        shakeY = ((phase >> 1) & 1) === 0 ? 1 : -1;
+        // One axis at a time, 45 ms per step: a soft rumble rather than a diagonal jitter.
+        const phase = Math.floor(nowMs / 45) & 3;
+        if (phase === 0) shakeX = 1;
+        else if (phase === 1) shakeY = 1;
+        else if (phase === 2) shakeX = -1;
+        else shakeY = -1;
       }
     }
 

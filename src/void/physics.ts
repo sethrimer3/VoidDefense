@@ -35,8 +35,14 @@ export const CHUNK_IMPACT_DAMAGE_SCALE = 0.2;
 export const CHUNK_IMPACT_MAX_DAMAGE = 30;
 /** HP a landing chunk scuffs off a street cell (buildings and walls take none). */
 export const CHUNK_STREET_CRACK = 2;
-/** Fraction of impact damage armoured towers take. */
-export const CHUNK_TOWER_DAMAGE_SCALE = 0.5;
+/** Fraction of impact damage armoured towers take: debris is aimed at units and Void
+ * organisms, so a turret only gets scraped (chips under ~7 damage leave it untouched). */
+export const CHUNK_TOWER_DAMAGE_SCALE = 0.15;
+/** A collapse is "large" (camera-shake worthy) when one building loses at least this many
+ * columns in one tick... */
+export const LARGE_COLLAPSE_MIN_COLUMNS = 16;
+/** ...and at least this share of its footprint. */
+export const LARGE_COLLAPSE_MIN_SHARE = 0.3;
 
 /** Prismatic spark colours for small fast fragments. */
 const DEBRIS_PALETTES: readonly { color: string; glow: string }[] = [
@@ -123,8 +129,12 @@ export class VoidPhysics {
   isBrinkBuilding(buildingId: number): boolean {
     return this.damagedBuildings.has(buildingId);
   }
-  /** Support tick of the most recent large structural collapse (>= 20 columns in one tick). */
+  /** Support tick of the most recent large structural collapse: one building losing at least
+   * `LARGE_COLLAPSE_MIN_COLUMNS` columns and `LARGE_COLLAPSE_MIN_SHARE` of its footprint in one tick. */
   lastLargeCollapseTick = 0;
+  /** World-pixel centre of the building behind `lastLargeCollapseTick` (the renderer only shakes when it is on screen). */
+  lastLargeCollapseX = 0;
+  lastLargeCollapseY = 0;
   /** Pre-allocated pool of 1-pixel grey dust puffs emitted when building columns lose floors. */
   readonly dustPuffs: DustPuff[] = Array.from({ length: MAX_DUST_PUFFS }, () => ({
     active: false,
@@ -378,6 +388,7 @@ export class VoidPhysics {
   stepStructuralSupport(world: VoidWorld, dt: number): void {
     this.supportTick++;
     let columnsCollapsedThisTick = 0;
+    let largestCollapse = 0;
     const { w, h } = world.grid;
     const { material, buildingAt, hp, maxHp, columnFloors } = world;
 
@@ -386,6 +397,7 @@ export class VoidPhysics {
       for (const bId of this.damagedBuildings) {
         const b = world.buildings[bId];
         if (!b) continue;
+        const collapsedBefore = columnsCollapsedThisTick;
 
         // 1. Identify supported columns (solid ground foundation) vs overhanging columns (over Void)
         const supported: number[] = [];
@@ -529,6 +541,18 @@ export class VoidPhysics {
           }
         }
 
+        const collapsed = columnsCollapsedThisTick - collapsedBefore;
+        if (
+          collapsed >= LARGE_COLLAPSE_MIN_COLUMNS &&
+          collapsed >= b.cells.length * LARGE_COLLAPSE_MIN_SHARE &&
+          collapsed > largestCollapse
+        ) {
+          largestCollapse = collapsed;
+          this.lastLargeCollapseTick = this.supportTick;
+          this.lastLargeCollapseX = bCenterX;
+          this.lastLargeCollapseY = bCenterY;
+        }
+
         if (supported.length === 0) continue;
 
         // 4. Connected-component splinter check on supported ground footprint (only when a cell was lost this tick)
@@ -598,14 +622,12 @@ export class VoidPhysics {
         if (hasBrinkOrOverhang) {
           keepActive.push(bId);
         }
+
       }
       this.damagedBuildings.clear();
       this.cellLostBuildings.clear();
       for (let i = 0; i < keepActive.length; i++) {
         this.damagedBuildings.add(keepActive[i]);
-      }
-      if (columnsCollapsedThisTick >= 20) {
-        this.lastLargeCollapseTick = this.supportTick;
       }
     }
 

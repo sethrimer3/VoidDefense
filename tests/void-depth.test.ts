@@ -292,7 +292,7 @@ test("Phase 4: pooled dust puffs, large-collapse camera shake trigger, and Void 
   const activeRipples = physics.voidRipples.filter((r) => r.active).length;
   assert.ok(activeRipples >= 1, "Expected >= 1 Void ripple when a 2x2 chunk plunges past VOID_ABYSS_Z");
 
-  // 3. Collapsing >= 20 columns in one tick advances lastLargeCollapseTick for 1-px camera shake
+  // 3. Collapsing a significant share of one building in one tick advances lastLargeCollapseTick (and records where) for the zoomed-in camera shake
   const b = world.buildings.find((bld) => bld.cells.length >= 25)!;
   const prevTick = physics.lastLargeCollapseTick;
   for (let i = 0; i < b.cells.length; i++) {
@@ -301,8 +301,18 @@ test("Phase 4: pooled dust puffs, large-collapse camera shake trigger, and Void 
   physics.stepStructuralSupport(world, 1 / 30);
   assert.ok(
     physics.lastLargeCollapseTick > prevTick,
-    "Collapsing >= 20 columns in one tick must advance lastLargeCollapseTick",
+    "Collapsing most of a building in one tick must advance lastLargeCollapseTick",
   );
+  assert.ok(
+    Math.abs(physics.lastLargeCollapseX - (b.x + b.w * 0.5)) < 1e-9 &&
+      Math.abs(physics.lastLargeCollapseY - (b.y + b.h * 0.5)) < 1e-9,
+    "lastLargeCollapseX/Y must point at the collapsing building",
+  );
+
+  // 4. A few columns crumbling off a large building is not a large collapse
+  const tickBefore = physics.lastLargeCollapseTick;
+  physics.stepStructuralSupport(world, 1 / 30);
+  assert.equal(physics.lastLargeCollapseTick, tickBefore, "No further collapse must not re-trigger the shake");
 });
 
 test("Phase 5: floor-based income, chunk fall damage (units/organisms/turrets, not buildings), and engineer shoring", () => {
@@ -402,7 +412,14 @@ test("Phase 5: floor-based income, chunk fall damage (units/organisms/turrets, n
   combat.step(world, physics, sim.voidField, sim.tick + 1, 1 / 30, tech, false);
   const towerHp = combat.towers.find((t) => t.uid === 9999)!.hp;
   assert.ok(towerHp < 100, "Impact must damage nearby turret");
-  assert.ok(100 - towerHp < impactDamage, "Turrets take reduced impact damage");
+  assert.ok(
+    100 - towerHp <= Math.ceil(impactDamage * 0.2),
+    `Turrets only get scraped by debris (${100 - towerHp} of ${impactDamage})`,
+  );
+  assert.ok(
+    100 - combat.agents.find((a) => a.id === 9998)!.hp > (100 - towerHp) * 3,
+    "Debris hurts units far more than turrets",
+  );
   assert.ok(combat.agents.find((a) => a.id === 9998)!.hp < 100, "Impact must damage nearby friendly unit");
   assert.ok(combat.organisms.find((o) => o.id === 9997)!.hp < 100, "Impact must damage nearby Void organism");
 
