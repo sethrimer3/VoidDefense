@@ -58,6 +58,10 @@ export class VoidField {
   /** Active Quarantine Bell boundary seals. */
   readonly quarantineSeals: QuarantineSeal[] = [];
   private nextSealId = 1;
+  /** Seamwalker-frozen Void cells (cellIdx -> remaining hold seconds). */
+  readonly frozenVoidCells = new Map<number, number>();
+  /** Countervoid Heart friendly orange Void cells. */
+  readonly countervoidCells = new Set<number>();
   /** Temporary suppression timer (from Containment Pulse strike). */
   suppressedSeconds = 0;
 
@@ -70,6 +74,58 @@ export class VoidField {
     this.cellMicroWork = new Uint32Array(world.grid.count);
     this.frontierContactCount = new Uint8Array(world.grid.count);
     this.rebuildFrontier(world);
+  }
+
+  /** Freezes a Void cell's propagation for `duration` seconds (Seamwalker staple hold). */
+  freezeVoidCell(cellIdx: number, duration = 4.0): void {
+    const prev = this.frozenVoidCells.get(cellIdx) ?? 0;
+    this.frozenVoidCells.set(cellIdx, Math.max(prev, duration));
+  }
+
+  /** Advances Seamwalker frozen-Void holds and Countervoid Heart orange frontier. */
+  stepRosterFields(world: VoidWorld, dt: number, heartPositions: { x: number; y: number; range: number }[]): void {
+    for (const [idx, rem] of this.frozenVoidCells) {
+      if (rem - dt <= 0) this.frozenVoidCells.delete(idx);
+      else this.frozenVoidCells.set(idx, rem - dt);
+    }
+
+    // Seed & expand Countervoid Heart orange frontier against purple Void
+    const { w, h } = world.grid;
+    for (const hp of heartPositions) {
+      const cx = Math.floor(hp.x);
+      const cy = Math.floor(hp.y);
+      if (world.grid.inBounds(cx, cy)) {
+        this.countervoidCells.add(world.grid.index(cx, cy));
+      }
+    }
+    if (heartPositions.length > 0 && this.countervoidCells.size > 0) {
+      const nextAdd: number[] = [];
+      let budget = 16;
+      for (const idx of this.countervoidCells) {
+        if (budget <= 0) break;
+        const x = idx % w;
+        const y = (idx / w) | 0;
+        for (const [dx, dy] of ORTHO) {
+          const nx = x + dx;
+          const ny = y + dy;
+          if (!world.grid.inBounds(nx, ny)) continue;
+          const nIdx = ny * w + nx;
+          if (this.countervoidCells.has(nIdx)) continue;
+          if (world.material[nIdx] === CellMaterial.VOID && !this.frozenVoidCells.has(nIdx)) {
+            world.material[nIdx] = CellMaterial.RECLAIMED;
+            world.hp[nIdx] = 90;
+            world.maxHp[nIdx] = 90;
+            world.buildingAt[nIdx] = -1;
+            world.grid.markIndexDirty(nIdx);
+            nextAdd.push(nIdx);
+            budget--;
+            break;
+          }
+        }
+      }
+      for (const nIdx of nextAdd) this.countervoidCells.add(nIdx);
+      if (nextAdd.length > 0) this.rebuildFrontier(world);
+    }
   }
 
   /** Registers a temporary Quarantine Bell seal and immediately updates the frontier. */
