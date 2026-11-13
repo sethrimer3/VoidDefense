@@ -447,7 +447,7 @@ test("10. Advanced towers, Wall Serpent trail, Matter Synthesis, and Cosmic Orga
   }
 
   const tech = evaluateTech(wallet.ranks);
-  assert.equal(tech.unlockedTowers.size, 12, "All 12 Resistance tower types unlocked");
+  assert.equal(tech.unlockedTowers.size, 16, "All 16 Resistance tower types unlocked");
   assert.equal(tech.unlockedStrikes.size, 6, "All 6 orbital strikes unlocked");
   assert.equal(tech.matterSynthesis, true, "Matter Synthesis breakthrough active");
 

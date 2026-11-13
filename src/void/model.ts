@@ -259,7 +259,11 @@ export type TowerTypeId =
   | "heavyMechBay"
   | "voidSiphon"
   | "boundaryPrism"
-  | "chronoCannon";
+  | "chronoCannon"
+  | "lanternBearer"
+  | "seamwalker"
+  | "echoMine"
+  | "countervoidHeart";
 
 export type PlacedTower = {
   uid: number;
