@@ -1298,15 +1298,16 @@ export class VoidRenderer {
         c.moveTo(cx - dx, cy - dy);
         c.lineTo(cx + dx, cy + dy);
         c.stroke();
-        // Directional chevrons toward receiving flank
-        c.strokeStyle = "rgba(184, 244, 255, 0.8)";
-        c.lineWidth = 0.45;
+        // Directional chevrons toward receiving flank (animated)
+        const pulseOff = ((sim.tick * 0.08) % 1) * 1.2;
+        c.strokeStyle = "rgba(184, 244, 255, 0.88)";
+        c.lineWidth = 0.5;
         for (const sgn of [-0.5, 0, 0.5]) {
           const px = cx + dx * sgn;
           const py = cy + dy * sgn;
           c.beginPath();
-          c.moveTo(px + nx * 1.4, py + ny * 1.4);
-          c.lineTo(px + nx * 2.6 + Math.cos(ang) * 0.8, py + ny * 2.6 + Math.sin(ang) * 0.8);
+          c.moveTo(px + nx * (1.2 + pulseOff), py + ny * (1.2 + pulseOff));
+          c.lineTo(px + nx * (2.6 + pulseOff) + Math.cos(ang) * 0.8, py + ny * (2.6 + pulseOff) + Math.sin(ang) * 0.8);
           c.stroke();
         }
       } else if (t.type === "chronoCannon") {
@@ -1369,6 +1370,19 @@ export class VoidRenderer {
         const a = (m / marks) * Math.PI * 2;
         c.fillRect(seal.x + Math.cos(a) * seal.radius - 0.35, seal.y + Math.sin(a) * seal.radius - 0.35, 0.7, 0.7);
       }
+      // Translucent swinging bell apparition on cast
+      const age = seal.duration - seal.remaining;
+      if (age < 1.2) {
+        const bellAlpha = (1 - age / 1.2) * 0.85;
+        const swing = Math.sin(age * 10) * 0.8;
+        c.fillStyle = `rgba(255, 232, 160, ${bellAlpha})`;
+        c.beginPath();
+        c.moveTo(seal.x + swing, seal.y - 4.2);
+        c.lineTo(seal.x + 2.0 + swing, seal.y - 0.8);
+        c.lineTo(seal.x - 2.0 + swing, seal.y - 0.8);
+        c.closePath();
+        c.fill();
+      }
     }
 
     // 8. Sorted Structure Pass: placed towers (elevated 2 px), autonomous agents (0-1 px),
@@ -1411,6 +1425,12 @@ export class VoidRenderer {
         c.beginPath();
         c.arc(t.x + t.w * 0.5, topY + t.h * 0.5, t.w * 0.42, 0, Math.PI * 2);
         c.stroke();
+        // Vertical venting plume
+        if (s?.phase === "venting") {
+          const plumeH = 2.0 + Math.sin(sim.tick * 0.35) * 0.8;
+          c.fillStyle = "rgba(255, 176, 82, 0.78)";
+          c.fillRect(t.x + t.w * 0.5 - 0.5, topY - plumeH, 1.0, plumeH);
+        }
       } else if (t.type === "boundaryPrism") {
         // Tall triangular faceted crystal
         c.fillStyle = "#5ce1e6";
@@ -1438,6 +1458,17 @@ export class VoidRenderer {
         c.stroke();
         c.fillStyle = "#fff3d1";
         c.fillRect(t.x + t.w * 0.5 - 0.4, topY + t.h * 0.5 - 0.4, 0.8, 0.8);
+        // Counter-rotating clock hand
+        const handAng = -(sim.tick * 0.12);
+        c.strokeStyle = "#ffe599";
+        c.lineWidth = 0.3;
+        c.beginPath();
+        c.moveTo(t.x + t.w * 0.5, topY + t.h * 0.5);
+        c.lineTo(
+          t.x + t.w * 0.5 + Math.cos(handAng) * (t.w * 0.32),
+          topY + t.h * 0.5 + Math.sin(handAng) * (t.h * 0.32),
+        );
+        c.stroke();
       } else {
         c.fillStyle = spec.color;
         c.fillRect(t.x + 0.35, topY + 0.35, t.w - 0.7, t.h - 0.7);
