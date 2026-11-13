@@ -9,7 +9,7 @@ export function isWheat(cover: number): boolean {
 
 /** Coherent gusts with a local push away from people; never changes collision. */
 export function wheatLean(x: number, y: number, time: number, nearby: readonly { x: number; y: number }[]): number {
-  let lean = Math.sin(time * 1.4 + x * 0.14 + y * 0.09) * 0.5;
+  let lean = Math.sin(time * 1.6 + x * 0.16 + y * 0.1) * 0.65;
   for (const unit of nearby) {
     const dx = x - unit.x, dy = y - unit.y;
     const d = Math.hypot(dx, dy);

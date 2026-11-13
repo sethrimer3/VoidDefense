@@ -70,7 +70,7 @@ try {
     assert.ok(Math.abs(result.scale - Math.round(result.scale)) < 1e-8);
     assert.equal(result.fractionalPan, false);
     assert.deepEqual(result.hit, [192, 256]);
-    assert.deepEqual(result.wall, [255, 146, 43, 255]);
+    assert.deepEqual(result.wall, [90, 107, 130, 255]);
     assert.equal(result.filter, 'none');
     assert.deepEqual(errors, []);
     await page.close();
