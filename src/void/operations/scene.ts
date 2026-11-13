@@ -93,7 +93,6 @@ export class ResistanceOperationsView {
     });
     this.bindPointers(canvas);
     this.refreshLook();
-    (globalThis as any).__opsDebug = this;
   }
 
   private labelFrame(): void {
