@@ -127,3 +127,14 @@ contour silhouettes, color mapping, living wisp flows, clipping, and simulation
 isolation. `node tests/void-visuals.mjs` verifies browser rendering, ledge occlusion,
 black hole core preservation, reduced motion stability, and captures screenshots
 and frame recordings in `test-results/void-visuals/`.
+
+## Specialized Towers, Strikes, and Infantry Roster
+
+- **Chrono Cannon (`chronoCannon`):** `VoidPhysics.consumeCellIntoVoid` emits `recentCellLosses` with `buildingId` and `columnFloors`, and agent Void deaths emit `"unit"` loss events into `VoidCombatManager.chronoJournal`. `stepChronoCannons` rewinds terrain and building floors first, then restores Void-fallen units onto safe ground without duplicate IDs or double-claims.
+- **Boundary Prism (`boundaryPrism`):** `VoidField.step` redirects incoming erosion work conservatively along each prism's `angleRad` without creating phantom pressure or bypassing Quarantine Seals; rotatable in 45° steps from the tower inspector.
+- **Void Siphon (`voidSiphon`):** `VoidField.step` intercepts frontier erosion work up to `siphonIntakeCap` into finite `SiphonState` tanks (`intake` -> `venting` -> `intake`), ticked via `stepSiphonTimers`.
+- **Quarantine Bell (`quarantineBell`):** Creates circular `QuarantineSeal` boundaries blocking cross-edge Void propagation in both directions while allowing internal spread, with duration and radius upgrades in `tech/catalog.ts`.
+- **Hearthseed (`landfall`):** `VoidPhysics.depositHearthseedIsland` creates monotonically nested reclaimed islands with deterministic `FOREST` (rank 1+) and `FIELD_H`/`FIELD_V` (rank 2+) cover without resurrecting historical buildings.
+- **Lantern Bearers (`lanternBearer`), Seamwalkers (`seamwalker`), Jetpack Infantry (`jetpack`):** Spawned as live `Agent` units in `VoidCombatManager`. Bearers maintain atomic `lanternRefCount`/`lanternCreatedTemp` solid ground beneath themselves (protected from Void & organism erosion, reverting temporary footing when the last bearer leaves or dies). Seamwalkers fire staple lasers that populate `frozenVoidCells` with bounded holds. Jetpacks (`layer: "air"`) traverse Void, target organisms only, and ignore ground-only impacts.
+- **Echo Mine (`echoMine`):** Lures nearby organisms within a bounded target cap; enemy-caused destruction (`hp <= 0`) triggers a volatile blast (and `persistentEchoes` if upgraded), while selling does not detonate.
+- **Countervoid Heart (`countervoidHeart`):** `VoidField.stepCountervoidField` projects a finite-budget opposing orange frontier (`countervoidCells`) across land and into purple Void within heart range, retreating under stronger Void pressure and decaying when no living Heart remains (unless stabilized by `countervoidLasting`).
