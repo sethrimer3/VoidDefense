@@ -87,6 +87,9 @@ export class VoidWorld {
   readonly streetTier: Uint8Array;
   /** Render-only surface detail (`LandCoverId`): grass, forest, fields, dirt roads, river, bridges, silos. */
   readonly landCover: Uint8Array;
+  /** Sparse crop index used by the living wheat pass, including created islands. */
+  readonly wheatCells = new Set<number>();
+  readonly farmScorch: Uint8Array;
   /** City-to-Void gradient class per cell (`ZoneKindId`): rural near portals, suburb, then urban. */
   readonly zone: Uint8Array;
   /** Continuous urbanity 0 (deep countryside) .. 255 (city core) used to bias building heights. */
@@ -115,6 +118,7 @@ export class VoidWorld {
     this.towerAt = new Int16Array(n).fill(-1);
     this.streetTier = new Uint8Array(n);
     this.landCover = new Uint8Array(n);
+    this.farmScorch = new Uint8Array(n);
     this.zone = new Uint8Array(n);
     this.urbanity = new Uint8Array(n);
     this.columnFloors = new Uint8Array(n);
@@ -126,6 +130,9 @@ export class VoidWorld {
       this.applyInitialBreaches(scenario);
     } else {
       this.generatePixelMetropolis(scenario);
+    }
+    for (let i = 0; i < n; i++) {
+      if (this.landCover[i] === LandCover.FIELD_H || this.landCover[i] === LandCover.FIELD_V) this.wheatCells.add(i);
     }
     const totalValue = this.snapshotBaseline();
     let totalHp = 0;

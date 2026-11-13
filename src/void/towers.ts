@@ -1696,6 +1696,7 @@ export class VoidCombatManager {
             y1: targetY,
             ttl: 0.14,
             color: isMech ? "#ffaa33" : "#ff6b2b",
+            energy: true,
           });
         }
         if (hitOrganism) {

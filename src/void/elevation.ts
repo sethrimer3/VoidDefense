@@ -171,8 +171,9 @@ export function floorsToElevation(floors: number, mode: BuildingHeightMode = "fu
 }
 
 /** Returns the elevation in world pixels of a metropolitan building under `mode`. */
-export function elevationOf(b: Pick<MetroBuilding, "height">, mode: BuildingHeightMode = "full"): number {
-  return floorsToElevation(b.height, mode);
+export function elevationOf(b: Pick<MetroBuilding, "height"> & Partial<Pick<MetroBuilding, "archStyle">>, mode: BuildingHeightMode = "full"): number {
+  const rustic = b.archStyle === "homestead" || b.archStyle === "barn";
+  return rustic && mode !== "flat" ? Math.max(mode === "low" ? 1 : 2, floorsToElevation(b.height, mode)) : floorsToElevation(b.height, mode);
 }
 
 /** Projects a footprint ground `y` coordinate upward by `elevation` world pixels. */
@@ -283,6 +284,7 @@ export function roofColorAt(
   if (b.archStyle === "homestead" || b.archStyle === "barn") {
     const horizontal = b.w >= b.h;
     color = (horizontal ? y < cy : x < cx) ? pal.crown : pal.podium;
+    if ((horizontal ? y : x) % 2 === 0) color = (horizontal ? y < cy : x < cx) ? pal.crown : pal.mid;
     if (horizontal ? y === cy : x === cx) color = pal.litEdge;
     if (right === 0 || bottom === 0) color = pal.shadeEdge;
     if (lx === 1 && ly === 1) color = "#3a3a3a";
@@ -338,12 +340,15 @@ export function facadeColorAt(
   if (isSideBorder) {
     return pal.shadeEdge;
   }
+  if (b.archStyle === "homestead" || b.archStyle === "barn") {
+    const lx = x - b.x;
+    if (lx === Math.floor(b.w / 2) && fRow === 0) return "#503a2b";
+    if (lx % 3 === 1) return hpRatio > 0.35 ? "#f7d58c" : "#4a3327";
+    return b.archStyle === "barn" ? (lx % 2 === 0 ? "#a04b38" : "#803b2e") : "#ddc8a0";
+  }
   // Base lobby / awning row at ground level
   if (fRow === 0) {
     return (x + b.variant) % 4 === 0 && hpRatio > 0.35 ? pal.neonEdge : pal.shadeEdge;
-  }
-  if (b.archStyle === "homestead" || b.archStyle === "barn") {
-    return (x + fRow) % 3 === 0 && hpRatio > 0.3 ? pal.neonCore : pal.podium;
   }
   // Neon cornice band right under a setback terrace or crown
   if (fRow === elev - 1 && (b.archStyle === "cyberArcology" || b.archStyle === "artDecoSetback")) {
@@ -478,7 +483,7 @@ export function buildBuildingSprite(
     if (lx >= 0 && lx < b.w && ly >= 0 && ly < b.h) {
       const fullTier = cellFullElev[ly * b.w + lx];
       const floors = columnFloors ? columnFloors[idx] : b.height;
-      const curElev = Math.min(fullTier, floorsToElevation(floors, mode));
+      const curElev = Math.min(fullTier, elevationOf({ height: floors, archStyle: b.archStyle }, mode));
       cellElev[ly * b.w + lx] = curElev;
       cellPresent[ly * b.w + lx] = 1;
       if (floors >= b.height) {

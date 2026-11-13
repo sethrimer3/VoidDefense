@@ -342,6 +342,8 @@ export type MatterPellet = {
 };
 
 export type LaserBeam = {
+  /** Only real energy weapons ignite farm surfaces; staples/targeting lines do not. */
+  energy?: boolean;
   x0: number;
   y0: number;
   x1: number;
