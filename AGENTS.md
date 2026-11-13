@@ -47,7 +47,7 @@ The detailed module-by-module reference lives in `docs/architecture/`. Read only
 | `docs/architecture/shell-ui.md` | Startup, sole-game bootstrap (`boot.ts`), HUD and dialogs, settings, localization, sound, profile, saves (`voiddefense.v1`) |
 | `docs/architecture/commands.md` | Per-feature browser checks (`tests/*.mjs`), focused Node tests, benchmarks and tools |
 
-Other references: `docs/void-defense/` (references and visual guides), `docs/PERFORMANCE.md`, `docs/LOCALIZATION.md`, and `CONTEXT.md` (glossary).
+Other references: `docs/polish-plan.md` (prioritized polish plan with ready-to-paste agent prompts), `docs/void-defense/` (references and visual guides), `docs/PERFORMANCE.md`, `docs/LOCALIZATION.md`, and `CONTEXT.md` (glossary).
 
 ## Conventions
 
