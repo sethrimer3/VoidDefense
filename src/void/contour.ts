@@ -139,14 +139,14 @@ type RimOffset = { readonly dx: number; readonly dy: number };
 
 function buildRimOffsets(cells: readonly RimOffset[]): readonly RimOffset[] {
   const occupied = new Set<number>();
-  for (const p of cells) occupied.add((p.y + 8) * 16 + (p.x + 8));
+  for (const p of cells) occupied.add((p.dy + 8) * 16 + (p.dx + 8));
   const rim: RimOffset[] = [];
   const seen = new Set<number>();
   const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const;
   for (const p of cells) {
     for (const [nx, ny] of dirs) {
-      const rx = p.x + nx;
-      const ry = p.y + ny;
+      const rx = p.dx + nx;
+      const ry = p.dy + ny;
       const key = (ry + 8) * 16 + (rx + 8);
       if (!occupied.has(key) && !seen.has(key)) {
         seen.add(key);

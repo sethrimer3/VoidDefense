@@ -660,18 +660,20 @@ export class VoidRenderer {
         if (!dirtyChunks[chunkIdx]) continue;
         const x0 = cx * CHUNK_SIZE;
         const y0 = cy * CHUNK_SIZE;
-        if (x0 < minX) minX = x0;
-        if (y0 < minY) minY = y0;
         const x1 = Math.min(targetW, x0 + CHUNK_SIZE);
         const y1 = Math.min(targetH, y0 + CHUNK_SIZE);
-        if (x1 > maxX) maxX = x1;
-        if (y1 > maxY) maxY = y1;
-        this.paintChunk(world, x0, y0, x1, y1);
+        if (this.paintChunk(world, x0, y0, x1, y1)) {
+          if (x0 < minX) minX = x0;
+          if (y0 < minY) minY = y0;
+          if (x1 > maxX) maxX = x1;
+          if (y1 > maxY) maxY = y1;
+        }
       }
     }
 
     if (maxX > minX && maxY > minY) {
       this.tctx.putImageData(this.terrainImageData, 0, 0, minX, minY, maxX - minX, maxY - minY);
+      this.ledgeDirty = true;
     }
 
     world.grid.clearDirtyFlags();
@@ -755,13 +757,14 @@ export class VoidRenderer {
     return np;
   }
 
-  private paintChunk(world: VoidWorld, x0: number, y0: number, x1: number, y1: number): void {
+  private paintChunk(world: VoidWorld, x0: number, y0: number, x1: number, y1: number): boolean {
     const { w, h } = world.grid;
     const { material, landCover, buildingAt, streetTier, hp: hpArr, maxHp: maxHpArr, isBaselineCell, buildings } = world;
 
     // Distance to the nearest Void cell for every cell of the chunk (plus margin), as a
     // two-pass chamfer transform over a small local window. Skipped when no Void is near.
     const nearVoid = this.buildDistanceWindow(world, x0, y0);
+    let changed = false;
 
     for (let y = y0; y < y1; y++) {
       const row = y * w;
@@ -814,8 +817,10 @@ export class VoidRenderer {
         this.paintCell(world, x, y, nearVoid, shadowRaw);
         this.paintedPixels[idx] = signature;
         this.paintedNeighbors[idx] = neighbors;
+        changed = true;
       }
     }
+    return changed;
   }
 
   /** Fills `distWindow` with chamfer 3-4 distances to the nearest Void cell for the window
@@ -1231,7 +1236,23 @@ export class VoidRenderer {
     lap("portals");
 
     // Exposed strata and undercuts sit in front of the nebula and interior wisps, below the ground lip.
-    paintVoidLedge(c, world, voidField.frontierCells);
+    if (
+      this.ledgeDirty ||
+      this.lastFrontierLen !== voidField.frontierCells.length ||
+      this.ledgeLayer.width !== w ||
+      this.ledgeLayer.height !== h
+    ) {
+      if (this.ledgeLayer.width !== w || this.ledgeLayer.height !== h) {
+        this.ledgeLayer.width = w;
+        this.ledgeLayer.height = h;
+      } else {
+        this.ledgeCtx.clearRect(0, 0, w, h);
+      }
+      paintVoidLedge(this.ledgeCtx, world, voidField.frontierCells);
+      this.ledgeDirty = false;
+      this.lastFrontierLen = voidField.frontierCells.length;
+    }
+    rawScene.drawImage(this.ledgeLayer, 0, 0);
 
     // Step cosmetic fleeing civilians and draw beneath-ground falling chunks/civilians (`z < 0`),
     // clipped behind northern ledge front faces.
@@ -1266,11 +1287,7 @@ export class VoidRenderer {
 
     // 5. Draw crystalline Void Nodes (Phase 6+ infantry targets) with organic nebula contours
     for (const node of voidField.nodes) {
-      const contour = computeNodeContour(node, animTime, this.reduceEffects);
-      for (const pt of contour) {
-        c.fillStyle = pt.color;
-        c.fillRect(pt.x, pt.y, 1, 1);
-      }
+      paintNodeContour(rawScene, node, animTime, this.reduceEffects);
       c.fillStyle = "#59127a";
       c.fillRect(node.x - 1.2, node.y - 1.2, 2.4, 2.4);
       c.fillStyle = "#e056fd";
@@ -1281,10 +1298,10 @@ export class VoidRenderer {
 
     // 6. Draw user-drawn wall blueprints
     for (const bp of combat.blueprints) {
-      c.fillStyle = "rgba(255, 168, 52, 0.42)";
+      rawScene.fillStyle = "rgba(255, 168, 52, 0.42)";
       for (const cIdx of bp.cells) {
         if (world.material[cIdx] !== CellMaterial.WALL) {
-          c.fillRect(world.grid.xOf(cIdx), world.grid.yOf(cIdx), 1, 1);
+          rawScene.fillRect(world.grid.xOf(cIdx), world.grid.yOf(cIdx), 1, 1);
         }
       }
     }
@@ -1374,104 +1391,157 @@ export class VoidRenderer {
     // Living wheat: sparse crop index, spatial buckets for ground-unit parting.
     // Use simulation time so pause and speed apply; reduced motion retains parted paths.
     const farmTime = this.reduceEffects ? 0 : sim.elapsedSeconds;
-    const walkers = new Map<number, { x: number; y: number }[]>();
     const bucketW = Math.ceil(world.grid.w / 8);
-    for (const a of [...combat.agents.filter(a => a.layer !== "air"), ...combat.organisms.filter(a => a.kind !== "voidBee" && a.kind !== "nebulaQueen"), ...this.civilians.filter(a => a.active && a.z === 0)]) {
-      const key = Math.floor(a.y / 8) * bucketW + Math.floor(a.x / 8);
-      const bucket = walkers.get(key) ?? [];
-      bucket.push(a); walkers.set(key, bucket);
+    const bucketH = Math.ceil(world.grid.h / 8);
+    const totalBuckets = bucketW * bucketH;
+    if (this.walkerBuckets.length < totalBuckets) {
+      while (this.walkerBuckets.length < totalBuckets) this.walkerBuckets.push([]);
     }
+    this.walkerBucketW = bucketW;
+    for (let i = 0; i < this.dirtyWalkerBuckets.length; i++) {
+      this.walkerBuckets[this.dirtyWalkerBuckets[i]].length = 0;
+    }
+    this.dirtyWalkerBuckets.length = 0;
+    const pushWalker = (a: { x: number; y: number }): void => {
+      const bx = Math.floor(a.x / 8);
+      const by = Math.floor(a.y / 8);
+      if (bx < 0 || bx >= bucketW || by < 0 || by >= bucketH) return;
+      const key = by * bucketW + bx;
+      const bucket = this.walkerBuckets[key];
+      if (bucket.length === 0) this.dirtyWalkerBuckets.push(key);
+      bucket.push(a);
+    };
+    for (let i = 0; i < combat.agents.length; i++) {
+      const a = combat.agents[i];
+      if (a.layer !== "air") pushWalker(a);
+    }
+    for (let i = 0; i < combat.organisms.length; i++) {
+      const a = combat.organisms[i];
+      if (a.kind !== "voidBee" && a.kind !== "nebulaQueen") pushWalker(a);
+    }
+    for (let i = 0; i < this.civilians.length; i++) {
+      const a = this.civilians[i];
+      if (a.active && a.z === 0) pushWalker(a);
+    }
+    const hasWalkers = this.dirtyWalkerBuckets.length > 0;
+    const nearby = this.nearbyWalkers;
     for (const idx of world.wheatCells) {
-      const x = idx % world.grid.w, y = Math.floor(idx / world.grid.w);
+      const x = idx % world.grid.w, y = (idx / world.grid.w) | 0;
       if ((x & 1) || (y & 1) || world.material[idx] === CellMaterial.VOID ||
           world.material[idx] === CellMaterial.SALVAGE || world.buildingAt[idx] >= 0 ||
           !isWheat(world.landCover[idx]) || sim.farms.scorch[idx]) continue;
-      const nearby: { x: number; y: number }[] = [];
-      const bx = Math.floor(x / 8), by = Math.floor(y / 8);
-      for (let oy = -1; oy <= 1; oy++) for (let ox = -1; ox <= 1; ox++) {
-        if (bx + ox < 0 || bx + ox >= bucketW || by + oy < 0) continue;
-        const bucket = walkers.get((by + oy) * bucketW + bx + ox);
-        if (bucket) nearby.push(...bucket);
+      nearby.length = 0;
+      if (hasWalkers) {
+        const bx = x >> 3, by = y >> 3;
+        const oyMin = by > 0 ? -1 : 0;
+        const oyMax = by + 1 < bucketH ? 1 : 0;
+        const oxMin = bx > 0 ? -1 : 0;
+        const oxMax = bx + 1 < bucketW ? 1 : 0;
+        for (let oy = oyMin; oy <= oyMax; oy++) {
+          const row = (by + oy) * this.walkerBucketW;
+          for (let ox = oxMin; ox <= oxMax; ox++) {
+            const bucket = this.walkerBuckets[row + bx + ox];
+            for (let k = 0; k < bucket.length; k++) nearby.push(bucket[k]);
+          }
+        }
       }
       const lean = Math.round(wheatLean(x, y, farmTime, nearby));
-      const close = nearby.some(a => Math.hypot(a.x - x, a.y - y) < 1.3);
+      let close = false;
+      for (let k = 0; k < nearby.length; k++) {
+        const a = nearby[k];
+        const dx = a.x - x, dy = a.y - y;
+        if (dx * dx + dy * dy < 1.69) { close = true; break; }
+      }
       const tipX = x + lean, tipY = y - (close ? 0 : 1);
-      if (!world.grid.inBounds(tipX, tipY) || !isWheat(world.landCover[world.grid.index(tipX, tipY)]) ||
-          world.material[world.grid.index(tipX, tipY)] === CellMaterial.VOID || world.buildingAt[world.grid.index(tipX, tipY)] >= 0) continue;
-      c.fillStyle = "#6c7137"; c.fillRect(x, y, 1, 1);
-      c.fillStyle = (x + y) % 4 === 0 ? "#dfc068" : "#c49f4a";
-      c.fillRect(tipX, tipY, 1, 1);
-      if (closeZoom && !close && (x + y) % 4 === 0) { c.fillStyle = "#edd585"; c.fillRect(tipX, tipY - 1, 1, 1); }
+      if (tipX < 0 || tipX >= w || tipY < 0 || tipY >= h) continue;
+      const tipIdx = tipY * w + tipX;
+      if (!isWheat(world.landCover[tipIdx]) ||
+          world.material[tipIdx] === CellMaterial.VOID || world.buildingAt[tipIdx] >= 0) continue;
+      rawScene.fillStyle = "#6c7137"; rawScene.fillRect(x, y, 1, 1);
+      rawScene.fillStyle = ((x + y) & 3) === 0 ? "#dfc068" : "#c49f4a";
+      rawScene.fillRect(tipX, tipY, 1, 1);
+      if (closeZoom && !close && ((x + y) & 3) === 0) {
+        rawScene.fillStyle = "#edd585";
+        rawScene.fillRect(tipX, tipY - 1, 1, 1);
+      }
     }
 
-    // 7a. Farmland livestock: sparse pixel-art sheep and cows on intact meadow/farmland
+    // 7a. Farmland livestock: pre-indexed sparse pixel-art sheep and cows on intact meadow/farmland
     const { w: gw, h: gh } = world.grid;
-    for (let gy = 0; gy < gh; gy += 2) {
-      for (let gx = 0; gx < gw; gx += 2) {
-        const idx = gy * gw + gx;
-        if (world.material[idx] === CellMaterial.VOID || sim.farms.scorch[idx]) continue;
-        const lc = world.landCover[idx];
-        if (lc !== LandCover.FIELD_H && lc !== LandCover.FIELD_V && lc !== LandCover.MEADOW) continue;
-        const hVal = ((gx * 73856093) ^ (gy * 19349663) ^ (world.seed * 83492791)) >>> 0;
-        const threshold = lc === LandCover.MEADOW ? 0.025 : 0.015;
-        if ((hVal % 1000) / 1000 >= threshold) continue;
-        const isCow = ((hVal >>> 10) & 1) === 1;
-        const ax = gx + 0.25;
-        const ay = gy + 0.25;
-        if (!closeZoom) {
-          c.fillStyle = isCow ? "#d8d0c0" : "#e3ded3";
-          c.fillRect(gx, gy, 1, 1);
-        } else if (isCow) {
-          // 0.5-px pixel-art cow (4x2 half-pixels = 2.0 x 1.0 world px)
-          c.fillStyle = "#e8e2d5";
-          c.fillRect(ax, ay, 1.5, 1.0);
-          c.fillStyle = "#3b281c";
-          c.fillRect(ax + 0.5, ay, 0.5, 0.5); // spot
-          c.fillRect(ax + 1.5, ay, 0.5, 0.5); // head
-          c.fillRect(ax, ay + 1.0, 0.5, 0.5); // back leg
-          c.fillRect(ax + 1.0, ay + 1.0, 0.5, 0.5); // front leg
-        } else {
-          // 0.5-px pixel-art sheep (3x2 half-pixels = 1.5 x 1.0 world px)
-          c.fillStyle = "#edeae2";
-          c.fillRect(ax, ay, 1.5, 1.0);
-          c.fillStyle = "#2c2623";
-          c.fillRect(ax + 1.5, ay + 0.25, 0.5, 0.5); // head
-          c.fillRect(ax, ay + 1.0, 0.5, 0.5); // back leg
-          c.fillRect(ax + 1.0, ay + 1.0, 0.5, 0.5); // front leg
+    if (this.livestockWorld !== world) {
+      this.livestockWorld = world;
+      this.livestockList = [];
+      for (let gy = 0; gy < gh; gy += 2) {
+        const row = gy * gw;
+        for (let gx = 0; gx < gw; gx += 2) {
+          const idx = row + gx;
+          const lc = world.landCover[idx];
+          if (lc !== LandCover.FIELD_H && lc !== LandCover.FIELD_V && lc !== LandCover.MEADOW) continue;
+          const hVal = ((gx * 73856093) ^ (gy * 19349663) ^ (world.seed * 83492791)) >>> 0;
+          const threshold = lc === LandCover.MEADOW ? 0.025 : 0.015;
+          if ((hVal % 1000) / 1000 >= threshold) continue;
+          this.livestockList.push({ x: gx, y: gy, idx, isCow: ((hVal >>> 10) & 1) === 1 });
         }
+      }
+    }
+    for (let i = 0; i < this.livestockList.length; i++) {
+      const lv = this.livestockList[i];
+      const idx = lv.idx;
+      if (world.material[idx] === CellMaterial.VOID || sim.farms.scorch[idx]) continue;
+      if (!closeZoom) {
+        rawScene.fillStyle = lv.isCow ? "#d8d0c0" : "#e3ded3";
+        rawScene.fillRect(lv.x, lv.y, 1, 1);
+      } else if (lv.isCow) {
+        const ax = lv.x + 0.25;
+        const ay = lv.y + 0.25;
+        // 0.5-px pixel-art cow (4x2 half-pixels = 2.0 x 1.0 world px)
+        c.fillStyle = "#e8e2d5";
+        c.fillRect(ax, ay, 1.5, 1.0);
+        c.fillStyle = "#3b281c";
+        c.fillRect(ax + 0.5, ay, 0.5, 0.5); // spot
+        c.fillRect(ax + 1.5, ay, 0.5, 0.5); // head
+        c.fillRect(ax, ay + 1.0, 0.5, 0.5); // back leg
+        c.fillRect(ax + 1.0, ay + 1.0, 0.5, 0.5); // front leg
+      } else {
+        const ax = lv.x + 0.25;
+        const ay = lv.y + 0.25;
+        // 0.5-px pixel-art sheep (3x2 half-pixels = 1.5 x 1.0 world px)
+        c.fillStyle = "#edeae2";
+        c.fillRect(ax, ay, 1.5, 1.0);
+        c.fillStyle = "#2c2623";
+        c.fillRect(ax + 1.5, ay + 0.25, 0.5, 0.5); // head
+        c.fillRect(ax, ay + 1.0, 0.5, 0.5); // back leg
+        c.fillRect(ax + 1.0, ay + 1.0, 0.5, 0.5); // front leg
       }
     }
 
     // 7a0. Seamwalker frozen-Void cells (dark stationary purple interior with angular amber staples)
     if (sim.voidField.frozenVoidCells.size > 0) {
-      const gw = world.grid.w;
       for (const [idx, rem] of sim.voidField.frozenVoidCells) {
         if (world.material[idx] !== CellMaterial.VOID) continue;
         const cx = idx % gw;
         const cy = (idx / gw) | 0;
         const expiring = rem < 0.6 && !this.reduceEffects && ((sim.tick >> 2) & 1) === 1;
         // Dark motionless interior
-        c.fillStyle = expiring ? "#26123d" : "#160b26";
-        c.fillRect(cx, cy, 1, 1);
+        rawScene.fillStyle = expiring ? "#26123d" : "#160b26";
+        rawScene.fillRect(cx, cy, 1, 1);
         // Whole-pixel angular amber staple marks on alternating 2x2 grid
         if ((cx & 1) === 0 && (cy & 1) === 0) {
-          c.fillStyle = expiring ? "#ffcf70" : "#e09132";
-          c.fillRect(cx, cy, 1, 1);
+          rawScene.fillStyle = expiring ? "#ffcf70" : "#e09132";
+          rawScene.fillRect(cx, cy, 1, 1);
         }
       }
     }
 
     // 7a1. Countervoid Heart luminous flowing orange field (distinct from dark stapled frozen Void)
     if (sim.voidField.countervoidCells.size > 0) {
-      const gw = world.grid.w;
-      const gh = world.grid.h;
       const phase = this.reduceEffects ? 0 : sim.tick * 0.14;
       for (const idx of sim.voidField.countervoidCells) {
         const cx = idx % gw;
         const cy = (idx / gw) | 0;
         const wave = this.reduceEffects ? 0.5 : 0.5 + 0.5 * Math.sin(phase + cx * 0.7 + cy * 0.5);
-        c.fillStyle = wave > 0.65 ? "#ffa238" : wave > 0.35 ? "#eb7a1e" : "#c75914";
-        c.fillRect(cx, cy, 1, 1);
+        rawScene.fillStyle = wave > 0.65 ? "#ffa238" : wave > 0.35 ? "#eb7a1e" : "#c75914";
+        rawScene.fillRect(cx, cy, 1, 1);
         // Frontier contact sparks against purple Void
         const touchesVoid =
           (cx > 0 && world.material[idx - 1] === CellMaterial.VOID) ||
@@ -1479,8 +1549,8 @@ export class VoidRenderer {
           (cy > 0 && world.material[idx - gw] === CellMaterial.VOID) ||
           (cy + 1 < gh && world.material[idx + gw] === CellMaterial.VOID);
         if (touchesVoid) {
-          c.fillStyle = "#ffe6a3";
-          c.fillRect(cx, cy, 1, 1);
+          rawScene.fillStyle = "#ffe6a3";
+          rawScene.fillRect(cx, cy, 1, 1);
         }
       }
     }
@@ -1805,7 +1875,6 @@ export class VoidRenderer {
 
     // Composite the sorted building structure atlas in 1 drawImage call
     const atlas = this.spriteCache.getBoardAtlas(world, this.buildingHeight, this.lastDirtyChunks);
-    const rawScene = this.sceneCtx;
     if (atlas) {
       rawScene.drawImage(atlas, 0, 0);
     }
@@ -1818,10 +1887,10 @@ export class VoidRenderer {
       const rise = b ? elevationOf(b, this.buildingHeight) : 0;
       const fy = y - rise;
       const flicker = this.reduceEffects ? 0 : (Math.floor(sim.elapsedSeconds * 9) + idx) % 3;
-      c.fillStyle = "#d55b28"; c.fillRect(x, fy - 1, 1, 2);
-      c.fillStyle = "#ffe1a0"; c.fillRect(x, fy - 1 - (flicker === 0 ? 1 : 0), 1, 1);
+      rawScene.fillStyle = "#d55b28"; rawScene.fillRect(x, fy - 1, 1, 2);
+      rawScene.fillStyle = "#ffe1a0"; rawScene.fillRect(x, fy - 1 - (flicker === 0 ? 1 : 0), 1, 1);
       if (!this.reduceEffects && idx % 3 === 0) {
-        c.fillStyle = "#635b56"; c.fillRect(x + flicker - 1, fy - 3 - Math.floor(fire.age % 2), 1, 1);
+        rawScene.fillStyle = "#635b56"; rawScene.fillRect(x + flicker - 1, fy - 3 - Math.floor(fire.age % 2), 1, 1);
       }
     }
 
@@ -1839,8 +1908,8 @@ export class VoidRenderer {
           const sx = Math.round(civ.x);
           const sy = Math.round(civ.y - civ.z);
           if (sx >= 0 && sx < w && sy >= 0 && sy < h) {
-            c.fillStyle = civ.color;
-            c.fillRect(sx, sy, 1, 1);
+            rawScene.fillStyle = civ.color;
+            rawScene.fillRect(sx, sy, 1, 1);
           }
         }
       }
@@ -1850,8 +1919,8 @@ export class VoidRenderer {
         const sx = Math.round(p.x);
         const sy = Math.round(p.y - p.z);
         if (sx >= 0 && sx < w && sy >= 0 && sy < h) {
-          c.fillStyle = p.color;
-          c.fillRect(sx, sy, 1, 1);
+          rawScene.fillStyle = p.color;
+          rawScene.fillRect(sx, sy, 1, 1);
         }
       }
     }
@@ -1874,25 +1943,29 @@ export class VoidRenderer {
       }
       if (needsFront) drawTower(t);
     }
-    for (let i = 0; i < combat.agents.length; i++) {
-      const a = combat.agents[i];
-      const ax = Math.floor(a.x);
-      const ay = Math.floor(a.y);
-      if (ax >= 0 && ax < w && ay + 1 < h) {
-        // If a building cell lies within 15 px south of the agent, that building is in front of the agent;
-        // otherwise draw the agent in front of any northern building's facade.
-        let occludedBySouthernBuilding = false;
-        for (let dy = 1; dy <= MAX_ELEVATION_PX && ay + dy < h; dy++) {
-          const bId = world.buildingAt[(ay + dy) * w + ax];
-          if (bId >= 0) {
-            const sp = this.spriteCache.getSprite(world, world.buildings[bId], this.buildingHeight, false);
-            if (sp.intactCount > 0 && ay >= sp.y && ay < sp.bottomY) {
-              occludedBySouthernBuilding = true;
-              break;
+    if (this.buildingHeight !== "flat") {
+      for (let i = 0; i < combat.agents.length; i++) {
+        const a = combat.agents[i];
+        const ax = Math.floor(a.x);
+        const ay = Math.floor(a.y);
+        if (ax >= 0 && ax < w && ay + 1 < h) {
+          // If a building cell lies within 15 px south of the agent, that building is in front of the agent;
+          // otherwise draw the agent in front of any northern building's facade.
+          let occludedBySouthernBuilding = false;
+          let lastBId = -1;
+          for (let dy = 1; dy <= MAX_ELEVATION_PX && ay + dy < h; dy++) {
+            const bId = world.buildingAt[(ay + dy) * w + ax];
+            if (bId >= 0 && bId !== lastBId) {
+              lastBId = bId;
+              const sp = this.spriteCache.getSprite(world, world.buildings[bId], this.buildingHeight, false);
+              if (sp.intactCount > 0 && ay >= sp.y && ay < sp.bottomY) {
+                occludedBySouthernBuilding = true;
+                break;
+              }
             }
           }
+          if (!occludedBySouthernBuilding) drawAgent(a);
         }
-        if (!occludedBySouthernBuilding) drawAgent(a);
       }
     }
 
@@ -1978,11 +2051,7 @@ export class VoidRenderer {
     // 10. Draw cosmic Void organisms with nebula contours
     for (const o of combat.organisms) {
       // Nebula-colored organic contour around organism silhouette
-      const contour = computeOrganismContour(o, animTime, this.reduceEffects);
-      for (const pt of contour) {
-        c.fillStyle = pt.color;
-        c.fillRect(pt.x, pt.y, 1, 1);
-      }
+      paintOrganismContour(rawScene, o, animTime, this.reduceEffects);
 
       if (o.trail) {
         c.fillStyle = "rgba(195, 92, 255, 0.55)";
@@ -2140,11 +2209,21 @@ export class VoidRenderer {
     // 14. Torn-off land drifting into the anomaly: heavy slabs keep their terrain colour
     //     (grass, crops, pavement, lit masonry) with a dark underside and violet rim; small
     //     sparks fade as they cross the black-hole event horizon so the core stays dark.
-    for (const d of physics.debris) {
+    const swallowPortals = activePortals.map((p) => {
+      const r = Math.max(3.6, p.radius * 0.42) * 0.92;
+      return { x: p.x, y: p.y, r2: r * r };
+    });
+    const swallowCount = swallowPortals.length;
+    let sparkAlphaActive = false;
+
+    for (let i = 0; i < physics.debris.length; i++) {
+      const d = physics.debris[i];
       let swallowed = false;
-      for (const p of activePortals) {
-        const coreR = Math.max(3.6, p.radius * 0.42);
-        if (dist(d.x - p.x, d.y - p.y) < coreR * 0.92) {
+      for (let j = 0; j < swallowCount; j++) {
+        const sp = swallowPortals[j];
+        const dx = d.x - sp.x;
+        const dy = d.y - sp.y;
+        if (dx * dx + dy * dy < sp.r2) {
           swallowed = true;
           break;
         }
@@ -2153,6 +2232,10 @@ export class VoidRenderer {
 
       const slab = d.size >= 1.0 && d.maxLife > 1.5;
       if (slab) {
+        if (sparkAlphaActive) {
+          rawScene.globalAlpha = 1;
+          sparkAlphaActive = false;
+        }
         const sz = d.size * Math.max(0.35, 1 - (d.life / d.maxLife) * 0.6);
         const half = sz * 0.5;
         c.fillStyle = "rgba(150, 50, 230, 0.35)";
@@ -2163,19 +2246,40 @@ export class VoidRenderer {
         c.fillRect(d.x - half, d.y + half - 0.24, sz, 0.24);
         c.fillRect(d.x + half - 0.24, d.y - half, 0.24, sz);
       } else {
-        c.globalAlpha = 0.55;
-        if (!this.reduceEffects) {
-          c.strokeStyle = d.glowColor;
-          c.lineWidth = d.size * 0.75;
-          c.beginPath();
-          c.moveTo(d.px, d.py);
-          c.lineTo(d.x, d.y);
-          c.stroke();
+        if (!sparkAlphaActive) {
+          rawScene.globalAlpha = 0.55;
+          sparkAlphaActive = true;
         }
-        c.fillStyle = d.color;
-        c.fillRect(d.x - d.size * 0.4, d.y - d.size * 0.4, d.size * 0.8, d.size * 0.8);
-        c.globalAlpha = 1;
+        if (!this.reduceEffects) {
+          let x0 = Math.round(d.px);
+          let y0 = Math.round(d.py);
+          const x1 = Math.round(d.x);
+          const y1 = Math.round(d.y);
+          rawScene.fillStyle = d.glowColor;
+          if (x0 === x1 && y0 === y1) {
+            rawScene.fillRect(x0, y0, 1, 1);
+          } else {
+            const dx = Math.abs(x1 - x0);
+            const dy = -Math.abs(y1 - y0);
+            const sx = x0 < x1 ? 1 : -1;
+            const sy = y0 < y1 ? 1 : -1;
+            let err = dx + dy;
+            for (;;) {
+              rawScene.fillRect(x0, y0, 1, 1);
+              if (x0 === x1 && y0 === y1) break;
+              const e2 = 2 * err;
+              if (e2 >= dy) { err += dy; x0 += sx; }
+              if (e2 <= dx) { err += dx; y0 += sy; }
+            }
+          }
+        }
+        rawScene.fillStyle = d.color;
+        const sz = Math.max(1, Math.round(d.size * 0.8));
+        rawScene.fillRect(Math.floor(d.x - d.size * 0.4), Math.floor(d.y - d.size * 0.4), sz, sz);
       }
+    }
+    if (sparkAlphaActive) {
+      rawScene.globalAlpha = 1;
     }
 
     lap("debris");
