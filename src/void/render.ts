@@ -1095,8 +1095,34 @@ export class VoidRenderer {
         }
         case LandCover.FIELD_H: color = y % 3 === 0 ? "#695238" : "#c99b3c"; break;
         case LandCover.FIELD_V: color = x % 3 === 0 ? "#695238" : "#a8b347"; break;
-        case LandCover.ORCHARD: color = x % 4 === 1 && y % 4 === 1 ? "#c96e3b" : "#35753f"; break;
-        case LandCover.SILO: color = x % 3 === 0 ? "#cfd8e3" : "#65707d"; break;
+        case LandCover.ORCHARD: {
+          const gx = Math.floor(x / 4);
+          const gy = Math.floor(y / 4);
+          const jx = ((gx * 73 + gy * 37 + world.seed) & 1);
+          const jy = ((gx * 29 + gy * 83 + world.seed) & 1);
+          const cx = gx * 4 + 1 + jx;
+          const cy = gy * 4 + 1 + jy;
+          const dx = x - cx;
+          const dy = y - cy;
+          const d2 = dx * dx + dy * dy;
+          if (d2 <= 1.3) {
+            const fleck = ((x * 31 + y * 17 + world.seed) & 15);
+            if (fleck === 0) color = "#d97a3e";
+            else if (fleck === 1) color = "#e6ad4c";
+            else color = dx + dy <= 0 ? "#4a8c42" : "#346e38";
+          } else if (d2 <= 2.6) {
+            color = dx + dy <= 0 ? "#38733b" : "#26522b";
+          } else {
+            color = patch > 0.55 ? "#466e30" : "#3b5e28";
+          }
+          break;
+        }
+        case LandCover.SILO: {
+          const leftSilo = x > 0 && world.landCover[idx - 1] === LandCover.SILO;
+          const rightSilo = x + 1 < w && world.landCover[idx + 1] === LandCover.SILO;
+          color = !leftSilo ? "#cfd8e3" : !rightSilo ? "#55606d" : "#8b96a6";
+          break;
+        }
         default:
           color = patch > 0.65 ? "#507d39" : patch > 0.35 ? "#467032" : "#3d632b";
       }
@@ -1561,7 +1587,7 @@ export class VoidRenderer {
       for (const idx of world.wheatCells) {
         const wx = idx % world.grid.w;
         const wy = (idx / world.grid.w) | 0;
-        if ((wx & 1) === 0 && (wy & 1) === 0) {
+        if (((wx + (wy & 1)) & 1) === 0 && ((wx * 7 + wy * 13) & 7) !== 0) {
           this.evenWheatCells.push(idx);
         }
       }
@@ -1601,8 +1627,11 @@ export class VoidRenderer {
       const tipIdx = tipY * w + tipX;
       if (!isWheat(world.landCover[tipIdx]) ||
           world.material[tipIdx] === CellMaterial.VOID || world.buildingAt[tipIdx] >= 0) continue;
-      rawScene.fillStyle = "#6c7137"; rawScene.fillRect(x, y, 1, 1);
-      rawScene.fillStyle = ((x + y) & 3) === 0 ? "#dfc068" : "#c49f4a";
+      rawScene.fillStyle = ((x + y) & 1) === 0 ? "#6c7137" : "#787c3d";
+      rawScene.fillRect(x, y, 1, 1);
+      const grainTone = (x * 11 + y * 17) & 3;
+      rawScene.fillStyle =
+        grainTone === 0 ? "#e6c86e" : grainTone === 1 ? "#d4ad4c" : grainTone === 2 ? "#c2963b" : "#edd585";
       rawScene.fillRect(tipX, tipY, 1, 1);
       if (closeZoom && !close && ((x + y) & 3) === 0) {
         rawScene.fillStyle = "#edd585";

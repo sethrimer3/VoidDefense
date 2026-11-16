@@ -671,6 +671,10 @@ export class VoidWorld {
                   : LandCover.FIELD_H;
             for (let y = fy; y < fy + fh; y++) {
               for (let x = fx; x < fx + fw; x++) {
+                const onEdgeX = x === fx || x === fx + fw - 1;
+                const onEdgeY = y === fy || y === fy + fh - 1;
+                if (onEdgeX && onEdgeY && hash01(seed, 95, x, y) < 0.72) continue;
+                if ((onEdgeX || onEdgeY) && hash01(seed, 96, x, y) < 0.16) continue;
                 this.landCover[y * w + x] = cover;
               }
             }
@@ -700,7 +704,13 @@ export class VoidWorld {
             const cover =
               roll < 0.035 ? LandCover.ORCHARD : roll < 0.1 ? LandCover.FIELD_H : LandCover.FIELD_V;
             for (let y = jy; y < jy + fh; y++) {
-              for (let x = jx; x < jx + fw; x++) this.landCover[y * w + x] = cover;
+              for (let x = jx; x < jx + fw; x++) {
+                const onEdgeX = x === jx || x === jx + fw - 1;
+                const onEdgeY = y === jy || y === jy + fh - 1;
+                if (onEdgeX && onEdgeY && hash01(seed, 107, x, y) < 0.72) continue;
+                if ((onEdgeX || onEdgeY) && hash01(seed, 108, x, y) < 0.18) continue;
+                this.landCover[y * w + x] = cover;
+              }
             }
           }
         } else if (roll < 0.3) {

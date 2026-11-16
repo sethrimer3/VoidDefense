@@ -19,9 +19,16 @@ export function wheatLean(x: number, y: number, time: number, nearby: readonly {
 }
 
 export function farmSoilColor(x: number, y: number, cover: number, scorch: number): string {
-  if (scorch) return (x + y) % 3 === 0 ? "#423229" : "#292621";
-  const row = cover === LandCover.FIELD_H ? y % 3 : x % 3;
-  return row === 0 ? "#695238" : row === 1 ? "#8a7244" : "#967d49";
+  const n = hash01(19, cover, x, y);
+  if (scorch) {
+    return n < 0.25 ? "#423229" : n < 0.65 ? "#2e2722" : "#221e1a";
+  }
+  const furrow = cover === LandCover.FIELD_H ? y % 3 : x % 3;
+  const shift = n < 0.22 ? -1 : n > 0.82 ? 1 : 0;
+  const band = Math.max(0, Math.min(2, furrow + shift));
+  if (band === 0) return n < 0.5 ? "#5e4932" : "#6c553a";
+  if (band === 1) return n < 0.5 ? "#846d41" : "#8f7748";
+  return n < 0.35 ? "#9e854d" : "#917a46";
 }
 
 export class FarmFires {
