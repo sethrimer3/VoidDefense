@@ -29,22 +29,33 @@ export function pixelPainter(context: CanvasRenderingContext2D): CanvasRendering
     paint();
     context.restore();
   };
+  const polyHits: number[] = [];
   const polygon = (points: Point[]): void => {
-    if (points.length < 3) return;
-    const minY = Math.max(0, Math.floor(Math.min(...points.map(p => p.y))));
-    const maxY = Math.min(context.canvas.height - 1, Math.ceil(Math.max(...points.map(p => p.y))));
+    const n = points.length;
+    if (n < 3) return;
+    let pMinY = points[0].y;
+    let pMaxY = pMinY;
+    for (let i = 1; i < n; i++) {
+      const py = points[i].y;
+      if (py < pMinY) pMinY = py;
+      if (py > pMaxY) pMaxY = py;
+    }
+    const minY = Math.max(0, Math.floor(pMinY));
+    const maxY = Math.min(context.canvas.height - 1, Math.ceil(pMaxY));
+    const cw = context.canvas.width;
     for (let y = minY; y <= maxY; y++) {
-      const hits: number[] = [];
-      for (let i = 0; i < points.length; i++) {
-        const a = points[i], b = points[(i + 1) % points.length];
-        if ((a.y <= y + 0.5 && b.y > y + 0.5) || (b.y <= y + 0.5 && a.y > y + 0.5)) {
-          hits.push(a.x + (y + 0.5 - a.y) * (b.x - a.x) / (b.y - a.y));
+      polyHits.length = 0;
+      const sy = y + 0.5;
+      for (let i = 0; i < n; i++) {
+        const a = points[i], b = points[i + 1 < n ? i + 1 : 0];
+        if ((a.y <= sy && b.y > sy) || (b.y <= sy && a.y > sy)) {
+          polyHits.push(a.x + (sy - a.y) * (b.x - a.x) / (b.y - a.y));
         }
       }
-      hits.sort((a, b) => a - b);
-      for (let i = 0; i + 1 < hits.length; i += 2) {
-        const x = Math.max(0, Math.ceil(hits[i] - 0.5));
-        const end = Math.min(context.canvas.width, Math.ceil(hits[i + 1] - 0.5));
+      if (polyHits.length > 2) polyHits.sort((a, b) => a - b);
+      for (let i = 0; i + 1 < polyHits.length; i += 2) {
+        const x = Math.max(0, Math.ceil(polyHits[i] - 0.5));
+        const end = Math.min(cw, Math.ceil(polyHits[i + 1] - 0.5));
         if (end > x) context.fillRect(x, y, end - x, 1);
       }
     }

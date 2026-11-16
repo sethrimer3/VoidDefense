@@ -63,6 +63,8 @@ import type { VoidWorld } from "./world.ts";
 
 /** Side of the local window a chunk's distance-to-Void transform runs on (chunk plus margin). */
 const DIST_WINDOW = CHUNK_SIZE + CORRUPTION_REACH * 2;
+/** Padded stride (1-cell CHAMFER_INF border on all sides so inner loops need no bounds checks). */
+const DIST_STRIDE = DIST_WINDOW + 2;
 /** Chamfer 3-4 distance: orthogonal step 3, diagonal step 4, so `value / 3` approximates cells. */
 const CHAMFER_INF = 0x7fff;
 
@@ -177,6 +179,8 @@ export class VoidRenderer {
   private buildingElevs = new Uint8Array(0);
   private livestockWorld: VoidWorld | null = null;
   private livestockList: { x: number; y: number; idx: number; isCow: boolean }[] = [];
+  private wheatWorld: VoidWorld | null = null;
+  private evenWheatCells: number[] = [];
   private walkerBuckets: { x: number; y: number }[][] = [];
   private walkerBucketW = 0;
   private readonly dirtyWalkerBuckets: number[] = [];
@@ -193,7 +197,7 @@ export class VoidRenderer {
   /** Cached deep-space backdrop (stars and a faint nebula wash) behind the board. */
   private backdrop: HTMLCanvasElement | null = null;
   /** Scratch chamfer distance-to-Void window for the chunk being painted (tenths of cells ×3). */
-  private readonly distWindow = new Int16Array(DIST_WINDOW * DIST_WINDOW);
+  private readonly distWindow = new Int16Array(DIST_STRIDE * DIST_STRIDE).fill(CHAMFER_INF);
   /** Origin of `distWindow` in cell coordinates for the chunk being painted. */
   private distOx = 0;
   private distOy = 0;
@@ -851,7 +855,7 @@ export class VoidRenderer {
 
     for (let y = y0; y < y1; y++) {
       const row = y * w;
-      const distRow = (y - this.distOy) * DIST_WINDOW - this.distOx;
+      const distRow = (y - this.distOy + 1) * DIST_STRIDE - this.distOx + 1;
       for (let x = x0; x < x1; x++) {
         const idx = row + x;
         const mat = material[idx];
@@ -916,52 +920,73 @@ export class VoidRenderer {
     this.distOy = oy;
     const D = this.distWindow;
     const N = DIST_WINDOW;
+    const S = DIST_STRIDE;
     let any = false;
-    for (let ly = 0; ly < N; ly++) {
-      const y = oy + ly;
-      const inY = y >= 0 && y < h;
-      const row = y * w;
-      for (let lx = 0; lx < N; lx++) {
-        const x = ox + lx;
-        let v = CHAMFER_INF;
-        if (inY && x >= 0 && x < w && mat[row + x] === CellMaterial.VOID) {
-          v = 0;
-          any = true;
+    if (ox >= 0 && oy >= 0 && ox + N <= w && oy + N <= h) {
+      for (let ly = 0; ly < N; ly++) {
+        const row = (oy + ly) * w + ox;
+        const dRow = (ly + 1) * S + 1;
+        for (let lx = 0; lx < N; lx++) {
+          if (mat[row + lx] === CellMaterial.VOID) {
+            D[dRow + lx] = 0;
+            any = true;
+          } else {
+            D[dRow + lx] = CHAMFER_INF;
+          }
         }
-        D[ly * N + lx] = v;
+      }
+    } else {
+      for (let ly = 0; ly < N; ly++) {
+        const y = oy + ly;
+        const inY = y >= 0 && y < h;
+        const row = y * w;
+        const dRow = (ly + 1) * S + 1;
+        for (let lx = 0; lx < N; lx++) {
+          const x = ox + lx;
+          if (inY && x >= 0 && x < w && mat[row + x] === CellMaterial.VOID) {
+            D[dRow + lx] = 0;
+            any = true;
+          } else {
+            D[dRow + lx] = CHAMFER_INF;
+          }
+        }
       }
     }
     if (!any) return false;
-    // Forward pass (only rows up to CORRUPTION_REACH + CHUNK_SIZE can propagate SE into the chunk)
+    // Forward pass (1-cell CHAMFER_INF border means zero bounds checks; only rows up to CORRUPTION_REACH + CHUNK_SIZE can reach chunk)
     const fwdMaxY = CORRUPTION_REACH + CHUNK_SIZE;
-    for (let ly = 0; ly < fwdMaxY; ly++) {
-      const row = ly * N;
-      for (let lx = 0; lx < N; lx++) {
+    for (let ly = 1; ly <= fwdMaxY; ly++) {
+      const row = ly * S;
+      for (let lx = 1; lx <= N; lx++) {
         const i = row + lx;
         let v = D[i];
         if (v === 0) continue;
-        if (lx > 0) v = Math.min(v, D[i - 1] + 3);
-        if (ly > 0) {
-          v = Math.min(v, D[i - N] + 3);
-          if (lx > 0) v = Math.min(v, D[i - N - 1] + 4);
-          if (lx + 1 < N) v = Math.min(v, D[i - N + 1] + 4);
-        }
+        const t1 = D[i - 1] + 3;
+        const t2 = D[i - S] + 3;
+        const t3 = D[i - S - 1] + 4;
+        const t4 = D[i - S + 1] + 4;
+        if (t1 < v) v = t1;
+        if (t2 < v) v = t2;
+        if (t3 < v) v = t3;
+        if (t4 < v) v = t4;
         D[i] = v;
       }
     }
-    // Backward pass (only rows down to CORRUPTION_REACH can propagate NW/NE into the chunk)
-    for (let ly = N - 1; ly >= CORRUPTION_REACH; ly--) {
-      const row = ly * N;
-      for (let lx = N - 1; lx >= 0; lx--) {
+    // Backward pass (only rows down to CORRUPTION_REACH + 1 can propagate NW/NE into chunk)
+    for (let ly = N; ly >= CORRUPTION_REACH + 1; ly--) {
+      const row = ly * S;
+      for (let lx = N; lx >= 1; lx--) {
         const i = row + lx;
         let v = D[i];
         if (v === 0) continue;
-        if (lx + 1 < N) v = Math.min(v, D[i + 1] + 3);
-        if (ly + 1 < N) {
-          v = Math.min(v, D[i + N] + 3);
-          if (lx + 1 < N) v = Math.min(v, D[i + N + 1] + 4);
-          if (lx > 0) v = Math.min(v, D[i + N - 1] + 4);
-        }
+        const t1 = D[i + 1] + 3;
+        const t2 = D[i + S] + 3;
+        const t3 = D[i + S + 1] + 4;
+        const t4 = D[i + S - 1] + 4;
+        if (t1 < v) v = t1;
+        if (t2 < v) v = t2;
+        if (t3 < v) v = t3;
+        if (t4 < v) v = t4;
         D[i] = v;
       }
     }
@@ -1060,7 +1085,7 @@ export class VoidRenderer {
       abgr = blendAbgr(abgr, 2, 3, 5, Math.round(shade * 0.75 * 256));
     }
     if (nearVoid) {
-      const distance = this.distWindow[(y - this.distOy) * DIST_WINDOW + x - this.distOx];
+      const distance = this.distWindow[(y - this.distOy + 1) * DIST_STRIDE + x - this.distOx + 1];
       if (distance <= 3) {
         abgr = distance <= 1 ? RIM_ABGR_INNER : RIM_ABGR_OUTER;
       } else if (distance <= CORRUPTION_REACH * 3 && mat !== CellMaterial.WALL && mat !== CellMaterial.BARRIER) {
@@ -1508,11 +1533,23 @@ export class VoidRenderer {
       const a = this.civilians[i];
       if (a.active && a.z === 0) pushWalker(a);
     }
+    if (this.wheatWorld !== world) {
+      this.wheatWorld = world;
+      this.evenWheatCells = [];
+      for (const idx of world.wheatCells) {
+        const wx = idx % world.grid.w;
+        const wy = (idx / world.grid.w) | 0;
+        if ((wx & 1) === 0 && (wy & 1) === 0) {
+          this.evenWheatCells.push(idx);
+        }
+      }
+    }
     const hasWalkers = this.dirtyWalkerBuckets.length > 0;
     const nearby = this.nearbyWalkers;
-    for (const idx of world.wheatCells) {
+    for (let wi = 0; wi < this.evenWheatCells.length; wi++) {
+      const idx = this.evenWheatCells[wi];
       const x = idx % world.grid.w, y = (idx / world.grid.w) | 0;
-      if ((x & 1) || (y & 1) || world.material[idx] === CellMaterial.VOID ||
+      if (world.material[idx] === CellMaterial.VOID ||
           world.material[idx] === CellMaterial.SALVAGE || world.buildingAt[idx] >= 0 ||
           !isWheat(world.landCover[idx]) || sim.farms.scorch[idx]) continue;
       nearby.length = 0;
@@ -1752,20 +1789,20 @@ export class VoidRenderer {
       const spec = TOWER_SPECS[t.type];
       const topY = t.y - tElev;
       // Armored shadow & south base facade (2 px tall)
-      c.fillStyle = "#0d1118";
-      c.fillRect(t.x, topY, t.w, t.h + tElev);
+      rawScene.fillStyle = "#0d1118";
+      rawScene.fillRect(t.x, topY, t.w, t.h + tElev);
       if (tElev > 0) {
-        c.fillStyle = "#18202c";
-        c.fillRect(t.x, t.y + t.h - tElev, t.w, tElev);
+        rawScene.fillStyle = "#18202c";
+        rawScene.fillRect(t.x, t.y + t.h - tElev, t.w, tElev);
       }
-      c.fillStyle = "#242c3a";
-      c.fillRect(t.x, topY, t.w, t.h);
+      rawScene.fillStyle = "#242c3a";
+      rawScene.fillRect(t.x, topY, t.w, t.h);
       // Corner rivets / mounting brackets
-      c.fillStyle = "#5c6b82";
-      c.fillRect(t.x, topY, 1, 1);
-      c.fillRect(t.x + t.w - 1, topY, 1, 1);
-      c.fillRect(t.x, topY + t.h - 1, 1, 1);
-      c.fillRect(t.x + t.w - 1, topY + t.h - 1, 1, 1);
+      rawScene.fillStyle = "#5c6b82";
+      rawScene.fillRect(t.x, topY, 1, 1);
+      rawScene.fillRect(t.x + t.w - 1, topY, 1, 1);
+      rawScene.fillRect(t.x, topY + t.h - 1, 1, 1);
+      rawScene.fillRect(t.x + t.w - 1, topY + t.h - 1, 1, 1);
       // Primary colored turret housing
       if (t.type === "voidSiphon") {
         const s = combat.siphonStates.get(t.uid);
@@ -1891,26 +1928,26 @@ export class VoidRenderer {
       const ax = Math.floor(a.x);
       const ay = Math.floor(a.y);
       if (a.kind === "rifleman") {
-        c.fillStyle = "rgba(10, 12, 16, 0.65)";
-        c.fillRect(ax, ay + 1, 1, 1);
-        c.fillStyle = "#ff8b33";
-        c.fillRect(ax, ay, 1, 1);
-        c.fillStyle = "#ffe4b5";
-        c.fillRect(ax, ay - 1, 1, 1);
+        rawScene.fillStyle = "rgba(10, 12, 16, 0.65)";
+        rawScene.fillRect(ax, ay + 1, 1, 1);
+        rawScene.fillStyle = "#ff8b33";
+        rawScene.fillRect(ax, ay, 1, 1);
+        rawScene.fillStyle = "#ffe4b5";
+        rawScene.fillRect(ax, ay - 1, 1, 1);
       } else if (a.kind === "engineer") {
-        c.fillStyle = "rgba(10, 12, 16, 0.65)";
-        c.fillRect(ax, ay + 1, 1, 1);
-        c.fillStyle = a.carryingMatter > 0 ? "#48e5ff" : "#ffd15c";
-        c.fillRect(ax, ay - 1, 1, 1);
-        c.fillStyle = "#d9822b";
-        c.fillRect(ax, ay, 1, 1);
+        rawScene.fillStyle = "rgba(10, 12, 16, 0.65)";
+        rawScene.fillRect(ax, ay + 1, 1, 1);
+        rawScene.fillStyle = a.carryingMatter > 0 ? "#48e5ff" : "#ffd15c";
+        rawScene.fillRect(ax, ay - 1, 1, 1);
+        rawScene.fillStyle = "#d9822b";
+        rawScene.fillRect(ax, ay, 1, 1);
       } else if (a.kind === "heavyMech") {
-        c.fillStyle = "#161b24";
-        c.fillRect(ax - 1, ay, 2, 2);
-        c.fillStyle = "#ff9e30";
-        c.fillRect(ax - 1, ay - 1, 2, 2);
-        c.fillStyle = "#7afcff";
-        c.fillRect(ax, ay - 1, 1, 1);
+        rawScene.fillStyle = "#161b24";
+        rawScene.fillRect(ax - 1, ay, 2, 2);
+        rawScene.fillStyle = "#ff9e30";
+        rawScene.fillRect(ax - 1, ay - 1, 2, 2);
+        rawScene.fillStyle = "#7afcff";
+        rawScene.fillRect(ax, ay - 1, 1, 1);
       } else if (a.kind === "wallSerpent") {
         c.fillStyle = "#0c1420";
         c.fillRect(a.x - 1.1, a.y - 1.1, 2.2, 2.2);
