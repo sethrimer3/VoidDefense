@@ -165,6 +165,11 @@ export class VoidApp {
   private loupePointer: { clientX: number; clientY: number; cellX: number; cellY: number } | null = null;
   private pointers = new Map<number, { x: number; y: number }>();
   private panMoved = false;
+  private lastPreservedPercent = 100;
+  private lastProfileKey = "";
+  private lastCtrlKey = "";
+  private lastSoundInBattle = false;
+  private statsPillEls: { voidEl: HTMLElement; contactsEl: HTMLElement; unitsEl: HTMLElement; timeEl: HTMLElement } | null = null;
 
   constructor(
     private readonly root: HTMLElement,
@@ -720,18 +725,20 @@ export class VoidApp {
 
     const profBar = this.root.querySelector<HTMLElement>("[data-profile-bar]")!;
     const p = this.save.profile;
-    profBar.innerHTML = p
-      ? `<button type="button" class="void-prof-btn" data-edit-profile>${flagSvg(p.flag, "void-mini-flag")} <span>${escapeText(p.name)}</span> <small>(${p.mode === "underSiege" ? "Under Siege" : "Build & Watch"})</small></button>`
-      : `<button type="button" class="void-prof-btn" data-edit-profile>Set Commander Profile</button>`;
-    profBar.querySelector<HTMLButtonElement>("[data-edit-profile]")!.onclick = () =>
-      this.openProfileDialog(false);
+    const profileKey = p ? `${p.name}\0${p.flag}\0${p.mode}` : "__none__";
+    if (profileKey !== this.lastProfileKey) {
+      this.lastProfileKey = profileKey;
+      profBar.innerHTML = p
+        ? `<button type="button" class="void-prof-btn" data-edit-profile>${flagSvg(p.flag, "void-mini-flag")} <span>${escapeText(p.name)}</span> <small>(${p.mode === "underSiege" ? "Under Siege" : "Build & Watch"})</small></button>`
+        : `<button type="button" class="void-prof-btn" data-edit-profile>Set Commander Profile</button>`;
+      profBar.querySelector<HTMLButtonElement>("[data-edit-profile]")!.onclick = () =>
+        this.openProfileDialog(false);
+    }
 
     // Tactical Telemetry Bar with sleek top-center health/integrity bar and minimal badges
     const { preservedPercent } = this.sim.world.computePreservedBaseline();
+    this.lastPreservedPercent = preservedPercent;
     const isFiniteVoid = Number.isFinite(this.sim.voidField.energyRemaining);
-    const energyPct = isFiniteVoid
-      ? Math.max(0, Math.min(100, (this.sim.voidField.energyRemaining / Math.max(1, this.sim.voidField.initialEnergy)) * 100))
-      : 100;
     const energyText = isFiniteVoid
       ? `${Math.ceil(this.sim.voidField.energyRemaining)}`
       : "∞";
@@ -743,61 +750,77 @@ export class VoidApp {
 
     const statsPills = this.root.querySelector<HTMLElement>("[data-hud-stats-pills]");
     if (statsPills) {
-      statsPills.innerHTML = `
-        <span class="void-hud-pill" title="Void Energy Remaining">Void <b>${energyText}</b></span>
-        <span class="void-hud-pill" title="Active Frontier Contacts">Contacts <b>${this.sim.voidField.totalContactEdges()}</b></span>
-        <span class="void-hud-pill" title="Active Units">Units <b>${this.sim.combat.agents.length}</b></span>
-        <span class="void-hud-pill" title="Elapsed Battle Time">Time <b>${this.sim.elapsedSeconds.toFixed(1)}s</b></span>
-      `;
-    }
-
-    // Run controls
-    const ctrlEl = this.root.querySelector<HTMLElement>("[data-run-controls]")!;
-    ctrlEl.innerHTML = `
-      ${
-        this.sim.phase === "prep"
-          ? `<button type="button" class="primary-btn" data-start-battle>Unleash Void (Start Watch)</button>`
-          : `<button type="button" data-toggle-pause>${this.sim.paused ? "Resume" : "Pause"}</button>`
+      if (!this.statsPillEls || !statsPills.isConnected || statsPills.childElementCount === 0) {
+        statsPills.innerHTML = `
+          <span class="void-hud-pill" title="Void Energy Remaining">Void <b data-pill-void></b></span>
+          <span class="void-hud-pill" title="Active Frontier Contacts">Contacts <b data-pill-contacts></b></span>
+          <span class="void-hud-pill" title="Active Units">Units <b data-pill-units></b></span>
+          <span class="void-hud-pill" title="Elapsed Battle Time">Time <b data-pill-time></b></span>
+        `;
+        this.statsPillEls = {
+          voidEl: statsPills.querySelector<HTMLElement>("[data-pill-void]")!,
+          contactsEl: statsPills.querySelector<HTMLElement>("[data-pill-contacts]")!,
+          unitsEl: statsPills.querySelector<HTMLElement>("[data-pill-units]")!,
+          timeEl: statsPills.querySelector<HTMLElement>("[data-pill-time]")!,
+        };
       }
-      <button type="button" data-cycle-speed>${this.sim.speed}x Speed</button>
-      <button type="button" data-retry-run>Retry</button>
-    `;
-
-    const startBtn = ctrlEl.querySelector<HTMLButtonElement>("[data-start-battle]");
-    if (startBtn) {
-      startBtn.onclick = () => {
-        this.sim.startBattle();
-        this.activeTool = { kind: "none" };
-        this.renderPalette();
-        this.refreshHUD();
-      };
+      this.statsPillEls.voidEl.textContent = energyText;
+      this.statsPillEls.contactsEl.textContent = String(this.sim.voidField.totalContactEdges());
+      this.statsPillEls.unitsEl.textContent = String(this.sim.combat.agents.length);
+      this.statsPillEls.timeEl.textContent = `${this.sim.elapsedSeconds.toFixed(1)}s`;
     }
 
-    const pauseBtn = ctrlEl.querySelector<HTMLButtonElement>("[data-toggle-pause]");
-    if (pauseBtn) {
-      pauseBtn.onclick = () => {
-        this.sim.paused = !this.sim.paused;
-        this.refreshHUD();
-      };
-    }
-
-    const speedBtn = ctrlEl.querySelector<HTMLButtonElement>("[data-cycle-speed]");
-    if (speedBtn) {
-      speedBtn.onclick = () => {
-        this.sim.speed = (this.sim.speed === 1 ? 2 : this.sim.speed === 2 ? 3 : 1) as 1 | 2 | 3;
-        this.refreshHUD();
-      };
-    }
-
-    const retryBtn = ctrlEl.querySelector<HTMLButtonElement>("[data-retry-run]");
-    if (retryBtn) {
-      retryBtn.onclick = () => {
-        if (this.sim.phase === "battle" && !this.sim.outcome) {
-          this.sim.finishRun("lost", "active");
-          this.persist();
+    // Run controls (rebuild only when phase/paused/speed changes so buttons don't detach mid-click)
+    const ctrlKey = `${this.sim.phase}:${this.sim.paused ? 1 : 0}:${this.sim.speed}`;
+    if (ctrlKey !== this.lastCtrlKey) {
+      this.lastCtrlKey = ctrlKey;
+      const ctrlEl = this.root.querySelector<HTMLElement>("[data-run-controls]")!;
+      ctrlEl.innerHTML = `
+        ${
+          this.sim.phase === "prep"
+            ? `<button type="button" class="primary-btn" data-start-battle>Unleash Void (Start Watch)</button>`
+            : `<button type="button" class="void-ctrl-btn" data-toggle-pause>${this.sim.paused ? "Resume" : "Pause"}</button>`
         }
-        this.startNewRun(this.sim.scenario.id);
-      };
+        <button type="button" data-cycle-speed>${this.sim.speed}x Speed</button>
+        <button type="button" data-retry-run>Retry</button>
+      `;
+
+      const startBtn = ctrlEl.querySelector<HTMLButtonElement>("[data-start-battle]");
+      if (startBtn) {
+        startBtn.onclick = () => {
+          this.sim.startBattle();
+          this.activeTool = { kind: "none" };
+          this.renderPalette();
+          this.refreshHUD();
+        };
+      }
+
+      const pauseBtn = ctrlEl.querySelector<HTMLButtonElement>("[data-toggle-pause]");
+      if (pauseBtn) {
+        pauseBtn.onclick = () => {
+          this.sim.paused = !this.sim.paused;
+          this.refreshHUD();
+        };
+      }
+
+      const speedBtn = ctrlEl.querySelector<HTMLButtonElement>("[data-cycle-speed]");
+      if (speedBtn) {
+        speedBtn.onclick = () => {
+          this.sim.speed = (this.sim.speed === 1 ? 2 : this.sim.speed === 2 ? 3 : 1) as 1 | 2 | 3;
+          this.refreshHUD();
+        };
+      }
+
+      const retryBtn = ctrlEl.querySelector<HTMLButtonElement>("[data-retry-run]");
+      if (retryBtn) {
+        retryBtn.onclick = () => {
+          if (this.sim.phase === "battle" && !this.sim.outcome) {
+            this.sim.finishRun("lost", "active");
+            this.persist();
+          }
+          this.startNewRun(this.sim.scenario.id);
+        };
+      }
     }
 
     this.renderTowerInspector();
@@ -1083,10 +1106,11 @@ export class VoidApp {
       const prevTick = this.sim.tick;
       const hadOutcome = !!this.sim.outcome;
       this.sim.advanceFrame(dt);
+      const hudTick = Math.floor(this.sim.tick / 15) !== Math.floor(prevTick / 15);
       if (!hadOutcome && this.sim.outcome) {
         this.persist();
         this.refreshHUD();
-      } else if (Math.floor(this.sim.tick / 15) !== Math.floor(prevTick / 15)) {
+      } else if (hudTick) {
         this.refreshHUD();
         this.renderPalette();
       }
@@ -1099,15 +1123,21 @@ export class VoidApp {
         this.save.settings.magnifier,
       );
 
-      const baseline = this.sim.world.computePreservedBaseline();
-      this.soundEngine.update(
-        baseline.preservedPercent,
-        this.sim.voidField.totalContactEdges(),
-        this.sim.phase === "battle" && !this.sim.outcome && !this.sim.paused,
-        this.sim.physics.activeFallingChunkCount(),
-      );
+      const inBattle = this.sim.phase === "battle" && !this.sim.outcome && !this.sim.paused;
+      if (hudTick || inBattle !== this.lastSoundInBattle) {
+        this.lastSoundInBattle = inBattle;
+        this.soundEngine.update(
+          this.lastPreservedPercent,
+          this.sim.voidField.totalContactEdges(),
+          inBattle,
+          this.sim.physics.activeFallingChunkCount(),
+        );
+      }
     } else {
-      this.soundEngine.update(100, 0, false);
+      if (this.lastSoundInBattle) {
+        this.lastSoundInBattle = false;
+        this.soundEngine.update(100, 0, false);
+      }
       if (!document.hidden && this.tab === "network") {
         this.techView.frame(nowMs);
       } else if (!document.hidden && this.tab === "operations") {
