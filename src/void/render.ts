@@ -172,6 +172,9 @@ export class VoidRenderer {
   private lastFrontierLen = -1;
   private terrainImageData: ImageData | null = null;
   private terrainU32 = new Uint32Array(0);
+  private shadowMap = new Uint8Array(0);
+  private prevBuildingAt = new Int32Array(0);
+  private buildingElevs = new Uint8Array(0);
   private livestockWorld: VoidWorld | null = null;
   private livestockList: { x: number; y: number; idx: number; isCow: boolean }[] = [];
   private walkerBuckets: { x: number; y: number }[][] = [];

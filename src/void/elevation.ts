@@ -683,6 +683,19 @@ export class BuildingSpriteCache {
       rebuildAll = true;
     }
 
+    if (!rebuildAll && dirtyChunkFlags && this.sprites.size === world.buildings.length) {
+      let anyDirty = false;
+      for (let k = 0; k < dirtyChunkFlags.length; k++) {
+        if (dirtyChunkFlags[k]) {
+          anyDirty = true;
+          break;
+        }
+      }
+      if (!anyDirty && this.dirtyIds.size === 0) {
+        return this.atlasCanvas;
+      }
+    }
+
     const CHUNK = 16;
     for (let i = 0; i < world.buildings.length; i++) {
       const b = world.buildings[i];
@@ -716,6 +729,13 @@ export class BuildingSpriteCache {
     if (!ctx || !this.atlasCanvas) return null;
     ctx.imageSmoothingEnabled = false;
 
+    const sortedSprites: CachedBuildingSprite[] = [];
+    for (let i = 0; i < world.buildings.length; i++) {
+      const sp = this.sprites.get(world.buildings[i].id);
+      if (sp && sp.intactCount > 0) sortedSprites.push(sp);
+    }
+    sortedSprites.sort((a, b) => a.bottomY - b.bottomY || a.x - b.x);
+
     const repaintRect = (rx0: number, ry0: number, rx1: number, ry1: number): void => {
       if (rx1 <= rx0 || ry1 <= ry0) return;
       ctx.save();
@@ -726,24 +746,9 @@ export class BuildingSpriteCache {
       }
       ctx.clearRect(rx0, ry0, rx1 - rx0, ry1 - ry0);
 
-      const sorted: CachedBuildingSprite[] = [];
-      for (let i = 0; i < world.buildings.length; i++) {
-        const sp = this.sprites.get(world.buildings[i].id);
-        if (
-          sp &&
-          sp.intactCount > 0 &&
-          sp.x + sp.w > rx0 &&
-          sp.x < rx1 &&
-          sp.y + sp.h > ry0 &&
-          sp.y < ry1
-        ) {
-          sorted.push(sp);
-        }
-      }
-      sorted.sort((a, b) => a.bottomY - b.bottomY || a.x - b.x);
-
-      for (let i = 0; i < sorted.length; i++) {
-        const sp = sorted[i];
+      for (let i = 0; i < sortedSprites.length; i++) {
+        const sp = sortedSprites[i];
+        if (sp.x + sp.w <= rx0 || sp.x >= rx1 || sp.y + sp.h <= ry0 || sp.y >= ry1) continue;
         if (sp.canvas) {
           ctx.drawImage(sp.canvas, sp.x, sp.y);
         } else {
