@@ -169,6 +169,7 @@ export class VoidApp {
   private lastProfileKey = "";
   private lastCtrlKey = "";
   private lastSoundInBattle = false;
+  private awaitingDeploy = false;
   private statsPillEls: { voidEl: HTMLElement; contactsEl: HTMLElement; unitsEl: HTMLElement; timeEl: HTMLElement } | null = null;
 
   constructor(
@@ -183,6 +184,8 @@ export class VoidApp {
       this.save.wallet,
       this.save.settings.devMode,
     );
+    this.awaitingDeploy = mode === "underSiege";
+    if (this.awaitingDeploy) this.sim.paused = true;
     this.buildDOM();
     if (!this.save.profile) {
       this.openProfileDialog(true);
@@ -195,7 +198,7 @@ export class VoidApp {
         <header class="void-topbar">
           <div class="void-brand">
             <span class="void-emblem" aria-hidden="true"></span>
-            <div>
+            <div class="void-brand-text">
               <strong>VOID DEFENSE</strong>
               <small data-top-scenario></small>
             </div>
@@ -203,55 +206,83 @@ export class VoidApp {
           <div class="void-currencies">
             <div class="void-curr void-curr--supplies" title="Supplies: runtime construction & strike resource earned from surviving city blocks">
               <i class="void-curr-gem void-curr-gem--supplies" aria-hidden="true"></i>
-              <span>Supplies</span>
+              <span class="void-curr-label">Supplies</span>
               <b data-curr-supplies>0</b>
             </div>
             <div class="void-curr void-curr--essence" title="Void Essence: repeatable between-run technology resource">
               <i class="void-curr-gem void-curr-gem--essence" aria-hidden="true"></i>
-              <span>Essence</span>
+              <span class="void-curr-label">Essence</span>
               <b data-curr-essence>0</b>
             </div>
             <div class="void-curr void-curr--sparks" title="Sparks of Defiance: rare milestone breakthroughs (1 shared entitlement per sector)">
               <i class="void-curr-gem void-curr-gem--sparks" aria-hidden="true"></i>
-              <span>Sparks</span>
+              <span class="void-curr-label">Sparks</span>
               <b data-curr-sparks>0</b>
             </div>
           </div>
-          <div class="void-profile-bar" data-profile-bar></div>
+          <div class="void-header-actions">
+            <div class="void-profile-bar" data-profile-bar></div>
+            <button type="button" class="void-gear-btn" data-open-settings title="Settings" aria-label="Settings">⚙</button>
+          </div>
         </header>
 
         <section id="void-page-battle" class="void-page active">
-          <div class="void-board-stage">
-            <canvas id="void-board-canvas"></canvas>
+          <div class="void-battle-layout">
+            <div class="void-board-stage">
+              <canvas id="void-board-canvas"></canvas>
 
-            <!-- Ultra-clean HUD Overlays directly floating over battle canvas -->
-            <div class="void-battle-hud" data-battle-hud>
-              <div class="void-hud-top">
-                <div class="void-hud-bar-wrap" title="Metropolitan Survival & Void Reservoir">
-                  <div class="void-hud-bar void-hud-bar--city">
-                    <div class="void-hud-bar-fill" data-hud-city-bar></div>
-                    <span class="void-hud-bar-label" data-hud-city-text>100%</span>
+              <!-- Clean HUD Overlays floating over battle canvas -->
+              <div class="void-battle-hud" data-battle-hud>
+                <div class="void-hud-top">
+                  <div class="void-hud-bar-wrap" title="Metropolitan Integrity">
+                    <div class="void-hud-bar void-hud-bar--city">
+                      <div class="void-hud-bar-fill" data-hud-city-bar></div>
+                      <span class="void-hud-bar-label" data-hud-city-text>100%</span>
+                    </div>
                   </div>
+                  <div class="void-hud-stats" data-hud-stats-pills></div>
                 </div>
-                <div class="void-hud-stats" data-hud-stats-pills></div>
-              </div>
 
-              <div class="void-hud-top-right">
-                <div class="void-run-controls" data-run-controls></div>
-              </div>
+                <div class="void-hud-top-right">
+                  <div class="void-run-controls" data-run-controls></div>
+                </div>
 
-              <div class="void-inspector" data-tower-inspector hidden></div>
-              <div class="void-outcome-banner" data-outcome-banner hidden></div>
+                <div class="void-inspector" data-tower-inspector hidden></div>
+                <div class="void-outcome-banner" data-outcome-banner hidden></div>
 
-              <!-- Ultra-clean dock tray centered at bottom -->
-              <div class="void-hud-bottom" role="toolbar" aria-label="Tactical Action Bar">
-                <div class="void-hud-tray">
-                  <div class="void-palette" data-tower-palette></div>
-                  <div class="void-hud-tray-divider" aria-hidden="true"></div>
-                  <div class="void-strikes" data-strike-palette></div>
+                <!-- Compact dock tray centered at bottom -->
+                <div class="void-hud-bottom" role="toolbar" aria-label="Tactical Action Bar">
+                  <div class="void-hud-tray">
+                    <div class="void-palette" data-tower-palette></div>
+                    <div class="void-hud-tray-divider" aria-hidden="true"></div>
+                    <div class="void-strikes" data-strike-palette></div>
+                  </div>
                 </div>
               </div>
             </div>
+
+            <aside class="void-side-panel" data-side-panel aria-label="Sector Telemetry">
+              <div class="void-side-section">
+                <div class="void-side-sector-head">
+                  <strong data-side-sector-name>Sector 01</strong>
+                  <span class="void-side-mode-badge" data-side-mode-badge>Under Siege</span>
+                </div>
+                <p class="void-side-goal" data-side-goal>Contain the Void breach before the city falls.</p>
+              </div>
+              <div class="void-side-section">
+                <div class="void-side-label">Command</div>
+                <div class="void-run-controls void-side-controls" data-side-run-controls></div>
+              </div>
+              <div class="void-side-section">
+                <div class="void-side-label">Telemetry</div>
+                <div class="void-side-telemetry" data-side-telemetry></div>
+              </div>
+              <div class="void-side-section void-side-insp-wrap" data-side-inspector-host>
+                <div class="void-side-label">Selected Unit / Structure</div>
+                <div class="void-side-insp-empty" data-side-insp-empty>Tap any tower or building on the map to inspect or sell it.</div>
+                <div class="void-side-insp-body" data-side-inspector hidden></div>
+              </div>
+            </aside>
           </div>
         </section>
 
@@ -260,7 +291,7 @@ export class VoidApp {
         <section id="void-page-map" class="void-page"></section>
 
         <div class="void-nav" role="tablist" aria-label="Resistance Navigation">
-          <button type="button" data-void-tab="battle" class="selected">Defense Feed</button>
+          <button type="button" data-void-tab="battle" class="selected">Battlefield</button>
           <button type="button" data-void-tab="network">Global Tech Network</button>
           <button type="button" data-void-tab="operations">Resistance Ops</button>
           <button type="button" data-void-tab="map">Resistance Map</button>
@@ -300,6 +331,14 @@ export class VoidApp {
         this.navigate(btn.dataset.voidTab as VoidTab);
       };
     });
+
+    const gearBtn = this.root.querySelector<HTMLButtonElement>("[data-open-settings]");
+    if (gearBtn) {
+      gearBtn.onclick = () => {
+        play("knock");
+        this.openSettingsDialog();
+      };
+    }
 
     window.addEventListener("keydown", (e) => {
       if (this.tab !== "battle") return;
@@ -372,6 +411,8 @@ export class VoidApp {
     this.selectedBuildingId = null;
     this.activeTool = { kind: "none" };
     this.hoverPreview = null;
+    this.awaitingDeploy = activeMode === "underSiege";
+    if (this.awaitingDeploy) this.sim.paused = true;
     this.renderer.reduceEffects = this.save.settings.reduceMotion;
     this.renderer.buildingHeight = this.save.settings.buildingHeight;
     this.renderer.resetCam(this.sim.world.grid.w, this.sim.world.grid.h);
@@ -519,6 +560,10 @@ export class VoidApp {
       const placed = this.sim.placeTower(this.activeTool.type, tx, ty);
       if (placed) {
         play("knock");
+        if (this.awaitingDeploy) {
+          this.awaitingDeploy = false;
+          this.sim.paused = false;
+        }
         this.selectedTowerUid = placed.uid;
         this.refreshHUD();
       }
@@ -770,56 +815,50 @@ export class VoidApp {
       this.statsPillEls.timeEl.textContent = `${this.sim.elapsedSeconds.toFixed(1)}s`;
     }
 
-    // Run controls (rebuild only when phase/paused/speed changes so buttons don't detach mid-click)
-    const ctrlKey = `${this.sim.phase}:${this.sim.paused ? 1 : 0}:${this.sim.speed}`;
+    // Side panel sector info & telemetry
+    const sideName = this.root.querySelector<HTMLElement>("[data-side-sector-name]");
+    if (sideName) sideName.textContent = this.sim.scenario.name;
+    const sideMode = this.root.querySelector<HTMLElement>("[data-side-mode-badge]");
+    if (sideMode) sideMode.textContent = this.sim.mode === "underSiege" ? "Under Siege" : "Build & Watch";
+    const sideGoal = this.root.querySelector<HTMLElement>("[data-side-goal]");
+    if (sideGoal) {
+      sideGoal.textContent = this.sim.scenario.endless
+        ? "Survive the endless Void escalation as long as possible."
+        : "Contain the Void breach before the city falls.";
+    }
+    const sideTel = this.root.querySelector<HTMLElement>("[data-side-telemetry]");
+    if (sideTel) {
+      const contacts = this.sim.voidField.totalContactEdges();
+      sideTel.innerHTML = `
+        <div class="void-tel-row"><span>Void Energy</span><b>${energyText}</b></div>
+        <div class="void-tel-row ${contacts > 800 ? "warn" : ""}"><span>Frontier Contacts</span><b>${contacts}</b></div>
+        <div class="void-tel-row"><span>Active Units</span><b>${this.sim.combat.agents.length}</b></div>
+        <div class="void-tel-row"><span>Elapsed Time</span><b>${this.sim.elapsedSeconds.toFixed(1)}s</b></div>
+      `;
+    }
+
+    // Run controls (rebuild only when phase/paused/speed/deploy changes so buttons don't detach mid-click)
+    const ctrlKey = `${this.sim.phase}:${this.awaitingDeploy ? 1 : 0}:${this.sim.paused ? 1 : 0}:${this.sim.speed}`;
     if (ctrlKey !== this.lastCtrlKey) {
       this.lastCtrlKey = ctrlKey;
-      const ctrlEl = this.root.querySelector<HTMLElement>("[data-run-controls]")!;
-      ctrlEl.innerHTML = `
+      const isDeployReady = this.sim.phase === "prep" || this.awaitingDeploy;
+      const ctrlHtml = `
         ${
-          this.sim.phase === "prep"
-            ? `<button type="button" class="primary-btn" data-start-battle>Unleash Void (Start Watch)</button>`
+          isDeployReady
+            ? `<button type="button" class="primary-btn void-start-btn" data-start-battle>Start Battle</button>`
             : `<button type="button" class="void-ctrl-btn" data-toggle-pause>${this.sim.paused ? "Resume" : "Pause"}</button>`
         }
-        <button type="button" data-cycle-speed>${this.sim.speed}x Speed</button>
+        <button type="button" data-cycle-speed>${this.sim.speed}x</button>
         <button type="button" data-retry-run>Retry</button>
       `;
-
-      const startBtn = ctrlEl.querySelector<HTMLButtonElement>("[data-start-battle]");
-      if (startBtn) {
-        startBtn.onclick = () => {
-          this.sim.startBattle();
-          this.activeTool = { kind: "none" };
-          this.renderPalette();
-          this.refreshHUD();
-        };
-      }
-
-      const pauseBtn = ctrlEl.querySelector<HTMLButtonElement>("[data-toggle-pause]");
-      if (pauseBtn) {
-        pauseBtn.onclick = () => {
-          this.sim.paused = !this.sim.paused;
-          this.refreshHUD();
-        };
-      }
-
-      const speedBtn = ctrlEl.querySelector<HTMLButtonElement>("[data-cycle-speed]");
-      if (speedBtn) {
-        speedBtn.onclick = () => {
-          this.sim.speed = (this.sim.speed === 1 ? 2 : this.sim.speed === 2 ? 3 : 1) as 1 | 2 | 3;
-          this.refreshHUD();
-        };
-      }
-
-      const retryBtn = ctrlEl.querySelector<HTMLButtonElement>("[data-retry-run]");
-      if (retryBtn) {
-        retryBtn.onclick = () => {
-          if (this.sim.phase === "battle" && !this.sim.outcome) {
-            this.sim.finishRun("lost", "active");
-            this.persist();
-          }
-          this.startNewRun(this.sim.scenario.id);
-        };
+      const ctrlContainers = [
+        this.root.querySelector<HTMLElement>("[data-run-controls]"),
+        this.root.querySelector<HTMLElement>("[data-side-run-controls]"),
+      ];
+      for (const ctrlEl of ctrlContainers) {
+        if (!ctrlEl) continue;
+        ctrlEl.innerHTML = ctrlHtml;
+        this.bindRunControls(ctrlEl);
       }
     }
 
@@ -827,8 +866,75 @@ export class VoidApp {
     this.renderOutcomeBanner(this.sim.outcome);
   }
 
-  private renderTowerInspector(): void {
+  private bindRunControls(ctrlEl: HTMLElement): void {
+    const startBtn = ctrlEl.querySelector<HTMLButtonElement>("[data-start-battle]");
+    if (startBtn) {
+      startBtn.onclick = () => {
+        if (this.sim.phase === "prep") {
+          this.sim.startBattle();
+        }
+        this.awaitingDeploy = false;
+        this.sim.paused = false;
+        this.activeTool = { kind: "none" };
+        this.renderPalette();
+        this.refreshHUD();
+      };
+    }
+
+    const pauseBtn = ctrlEl.querySelector<HTMLButtonElement>("[data-toggle-pause]");
+    if (pauseBtn) {
+      pauseBtn.onclick = () => {
+        this.sim.paused = !this.sim.paused;
+        this.refreshHUD();
+      };
+    }
+
+    const speedBtn = ctrlEl.querySelector<HTMLButtonElement>("[data-cycle-speed]");
+    if (speedBtn) {
+      speedBtn.onclick = () => {
+        this.sim.speed = (this.sim.speed === 1 ? 2 : this.sim.speed === 2 ? 3 : 1) as 1 | 2 | 3;
+        this.refreshHUD();
+      };
+    }
+
+    const retryBtn = ctrlEl.querySelector<HTMLButtonElement>("[data-retry-run]");
+    if (retryBtn) {
+      retryBtn.onclick = () => {
+        if (this.sim.phase === "battle" && !this.sim.outcome) {
+          this.sim.finishRun("lost", "active");
+          this.persist();
+        }
+        this.startNewRun(this.sim.scenario.id);
+      };
+    }
+  }
+
+  private setInspectorContent(html: string | null, bind?: (root: HTMLElement) => void): void {
     const insp = this.root.querySelector<HTMLElement>("[data-tower-inspector]")!;
+    const sideInsp = this.root.querySelector<HTMLElement>("[data-side-inspector]");
+    const sideEmpty = this.root.querySelector<HTMLElement>("[data-side-insp-empty]");
+    if (!html) {
+      insp.hidden = true;
+      if (sideInsp) sideInsp.hidden = true;
+      if (sideEmpty) sideEmpty.hidden = false;
+      return;
+    }
+    insp.hidden = false;
+    insp.innerHTML = html;
+    if (bind) bind(insp);
+    if (sideInsp) {
+      sideInsp.hidden = false;
+      sideInsp.innerHTML = html;
+      if (bind) bind(sideInsp);
+    }
+    if (sideEmpty) sideEmpty.hidden = true;
+  }
+
+  private renderTowerInspector(): void {
+    if (this.sim.outcome) {
+      this.setInspectorContent(null);
+      return;
+    }
     const t = this.sim.combat.towers.find((tw) => tw.uid === this.selectedTowerUid);
     if (!t) {
       const b =
@@ -842,70 +948,88 @@ export class VoidApp {
           if (this.sim.world.buildingAt[idx] === b.id && this.sim.world.hp[idx] > 0) intact++;
         }
         if (intact > 0) {
-          insp.hidden = false;
-          insp.innerHTML = `
-            <strong>${b.isSkyscraper ? "Skyscraper" : "Structure"} #${b.id} (${b.height}F)</strong>
-            <span>Integrity: ${Math.round((intact / Math.max(1, b.cells.length)) * 100)}%</span>
-            <button type="button" data-insp-close class="secondary-btn">X</button>
+          const pct = Math.round((intact / Math.max(1, b.cells.length)) * 100);
+          const html = `
+            <div class="void-insp-head">
+              <strong>${b.isSkyscraper ? "Skyscraper" : "Structure"} #${b.id}</strong>
+              <span class="void-insp-tag">${b.height}F</span>
+              <button type="button" data-insp-close class="void-insp-close" aria-label="Close inspector">×</button>
+            </div>
+            <div class="void-insp-stats">
+              <span>Integrity: <b>${pct}%</b></span>
+            </div>
           `;
-          insp.querySelector<HTMLButtonElement>("[data-insp-close]")!.onclick = () => {
-            this.selectedBuildingId = null;
-            this.refreshHUD();
-          };
+          this.setInspectorContent(html, (el) => {
+            el.querySelector<HTMLButtonElement>("[data-insp-close]")!.onclick = () => {
+              this.selectedBuildingId = null;
+              this.refreshHUD();
+            };
+          });
           return;
         }
       }
-      insp.hidden = true;
+      this.setInspectorContent(null);
       return;
     }
     const spec = TOWER_SPECS[t.type];
     const refund = this.sim.refundAmount(t.uid);
     const canModify = this.sim.canModifyTowers();
     let extraInfo = "";
+    let rotateBtn = "";
     if (t.type === "voidSiphon") {
       const s = this.sim.combat.siphonStates.get(t.uid);
       if (s) {
         const pct = Math.round((s.stored / Math.max(1, s.maxStorage)) * 100);
-        extraInfo = `<span>Tank: ${pct}% (${s.phase === "venting" ? `Venting ${s.ventRemaining.toFixed(1)}s` : "Intake"})</span>`;
+        extraInfo = `<span>Tank: <b>${pct}%</b> (${s.phase === "venting" ? `Venting ${s.ventRemaining.toFixed(1)}s` : "Intake"})</span>`;
       }
     } else if (t.type === "boundaryPrism") {
       const p = this.sim.combat.prismStates.get(t.uid);
       if (p) {
         const deg = Math.round((p.angleRad * 180) / Math.PI) % 360;
-        extraInfo = `<span>Plane: ${deg}°</span><button type="button" data-insp-rotate class="secondary-btn">Rotate +45°</button>`;
+        extraInfo = `<span>Plane: <b>${deg}°</b></span>`;
+        rotateBtn = `<button type="button" data-insp-rotate class="secondary-btn">Rotate +45°</button>`;
       }
     } else if (t.type === "chronoCannon") {
-      extraInfo = `<span>Rewind: ${t.cooldown <= 0 ? "Ready" : `${t.cooldown.toFixed(1)}s`}</span>`;
+      extraInfo = `<span>Rewind: <b>${t.cooldown <= 0 ? "Ready" : `${t.cooldown.toFixed(1)}s`}</b></span>`;
     }
-    insp.hidden = false;
-    insp.innerHTML = `
-      <strong>${spec.name} #${t.uid}</strong>
-      <span>HP: ${Math.ceil(t.hp)}/${t.maxHp}</span>
-      ${extraInfo}
-      <button type="button" data-insp-reticle class="secondary-btn">Set Focus Reticle</button>
-      <button type="button" data-insp-sell class="danger-btn" ${canModify ? "" : "disabled"}>Sell (+${refund} SUP)</button>
-      <button type="button" data-insp-close class="secondary-btn">X</button>
+    const html = `
+      <div class="void-insp-head">
+        <strong>${spec.name}</strong>
+        <span class="void-insp-tag">#${t.uid}</span>
+        <button type="button" data-insp-close class="void-insp-close" aria-label="Close inspector">×</button>
+      </div>
+      <div class="void-insp-stats">
+        <span>HP: <b>${Math.ceil(t.hp)}/${t.maxHp}</b></span>
+        ${extraInfo}
+      </div>
+      <div class="void-insp-actions">
+        ${rotateBtn}
+        <button type="button" data-insp-reticle class="secondary-btn">Set Focus</button>
+        <button type="button" data-insp-sell class="danger-btn" ${canModify ? "" : "disabled"}>Sell (+${refund})</button>
+      </div>
     `;
-    const rotBtn = insp.querySelector<HTMLButtonElement>("[data-insp-rotate]");
-    if (rotBtn) {
-      rotBtn.onclick = () => {
-        this.sim.combat.rotatePrism(t.uid);
-        this.refreshHUD();
+    this.setInspectorContent(html, (el) => {
+      const rotBtn = el.querySelector<HTMLButtonElement>("[data-insp-rotate]");
+      if (rotBtn) {
+        rotBtn.onclick = () => {
+          this.sim.combat.rotatePrism(t.uid);
+          this.refreshHUD();
+        };
+      }
+      el.querySelector<HTMLButtonElement>("[data-insp-reticle]")!.onclick = () => {
+        this.activeTool = { kind: "setReticle", towerUid: t.uid };
       };
-    }
-    insp.querySelector<HTMLButtonElement>("[data-insp-reticle]")!.onclick = () => {
-      this.activeTool = { kind: "setReticle", towerUid: t.uid };
-    };
-    insp.querySelector<HTMLButtonElement>("[data-insp-sell]")!.onclick = () => {
-      if (this.sim.sellTower(t.uid)) {
+      el.querySelector<HTMLButtonElement>("[data-insp-sell]")!.onclick = () => {
+        if (this.sim.sellTower(t.uid)) {
+          this.selectedTowerUid = null;
+          this.refreshHUD();
+        }
+      };
+      el.querySelector<HTMLButtonElement>("[data-insp-close]")!.onclick = () => {
         this.selectedTowerUid = null;
         this.refreshHUD();
-      }
-    };
-    insp.querySelector<HTMLButtonElement>("[data-insp-close]")!.onclick = () => {
-      this.selectedTowerUid = null;
-      this.refreshHUD();
-    };
+      };
+    });
   }
 
   private renderOutcomeBanner(outcome: RunOutcome | null): void {
@@ -915,20 +1039,41 @@ export class VoidApp {
       return;
     }
     banner.hidden = false;
-    const title = outcome.status === "won" ? "BREACH CONTAINED - VICTORY" : "METROPOLIS LOST - DEFEAT";
+    const tierTitles: Record<number, string> = {
+      0: "CITY LOST",
+      1: "PYRRHIC CONTAINMENT",
+      2: "BREACH CONTAINED",
+      3: "FLAWLESS DEFENSE",
+    };
+    const title = outcome.status === "won" ? (tierTitles[outcome.sparksTier] ?? "BREACH CONTAINED") : "CITY LOST";
+    const sparksHtml = [1, 2, 3]
+      .map((n) => `<span class="void-outcome-spark ${n <= outcome.sparksTier ? "filled" : ""}" aria-hidden="true">◆</span>`)
+      .join("");
+    const rec = this.save.wallet.scenarios[this.sim.scenario.id]?.[this.sim.mode];
+    const bestPct = rec ? rec.bestPreserved.toFixed(1) : outcome.preservedPercent.toFixed(1);
     banner.innerHTML = `
-      <h2>${title}</h2>
-      <p>Original City Preserved: <b>${outcome.preservedPercent.toFixed(1)}%</b> - Duration: <b>${outcome.elapsedSeconds}s</b></p>
-      <p>Rewards Earned: <b>+${outcome.voidEssenceAwarded} Void Essence</b> - <b>+${outcome.sparksAwarded} Sparks of Defiance</b> (Tier ${outcome.sparksTier}/3)</p>
-      ${
-        !outcome.participated && outcome.status === "lost"
-          ? `<small class="void-warn">Instant abort / zero defense activity detected: meaningful participation is required to harvest Void Essence on defeat.</small>`
-          : ""
-      }
-      <div class="void-outcome-actions">
-        <button type="button" class="primary-btn" data-out-retry>Deploy Again</button>
-        ${outcome.status === "won" ? `<button type="button" class="primary-btn" data-out-map>Advance on the Resistance Map</button>` : ""}
-        <button type="button" class="secondary-btn" data-out-tech>Spend Upgrades in Global Network</button>
+      <div class="void-outcome-card ${outcome.status === "won" ? "won" : "lost"}">
+        <div class="void-outcome-sparks" aria-label="${outcome.sparksTier} of 3 Sparks">${sparksHtml}</div>
+        <h2>${title}</h2>
+        <div class="void-outcome-stats">
+          <div><span>City Preserved</span><b>${outcome.preservedPercent.toFixed(1)}%</b></div>
+          <div><span>Sector Best</span><b>${bestPct}%</b></div>
+          <div><span>Duration</span><b>${outcome.elapsedSeconds}s</b></div>
+        </div>
+        <div class="void-outcome-rewards">
+          <span class="void-reward-chip void-reward-chip--essence">+${outcome.voidEssenceAwarded} Void Essence</span>
+          <span class="void-reward-chip void-reward-chip--sparks">+${outcome.sparksAwarded} Sparks</span>
+        </div>
+        ${
+          !outcome.participated && outcome.status === "lost"
+            ? `<small class="void-warn">Minimal defense activity detected: active engagement is required to harvest Void Essence on defeat.</small>`
+            : ""
+        }
+        <div class="void-outcome-actions">
+          <button type="button" class="primary-btn" data-out-retry>Deploy Again</button>
+          ${outcome.status === "won" ? `<button type="button" class="primary-btn" data-out-map>Resistance Map</button>` : ""}
+          <button type="button" class="secondary-btn" data-out-tech>Tech Network</button>
+        </div>
       </div>
     `;
     banner.querySelector<HTMLButtonElement>("[data-out-retry]")!.onclick = () =>
@@ -1040,6 +1185,10 @@ export class VoidApp {
 
   }
 
+  openSettingsDialog(): void {
+    // Implemented in Phase 3
+  }
+
   private openProfileDialog(firstTime: boolean): void {
     const dlg = this.root.querySelector<HTMLDialogElement>("#void-profile-dialog")!;
     const current = this.save.profile;
@@ -1047,27 +1196,34 @@ export class VoidApp {
 
     dlg.innerHTML = `
       <form class="void-profile-form">
-        <h2>${firstTime ? "Resistance Commander Onboarding" : "Commander Profile & Play Style"}</h2>
-        <p>Year 3000: Reality has ruptured in the metropolitan core. Choose your callsign and preferred operational doctrine.</p>
+        <div class="void-dialog-head">
+          <span class="void-emblem" aria-hidden="true"></span>
+          <h2>${firstTime ? "Welcome, Commander" : "Commander Profile"}</h2>
+        </div>
+        <p>Year 3000: Reality has ruptured in the metropolitan core. Set your callsign and operational doctrine before deployment.</p>
         <label>Commander Callsign
           <input name="callsign" maxlength="24" value="${escapeText(current?.name ?? "")}" placeholder="Leave blank for random callsign" />
         </label>
         <fieldset class="void-mode-fieldset">
-          <legend>Select Starting Operational Mode</legend>
+          <legend>Operational Doctrine</legend>
           <button type="button" class="void-mode-card ${chosenMode === "underSiege" ? "selected" : ""}" data-dlg-mode="underSiege">
             <strong>Build Under Siege (Recommended)</strong>
-            <p>Recommended: build and adapt in real time as the Void consumes the city. The intended, more demanding experience.</p>
+            <p>Build and adapt in real time as the Void consumes the city. Earn continuous Supplies from surviving blocks.</p>
           </button>
           <button type="button" class="void-mode-card ${chosenMode === "buildAndWatch" ? "selected" : ""}" data-dlg-mode="buildAndWatch">
-            <strong>Build & Watch</strong>
-            <p>Prepare your defenses, then unleash the Void and watch the battle unfold. A calmer planning-focused experience.</p>
+            <strong>Build &amp; Watch</strong>
+            <p>Prepare your defenses with a fixed starting budget, then unleash the Void and watch your plan unfold.</p>
           </button>
         </fieldset>
         <div class="void-dialog-actions">
-          <button type="submit" class="primary-btn">Confirm & Enter Command</button>
+          ${!firstTime ? `<button type="button" class="secondary-btn" data-dlg-cancel>Cancel</button>` : ""}
+          <button type="submit" class="primary-btn">${firstTime ? "Enter Command" : "Save & Redeploy"}</button>
         </div>
       </form>
     `;
+
+    const cancelBtn = dlg.querySelector<HTMLButtonElement>("[data-dlg-cancel]");
+    if (cancelBtn) cancelBtn.onclick = () => dlg.close();
 
     dlg.querySelectorAll<HTMLButtonElement>("[data-dlg-mode]").forEach((btn) => {
       btn.onclick = () => {
@@ -1102,10 +1258,13 @@ export class VoidApp {
     const dt = this.lastFrameMs ? Math.min(0.1, (nowMs - this.lastFrameMs) / 1000) : 0.016;
     this.lastFrameMs = nowMs;
 
+    const modalOpen = Boolean(this.root.querySelector("dialog[open]"));
     if (!document.hidden && this.tab === "battle") {
       const prevTick = this.sim.tick;
       const hadOutcome = !!this.sim.outcome;
-      this.sim.advanceFrame(dt);
+      if (!modalOpen && !this.awaitingDeploy) {
+        this.sim.advanceFrame(dt);
+      }
       const hudTick = Math.floor(this.sim.tick / 15) !== Math.floor(prevTick / 15);
       if (!hadOutcome && this.sim.outcome) {
         this.persist();
