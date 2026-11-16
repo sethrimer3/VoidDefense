@@ -30,11 +30,12 @@ import {
 } from "./elevation.ts";
 import { isOccludedByLedge, paintVoidLedge } from "./ledge.ts";
 import { valueNoise } from "./portal-noise.ts";
-import { computeOrganismContour, computeNodeContour } from "./contour.ts";
+import { computeOrganismContour, computeNodeContour, paintOrganismContour, paintNodeContour } from "./contour.ts";
 import {
   generateWispsForPortals,
   computeVoidInterior,
   paintVoidInterior,
+  paintVoidInteriorDirect,
   paintVoidRipples,
   sampleStarNest,
   starNestColor,
@@ -66,15 +67,62 @@ const DIST_WINDOW = CHUNK_SIZE + CORRUPTION_REACH * 2;
 const CHAMFER_INF = 0x7fff;
 
 /** Quantized violet stain for the corruption band, indexed by chamfer distance (0..3*REACH). */
-const CORRUPTION_TINTS: readonly string[] = (() => {
-  const out: string[] = [];
+const CORRUPTION_ALPHAS: readonly number[] = (() => {
+  const out: number[] = [];
   for (let k = 0; k <= CORRUPTION_REACH * 3 + 2; k++) {
     const dv = k / 3;
     const t = Math.pow(Math.max(0, 1 - dv / (CORRUPTION_REACH + 0.6)), 1.5);
-    out.push(`rgba(58, 8, 96, ${(0.7 * t).toFixed(3)})`);
+    out.push(Math.round(0.7 * t * 256));
   }
   return out;
 })();
+
+/** Quantized frontier corona tints (32 steps from alpha 0.10 to 0.38). */
+const FRONTIER_TINTS: readonly string[] = (() => {
+  const out: string[] = [];
+  for (let i = 0; i < 32; i++) {
+    out.push(`rgba(178, 62, 232, ${(0.1 + 0.28 * (i / 31)).toFixed(3)})`);
+  }
+  return out;
+})();
+
+const IS_LITTLE_ENDIAN = new Uint8Array(new Uint32Array([0x01020304]).buffer)[0] === 0x04;
+const hexAbgrCache = new Map<string, number>();
+
+function packAbgr(r: number, g: number, b: number): number {
+  return IS_LITTLE_ENDIAN
+    ? (0xff000000 | (b << 16) | (g << 8) | r) >>> 0
+    : ((r << 24) | (g << 16) | (b << 8) | 0xff) >>> 0;
+}
+
+function hexToAbgr(hex: string): number {
+  let v = hexAbgrCache.get(hex);
+  if (v !== undefined) return v;
+  const r = parseInt(hex.slice(1, 3), 16) & 0xff;
+  const g = parseInt(hex.slice(3, 5), 16) & 0xff;
+  const b = parseInt(hex.slice(5, 7), 16) & 0xff;
+  v = packAbgr(r, g, b);
+  hexAbgrCache.set(hex, v);
+  return v;
+}
+
+function blendAbgr(dst: number, or: number, og: number, ob: number, alpha256: number): number {
+  if (alpha256 <= 0) return dst;
+  const inv = 256 - alpha256;
+  if (IS_LITTLE_ENDIAN) {
+    const r = ((dst & 0xff) * inv + or * alpha256) >> 8;
+    const g = (((dst >>> 8) & 0xff) * inv + og * alpha256) >> 8;
+    const b = (((dst >>> 16) & 0xff) * inv + ob * alpha256) >> 8;
+    return (0xff000000 | (b << 16) | (g << 8) | r) >>> 0;
+  }
+  const r = (((dst >>> 24) & 0xff) * inv + or * alpha256) >> 8;
+  const g = (((dst >>> 16) & 0xff) * inv + og * alpha256) >> 8;
+  const b = (((dst >>> 8) & 0xff) * inv + ob * alpha256) >> 8;
+  return ((r << 24) | (g << 16) | (b << 8) | 0xff) >>> 0;
+}
+
+const RIM_ABGR_INNER = packAbgr(0x4b, 0x21, 0x70);
+const RIM_ABGR_OUTER = packAbgr(0x34, 0x18, 0x4f);
 
 /** Spiral-nebula colour ramp around a portal, from deep space to hot magenta. */
 const NEBULA_RAMP: readonly string[] = [
@@ -118,6 +166,18 @@ export class VoidRenderer {
   private readonly ctx: CanvasRenderingContext2D;
   private readonly terrainLayer: HTMLCanvasElement;
   private readonly sceneLayer: HTMLCanvasElement;
+  private readonly ledgeLayer: HTMLCanvasElement;
+  private readonly ledgeCtx: CanvasRenderingContext2D;
+  private ledgeDirty = true;
+  private lastFrontierLen = -1;
+  private terrainImageData: ImageData | null = null;
+  private terrainU32 = new Uint32Array(0);
+  private livestockWorld: VoidWorld | null = null;
+  private livestockList: { x: number; y: number; idx: number; isCow: boolean }[] = [];
+  private walkerBuckets: { x: number; y: number }[][] = [];
+  private walkerBucketW = 0;
+  private readonly dirtyWalkerBuckets: number[] = [];
+  private readonly nearbyWalkers: { x: number; y: number }[] = [];
   private farmScorch: Uint8Array = new Uint8Array(0);
   private readonly sceneCtx: CanvasRenderingContext2D;
   private readonly pixelCtx: CanvasRenderingContext2D;
@@ -188,6 +248,8 @@ export class VoidRenderer {
     this.pixelCtx = pixelPainter(this.sceneCtx);
     this.terrainLayer = document.createElement("canvas");
     this.tctx = this.terrainLayer.getContext("2d", { alpha: false })!;
+    this.ledgeLayer = document.createElement("canvas");
+    this.ledgeCtx = this.ledgeLayer.getContext("2d")!;
   }
 
   resize(worldW: number, worldH: number): void {
@@ -561,7 +623,8 @@ export class VoidRenderer {
       this.renderedWorld !== world ||
       this.renderedHeightMode !== this.buildingHeight ||
       this.terrainLayer.width !== targetW ||
-      this.terrainLayer.height !== targetH
+      this.terrainLayer.height !== targetH ||
+      !this.terrainImageData
     ) {
       this.renderedWorld = world;
       this.renderedHeightMode = this.buildingHeight;
@@ -569,6 +632,9 @@ export class VoidRenderer {
       this.paintedNeighbors = new Float64Array(world.grid.count).fill(-1);
       this.terrainLayer.width = targetW;
       this.terrainLayer.height = targetH;
+      this.terrainImageData = this.tctx.createImageData(targetW, targetH);
+      this.terrainU32 = new Uint32Array(this.terrainImageData.data.buffer);
+      this.ledgeDirty = true;
       world.grid.markAllDirty();
     }
 
@@ -581,17 +647,31 @@ export class VoidRenderer {
       this.lastDirtyChunks = new Uint8Array(dirtyChunks.length);
     }
     this.lastDirtyChunks.set(dirtyChunks);
+    this.ledgeDirty = true;
 
-    const c = this.tctx;
-    c.imageSmoothingEnabled = false;
-    c.setTransform(1, 0, 0, 1, 0, 0);
+    let minX = targetW;
+    let minY = targetH;
+    let maxX = 0;
+    let maxY = 0;
 
     for (let cy = 0; cy < chunksH; cy++) {
       for (let cx = 0; cx < chunksW; cx++) {
         const chunkIdx = cy * chunksW + cx;
         if (!dirtyChunks[chunkIdx]) continue;
-        this.paintChunk(c, world, cx * CHUNK_SIZE, cy * CHUNK_SIZE);
+        const x0 = cx * CHUNK_SIZE;
+        const y0 = cy * CHUNK_SIZE;
+        if (x0 < minX) minX = x0;
+        if (y0 < minY) minY = y0;
+        const x1 = Math.min(targetW, x0 + CHUNK_SIZE);
+        const y1 = Math.min(targetH, y0 + CHUNK_SIZE);
+        if (x1 > maxX) maxX = x1;
+        if (y1 > maxY) maxY = y1;
+        this.paintChunk(world, x0, y0, x1, y1);
       }
+    }
+
+    if (maxX > minX && maxY > minY) {
+      this.tctx.putImageData(this.terrainImageData, 0, 0, minX, minY, maxX - minX, maxY - minY);
     }
 
     world.grid.clearDirtyFlags();
@@ -675,51 +755,63 @@ export class VoidRenderer {
     return np;
   }
 
-  private paintChunk(c: CanvasRenderingContext2D, world: VoidWorld, x0: number, y0: number): void {
+  private paintChunk(world: VoidWorld, x0: number, y0: number, x1: number, y1: number): void {
     const { w, h } = world.grid;
-    const x1 = Math.min(w, x0 + CHUNK_SIZE);
-    const y1 = Math.min(h, y0 + CHUNK_SIZE);
+    const { material, landCover, buildingAt, streetTier, hp: hpArr, maxHp: maxHpArr, isBaselineCell, buildings } = world;
 
     // Distance to the nearest Void cell for every cell of the chunk (plus margin), as a
     // two-pass chamfer transform over a small local window. Skipped when no Void is near.
     const nearVoid = this.buildDistanceWindow(world, x0, y0);
 
     for (let y = y0; y < y1; y++) {
+      const row = y * w;
+      const distRow = (y - this.distOy) * DIST_WINDOW - this.distOx;
       for (let x = x0; x < x1; x++) {
-        const idx = y * w + x;
-        const mat = world.material[idx];
-        const bId = world.buildingAt[idx];
-        const b = bId >= 0 ? world.buildings[bId] : undefined;
-        const hp = world.maxHp[idx] > 0 ? world.hp[idx] / world.maxHp[idx] : 1;
+        const idx = row + x;
+        const mat = material[idx];
+        const bId = buildingAt[idx];
+        const b = bId >= 0 ? buildings[bId] : undefined;
+        const hp = maxHpArr[idx] > 0 ? hpArr[idx] / maxHpArr[idx] : 1;
         const damage = hp <= 0.3 ? 3 : hp < 0.4 ? 2 : hp < 0.75 ? 1 : 0;
-        const shadow = mat !== CellMaterial.VOID
-          ? Math.round(this.computeShadowAt(world, x, y, b?.height ?? 0) * 100) : 0;
+        const shadowRaw = mat !== CellMaterial.VOID
+          ? this.computeShadowAt(world, x, y, b?.height ?? 0) : 0;
+        const shadow = Math.round(shadowRaw * 100);
         const distance = nearVoid
-          ? Math.min(127, this.distWindow[(y - this.distOy) * DIST_WINDOW + x - this.distOx]) : 127;
-        const edges = (x > 0 && world.material[idx - 1] === CellMaterial.VOID ? 1 : 0)
-          + (x + 1 < w && world.material[idx + 1] === CellMaterial.VOID ? 2 : 0)
-          + (y > 0 && world.material[idx - w] === CellMaterial.VOID ? 4 : 0)
-          + (y + 1 < h && world.material[idx + w] === CellMaterial.VOID ? 8 : 0);
+          ? Math.min(127, this.distWindow[distRow + x]) : 127;
+        const edges = nearVoid
+          ? (x > 0 && material[idx - 1] === CellMaterial.VOID ? 1 : 0)
+            + (x + 1 < w && material[idx + 1] === CellMaterial.VOID ? 2 : 0)
+            + (y > 0 && material[idx - w] === CellMaterial.VOID ? 4 : 0)
+            + (y + 1 < h && material[idx + w] === CellMaterial.VOID ? 8 : 0)
+          : 0;
         // Exact integer packing below 2^53: all inputs used by static cell painting.
-        const signature = mat + world.landCover[idx] * 16 + damage * 256
+        const signature = mat + landCover[idx] * 16 + damage * 256
           + (b && b.development > 1.05 ? 1024 : 0) + shadow * 2048
           + distance * 262144 + edges * 33554432
-          + world.isBaselineCell[idx] * 536870912 + (bId + 1) * 1073741824;
+          + isBaselineCell[idx] * 536870912 + (bId + 1) * 1073741824;
         // Bridges, grass verges and building bevels also depend on adjacent surfaces.
-        let neighbors = world.streetTier[idx];
+        let neighbors = streetTier[idx];
         let factor = 16;
         let sameBuilding = 0;
-        const adjacent = [x > 0 ? idx - 1 : -1, x + 1 < w ? idx + 1 : -1,
-          y > 0 ? idx - w : -1, y + 1 < h ? idx + w : -1];
-        for (let side = 0; side < adjacent.length; side++) {
-          const n = adjacent[side];
-          neighbors += (n < 0 ? 255 : world.material[n] + world.landCover[n] * 16) * factor;
-          if (n >= 0 && world.buildingAt[n] === bId) sameBuilding += 2 ** side;
-          factor *= 256;
-        }
+        const n0 = x > 0 ? idx - 1 : -1;
+        const n1 = x + 1 < w ? idx + 1 : -1;
+        const n2 = y > 0 ? idx - w : -1;
+        const n3 = y + 1 < h ? idx + w : -1;
+        neighbors += (n0 < 0 ? 255 : material[n0] + landCover[n0] * 16) * factor;
+        if (n0 >= 0 && buildingAt[n0] === bId) sameBuilding += 1;
+        factor *= 256;
+        neighbors += (n1 < 0 ? 255 : material[n1] + landCover[n1] * 16) * factor;
+        if (n1 >= 0 && buildingAt[n1] === bId) sameBuilding += 2;
+        factor *= 256;
+        neighbors += (n2 < 0 ? 255 : material[n2] + landCover[n2] * 16) * factor;
+        if (n2 >= 0 && buildingAt[n2] === bId) sameBuilding += 4;
+        factor *= 256;
+        neighbors += (n3 < 0 ? 255 : material[n3] + landCover[n3] * 16) * factor;
+        if (n3 >= 0 && buildingAt[n3] === bId) sameBuilding += 8;
+        factor *= 256;
         neighbors += sameBuilding * factor;
         if (this.paintedPixels[idx] === signature && this.paintedNeighbors[idx] === neighbors) continue;
-        this.paintCell(c, world, x, y, nearVoid);
+        this.paintCell(world, x, y, nearVoid, shadowRaw);
         this.paintedPixels[idx] = signature;
         this.paintedNeighbors[idx] = neighbors;
       }
@@ -787,7 +879,7 @@ export class VoidRenderer {
   }
 
   /** Native world-pixel art: every detail selects a whole simulation cell. */
-  private paintCell(c: CanvasRenderingContext2D, world: VoidWorld, x: number, y: number, nearVoid: boolean): void {
+  private paintCell(world: VoidWorld, x: number, y: number, nearVoid: boolean, shade: number): void {
     const { w, h } = world.grid;
     const idx = y * w + x;
     const mat = world.material[idx], cover = world.landCover[idx];
@@ -815,6 +907,8 @@ export class VoidRenderer {
         const compositeIntensity = Math.min(1, intensity * (0.5 + fall * 0.5) + arm * 0.25 * fall);
         color = starNestColor(compositeIntensity, (x * 7 + y * 13) & 15);
       }
+      this.terrainU32[idx] = hexToAbgr(color);
+      return;
     } else if (mat === CellMaterial.UNCLAIMED) {
       color = cover === LandCover.RIVER ? (r < 0.2 ? "#4a9bd1" : "#2b6ca3") : "#11293d";
     } else if (mat === CellMaterial.WALL || mat === CellMaterial.BARRIER) {
@@ -870,25 +964,20 @@ export class VoidRenderer {
           color = patch > 0.65 ? "#507d39" : patch > 0.35 ? "#467032" : "#3d632b";
       }
     }
-    if (mat !== CellMaterial.VOID && isWheat(cover) && bId < 0) color = farmSoilColor(x, y, cover, this.farmScorch[idx]);
-    c.fillStyle = color;
-    c.fillRect(x, y, 1, 1);
-    if (mat === CellMaterial.VOID) return;
-    const shade = this.computeShadowAt(world, x, y, b?.height ?? 0);
+    if (isWheat(cover) && bId < 0) color = farmSoilColor(x, y, cover, this.farmScorch[idx]);
+    let abgr = hexToAbgr(color);
     if (shade > 0) {
-      c.fillStyle = `rgba(2, 3, 5, ${shade * 0.75})`;
-      c.fillRect(x, y, 1, 1);
+      abgr = blendAbgr(abgr, 2, 3, 5, Math.round(shade * 0.75 * 256));
     }
-    if (!nearVoid) return;
-    const distance = this.distWindow[(y - this.distOy) * DIST_WINDOW + x - this.distOx];
-    if (distance <= CORRUPTION_REACH * 3 && mat !== CellMaterial.WALL && mat !== CellMaterial.BARRIER) {
-      c.fillStyle = CORRUPTION_TINTS[distance];
-      c.fillRect(x, y, 1, 1);
+    if (nearVoid) {
+      const distance = this.distWindow[(y - this.distOy) * DIST_WINDOW + x - this.distOx];
+      if (distance <= 3) {
+        abgr = distance <= 1 ? RIM_ABGR_INNER : RIM_ABGR_OUTER;
+      } else if (distance <= CORRUPTION_REACH * 3 && mat !== CellMaterial.WALL && mat !== CellMaterial.BARRIER) {
+        abgr = blendAbgr(abgr, 58, 8, 96, CORRUPTION_ALPHAS[distance]);
+      }
     }
-    if (distance <= 3) {
-      c.fillStyle = distance <= 1 ? "#4b2170" : "#34184f";
-      c.fillRect(x, y, 1, 1);
-    }
+    this.terrainU32[idx] = abgr;
   }
 
   /** The space behind the board: near-black indigo with sparse crisp stars and a faint
@@ -949,11 +1038,12 @@ export class VoidRenderer {
       this.sceneLayer.height = world.grid.h;
     }
     const c = this.pixelCtx;
+    const rawScene = this.sceneCtx;
     c.setTransform(1, 0, 0, 1, 0, 0);
     c.imageSmoothingEnabled = false;
 
     // 1. Draw cached metropolitan terrain layer
-    c.drawImage(this.terrainLayer, 0, 0, world.grid.w, world.grid.h);
+    rawScene.drawImage(this.terrainLayer, 0, 0, world.grid.w, world.grid.h);
 
     const animTime = this.reduceEffects ? 0 : nowMs * 0.001;
     const pulse = this.reduceEffects ? 0.75 : 0.65 + 0.35 * Math.sin(animTime * 5.2);
@@ -1014,13 +1104,13 @@ export class VoidRenderer {
       const micro = voidField.cellMicroWork[cIdx];
       const intensity = Math.min(1, 0.25 + micro * PIXEL_AREA / 450);
 
-      c.fillStyle = `rgba(178, 62, 232, ${(0.1 + 0.28 * intensity * pulse).toFixed(3)})`;
-      c.fillRect(fx, fy, 1, 1);
+      rawScene.fillStyle = FRONTIER_TINTS[Math.min(31, (intensity * pulse * 31) | 0)];
+      rawScene.fillRect(fx, fy, 1, 1);
 
       // Subtle localized purple frontier spark on actively eroding cells
       if (intensity > 0.55 && ((fx * 7 + fy * 13 + Math.floor(animTime * 6)) & 15) === 0) {
-        c.fillStyle = "#e08aff";
-        c.fillRect(fx, fy, 1, 1);
+        rawScene.fillStyle = "#e08aff";
+        rawScene.fillRect(fx, fy, 1, 1);
       }
     }
 
@@ -1087,9 +1177,8 @@ export class VoidRenderer {
       this.wispsWorld = world;
       this.interiorWisps = generateWispsForPortals(world);
     }
-    const interiorWisps = computeVoidInterior(world, this.interiorWisps, animTime, this.reduceEffects);
-    paintVoidInterior(c, interiorWisps);
-    paintVoidRipples(c, world, physics.voidRipples, this.reduceEffects);
+    paintVoidInteriorDirect(rawScene, world, animTime, this.reduceEffects);
+    paintVoidRipples(rawScene, world, physics.voidRipples, this.reduceEffects);
     lap("interior");
 
     // 4. The black hole: strong lightless core, crisp photon rim, and a single restrained accretion arc

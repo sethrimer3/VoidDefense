@@ -17,7 +17,13 @@ export function pixelPainter(context: CanvasRenderingContext2D): CanvasRendering
     if (!current.length) move(x, y);
     else current.push(transformed(x, y));
   };
+  const covered = new Set<number>();
   const identity = (paint: () => void): void => {
+    const t = context.getTransform();
+    if (t.a === 1 && t.b === 0 && t.c === 0 && t.d === 1 && t.e === 0 && t.f === 0) {
+      paint();
+      return;
+    }
     context.save();
     context.setTransform(1, 0, 0, 1, 0, 0);
     paint();
@@ -46,9 +52,13 @@ export function pixelPainter(context: CanvasRenderingContext2D): CanvasRendering
   const stroke = (lines = paths): void => identity(() => {
     context.fillStyle = context.strokeStyle;
     const width = Math.max(1, Math.round(context.lineWidth));
-    const covered = new Set<number>();
-    const dash = context.getLineDash().map(n => Math.max(1, Math.round(n)));
-    let dashIndex = 0, dashLeft = dash[0] ?? Infinity;
+    covered.clear();
+    const rawDash = context.getLineDash();
+    const hasDash = rawDash.length > 0;
+    const dash = hasDash ? rawDash.map(n => Math.max(1, Math.round(n))) : null;
+    let dashIndex = 0, dashLeft = dash ? (dash[0] ?? Infinity) : Infinity;
+    const cw = context.canvas.width, ch = context.canvas.height;
+    const halfW = Math.floor(width / 2);
     for (const points of lines) for (let i = 1; i < points.length; i++) {
       let x = Math.round(points[i - 1].x), y = Math.round(points[i - 1].y);
       const tx = Math.round(points[i].x), ty = Math.round(points[i].y);
@@ -56,16 +66,23 @@ export function pixelPainter(context: CanvasRenderingContext2D): CanvasRendering
       const sx = x < tx ? 1 : -1, sy = y < ty ? 1 : -1;
       let error = dx + dy;
       for (;;) {
-        if (dashIndex % 2 === 0) {
-          for (let yy = y - Math.floor(width / 2); yy < y - Math.floor(width / 2) + width; yy++) {
-            for (let xx = x - Math.floor(width / 2); xx < x - Math.floor(width / 2) + width; xx++) {
-              if (xx < 0 || yy < 0 || xx >= context.canvas.width || yy >= context.canvas.height) continue;
-              const key = yy * context.canvas.width + xx;
-              if (!covered.has(key)) { context.fillRect(xx, yy, 1, 1); covered.add(key); }
+        if (!hasDash || (dashIndex & 1) === 0) {
+          if (width === 1) {
+            if (x >= 0 && y >= 0 && x < cw && y < ch) {
+              const key = y * cw + x;
+              if (!covered.has(key)) { context.fillRect(x, y, 1, 1); covered.add(key); }
+            }
+          } else {
+            for (let yy = y - halfW; yy < y - halfW + width; yy++) {
+              for (let xx = x - halfW; xx < x - halfW + width; xx++) {
+                if (xx < 0 || yy < 0 || xx >= cw || yy >= ch) continue;
+                const key = yy * cw + xx;
+                if (!covered.has(key)) { context.fillRect(xx, yy, 1, 1); covered.add(key); }
+              }
             }
           }
         }
-        if (--dashLeft <= 0) { dashIndex = (dashIndex + 1) % dash.length; dashLeft = dash[dashIndex]; }
+        if (dash && --dashLeft <= 0) { dashIndex = (dashIndex + 1) % dash.length; dashLeft = dash[dashIndex]; }
         if (x === tx && y === ty) break;
         const twice = 2 * error;
         if (twice >= dy) { error += dy; x += sx; }

@@ -135,6 +135,56 @@ export function organismFootprint(o: VoidOrganism): SilhouettePixel[] {
   return cells;
 }
 
+type RimOffset = { readonly dx: number; readonly dy: number };
+
+function buildRimOffsets(cells: readonly RimOffset[]): readonly RimOffset[] {
+  const occupied = new Set<number>();
+  for (const p of cells) occupied.add((p.y + 8) * 16 + (p.x + 8));
+  const rim: RimOffset[] = [];
+  const seen = new Set<number>();
+  const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const;
+  for (const p of cells) {
+    for (const [nx, ny] of dirs) {
+      const rx = p.x + nx;
+      const ry = p.y + ny;
+      const key = (ry + 8) * 16 + (rx + 8);
+      if (!occupied.has(key) && !seen.has(key)) {
+        seen.add(key);
+        rim.push({ dx: rx, dy: ry });
+      }
+    }
+  }
+  return rim;
+}
+
+const RIM_3X3 = buildRimOffsets(
+  [-1, 0, 1].flatMap((dy) => [-1, 0, 1].map((dx) => ({ dx, dy }))),
+);
+const RIM_2X2 = buildRimOffsets([
+  { dx: -1, dy: -1 }, { dx: 0, dy: -1 },
+  { dx: -1, dy: 0 }, { dx: 0, dy: 0 },
+]);
+const RIM_4X4 = buildRimOffsets(
+  [-2, -1, 0, 1].flatMap((dy) => [-2, -1, 0, 1].map((dx) => ({ dx, dy }))),
+);
+const RIM_1X1 = buildRimOffsets([{ dx: 0, dy: 0 }]);
+
+function rimOffsetsForOrganism(kind: VoidOrganism["kind"]): readonly RimOffset[] {
+  switch (kind) {
+    case "nebulaWorm":
+    case "voidBloom":
+    case "honeycombCrystal":
+      return RIM_3X3;
+    case "constellationSpider":
+      return RIM_2X2;
+    case "nebulaQueen":
+    case "nexusCrystal":
+      return RIM_4X4;
+    default:
+      return RIM_1X1;
+  }
+}
+
 /** Computes thin, organic 1-pixel outer contour around organism footprint cells.
  * Evolves slowly over time with scrolling noise coordinates.
  */
@@ -143,51 +193,58 @@ export function computeOrganismContour(
   animTime: number,
   reduceMotion = false,
 ): PixelPoint[] {
-  const footprint = organismFootprint(o);
-  const occupied = new Set<string>();
-  for (const p of footprint) {
-    occupied.add(`${p.x},${p.y}`);
-  }
-
-  // Find 4-connected exterior rim cells
-  const rimMap = new Map<string, { x: number; y: number }>();
-  const neighbors = [
-    { dx: 1, dy: 0 },
-    { dx: -1, dy: 0 },
-    { dx: 0, dy: 1 },
-    { dx: 0, dy: -1 },
-  ];
-
-  for (const p of footprint) {
-    for (const n of neighbors) {
-      const nx = p.x + n.dx;
-      const ny = p.y + n.dy;
-      const key = `${nx},${ny}`;
-      if (!occupied.has(key)) {
-        rimMap.set(key, { x: nx, y: ny });
-      }
-    }
-  }
-
+  const cx = Math.round(o.x);
+  const cy = Math.round(o.y);
+  const rim = rimOffsetsForOrganism(o.kind);
   const result: PixelPoint[] = [];
   const t = reduceMotion ? 0 : animTime * 0.35; // Slowly evolves noise (0.35 Hz)
+  const uBase = t * 0.05 + o.id * 0.17;
+  const vBase = -t * 0.04 + o.id * 0.31;
 
-  for (const rim of rimMap.values()) {
-    // Spatial noise coordinates anchored to world plus organism id and slow time scroll
-    const u = (rim.x * 0.08 + t * 0.05 + (o.id * 0.17)) % 1;
-    const v = (rim.y * 0.08 - t * 0.04 + (o.id * 0.31)) % 1;
+  for (let i = 0; i < rim.length; i++) {
+    const rx = cx + rim[i].dx;
+    const ry = cy + rim[i].dy;
+    const u = (rx * 0.08 + uBase) % 1;
+    const v = (ry * 0.08 + vBase) % 1;
     const nVal = sampleContourNoise(u, v);
 
     // Filter thin organic contour: modulate presence slightly while preserving readable silhouette
     // (At least 85% of boundary cells are kept so silhouette is clear and readable)
-    const jitter = Math.abs(Math.floor(rim.x * 7 + rim.y * 13 + o.id));
     if (nVal > 0.15 || reduceMotion) {
-      const color = contourColor(nVal, jitter);
-      result.push({ x: rim.x, y: rim.y, color });
+      const jitter = Math.abs(Math.floor(rx * 7 + ry * 13 + o.id));
+      result.push({ x: rx, y: ry, color: contourColor(nVal, jitter) });
     }
   }
 
   return result;
+}
+
+/** Paints organism contour directly onto a 2D canvas without allocating intermediate arrays. */
+export function paintOrganismContour(
+  c: Pick<CanvasRenderingContext2D, "fillStyle" | "fillRect">,
+  o: VoidOrganism,
+  animTime: number,
+  reduceMotion = false,
+): void {
+  const cx = Math.round(o.x);
+  const cy = Math.round(o.y);
+  const rim = rimOffsetsForOrganism(o.kind);
+  const t = reduceMotion ? 0 : animTime * 0.35;
+  const uBase = t * 0.05 + o.id * 0.17;
+  const vBase = -t * 0.04 + o.id * 0.31;
+
+  for (let i = 0; i < rim.length; i++) {
+    const rx = cx + rim[i].dx;
+    const ry = cy + rim[i].dy;
+    const u = (rx * 0.08 + uBase) % 1;
+    const v = (ry * 0.08 + vBase) % 1;
+    const nVal = sampleContourNoise(u, v);
+    if (nVal > 0.15 || reduceMotion) {
+      const jitter = Math.abs(Math.floor(rx * 7 + ry * 13 + o.id));
+      c.fillStyle = contourColor(nVal, jitter);
+      c.fillRect(rx, ry, 1, 1);
+    }
+  }
 }
 
 /** Computes thin nebula contour for crystalline Void Nodes (stationary enemy spires). */
@@ -198,47 +255,45 @@ export function computeNodeContour(
 ): PixelPoint[] {
   const cx = Math.round(node.x);
   const cy = Math.round(node.y);
-  const occupied = new Set<string>();
-
-  // 3x3 footprint for Void Nodes
-  for (let dy = -1; dy <= 1; dy++) {
-    for (let dx = -1; dx <= 1; dx++) {
-      occupied.add(`${cx + dx},${cy + dy}`);
-    }
-  }
-
-  const rimMap = new Map<string, { x: number; y: number }>();
-  const neighbors = [
-    { dx: 1, dy: 0 },
-    { dx: -1, dy: 0 },
-    { dx: 0, dy: 1 },
-    { dx: 0, dy: -1 },
-  ];
-
-  for (let dy = -1; dy <= 1; dy++) {
-    for (let dx = -1; dx <= 1; dx++) {
-      const px = cx + dx, py = cy + dy;
-      for (const n of neighbors) {
-        const nx = px + n.dx, ny = py + n.dy;
-        const key = `${nx},${ny}`;
-        if (!occupied.has(key)) {
-          rimMap.set(key, { x: nx, y: ny });
-        }
-      }
-    }
-  }
-
   const result: PixelPoint[] = [];
   const t = reduceMotion ? 0 : animTime * 0.25;
+  const uBase = t * 0.03 + node.id * 0.23;
+  const vBase = -t * 0.03 + node.id * 0.41;
 
-  for (const rim of rimMap.values()) {
-    const u = (rim.x * 0.07 + t * 0.03 + (node.id * 0.23)) % 1;
-    const v = (rim.y * 0.07 - t * 0.03 + (node.id * 0.41)) % 1;
+  for (let i = 0; i < RIM_3X3.length; i++) {
+    const rx = cx + RIM_3X3[i].dx;
+    const ry = cy + RIM_3X3[i].dy;
+    const u = (rx * 0.07 + uBase) % 1;
+    const v = (ry * 0.07 + vBase) % 1;
     const nVal = sampleContourNoise(u, v);
-    const jitter = Math.abs(Math.floor(rim.x * 11 + rim.y * 5 + node.id));
-    const color = contourColor(nVal, jitter);
-    result.push({ x: rim.x, y: rim.y, color });
+    const jitter = Math.abs(Math.floor(rx * 11 + ry * 5 + node.id));
+    result.push({ x: rx, y: ry, color: contourColor(nVal, jitter) });
   }
 
   return result;
+}
+
+/** Paints node contour directly onto a 2D canvas without allocating intermediate arrays. */
+export function paintNodeContour(
+  c: Pick<CanvasRenderingContext2D, "fillStyle" | "fillRect">,
+  node: VoidNode,
+  animTime: number,
+  reduceMotion = false,
+): void {
+  const cx = Math.round(node.x);
+  const cy = Math.round(node.y);
+  const t = reduceMotion ? 0 : animTime * 0.25;
+  const uBase = t * 0.03 + node.id * 0.23;
+  const vBase = -t * 0.03 + node.id * 0.41;
+
+  for (let i = 0; i < RIM_3X3.length; i++) {
+    const rx = cx + RIM_3X3[i].dx;
+    const ry = cy + RIM_3X3[i].dy;
+    const u = (rx * 0.07 + uBase) % 1;
+    const v = (ry * 0.07 + vBase) % 1;
+    const nVal = sampleContourNoise(u, v);
+    const jitter = Math.abs(Math.floor(rx * 11 + ry * 5 + node.id));
+    c.fillStyle = contourColor(nVal, jitter);
+    c.fillRect(rx, ry, 1, 1);
+  }
 }

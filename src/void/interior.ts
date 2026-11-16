@@ -177,12 +177,34 @@ export function generateWispsForPortals(world: VoidInteriorWorld): SeededWisp[] 
   return wisps;
 }
 
+const WISP_COLORS = [
+  "#88d8e8",
+  "#b84fd9",
+  "#7d2eb8",
+  "#622296",
+  "#4c1c78",
+  "#3a145e",
+] as const;
+
+let occupiedMask = new Uint8Array(0);
+const wispBucketX: number[][] = WISP_COLORS.map(() => []);
+const wispBucketY: number[][] = WISP_COLORS.map(() => []);
+
+function getOccupiedMask(size: number): Uint8Array {
+  if (occupiedMask.length < size) {
+    occupiedMask = new Uint8Array(size);
+  } else {
+    occupiedMask.fill(0, 0, size);
+  }
+  return occupiedMask;
+}
+
 /** Computes the living Void interior pixels using pixelated Star Nest fractal sampling.
  * All pixels are clamped strictly inside CellMaterial.VOID, outside black-hole cores.
  */
 export function computeVoidInterior(
   world: VoidInteriorWorld,
-  wisps: readonly SeededWisp[],
+  _wisps: readonly SeededWisp[],
   animTime: number,
   reduceEffects = false,
 ): WispPixel[] {
@@ -192,12 +214,20 @@ export function computeVoidInterior(
 
   const { w, h } = world.grid;
   const pixels: WispPixel[] = [];
-  const occupied = new Set<number>();
+  const occupied = getOccupiedMask(w * h);
+  const tile = starNestTile();
+  const TILE = STARNEST_TILE_SIZE;
+  const invTwoPi = 1 / Math.PI;
+  const uTime = animTime * 0.03;
+  const vTime = animTime * 0.025;
 
   for (const p of world.portals) {
     if (!p.active) continue;
     const coreR = Math.max(3.6, p.radius * 0.42);
+    const minR = coreR + 1.8;
     const maxReach = p.radius * 2.8;
+    const minR2 = minR * minR;
+    const maxR2 = maxReach * maxReach;
 
     // Scan bounding box of the active portal's reach inside Void
     const xMin = Math.max(0, Math.floor(p.x - maxReach));
@@ -206,16 +236,18 @@ export function computeVoidInterior(
     const yMax = Math.min(h - 1, Math.ceil(p.y + maxReach));
 
     for (let py = yMin; py <= yMax; py++) {
+      const dy = py - p.y;
+      const dy2 = dy * dy;
+      const row = py * w;
       for (let px = xMin; px <= xMax; px++) {
-        const idx = py * w + px;
-        if (world.material[idx] !== CellMaterial.VOID) continue;
-        if (occupied.has(idx)) continue;
+        const idx = row + px;
+        if (world.material[idx] !== CellMaterial.VOID || occupied[idx]) continue;
 
         const dx = px - p.x;
-        const dy = py - p.y;
-        const r = Math.hypot(dx, dy);
-        if (r <= coreR + 1.8 || r >= maxReach) continue;
+        const r2 = dx * dx + dy2;
+        if (r2 <= minR2 || r2 >= maxR2) continue;
 
+        const r = Math.sqrt(r2);
         const theta = Math.atan2(dy, dx);
 
         // Star Nest coordinates: map radial/polar space with subtle gravitational swirl
@@ -223,16 +255,17 @@ export function computeVoidInterior(
         const logR = Math.log(r + 1.0);
 
         // Torus UV mapped across Star Nest volumetric fractal
-        const u = ((swirlAngle / (Math.PI * 2)) * 2.0 + logR * 0.4 + animTime * 0.03) % 1;
-        const v = (r * 0.05 - animTime * 0.025) % 1;
-
-        const intensity = sampleStarNest(u, v);
+        const u = swirlAngle * invTwoPi + logR * 0.4 + uTime;
+        const v = r * 0.05 - vTime;
+        const tx = ((u - Math.floor(u)) * TILE) | 0;
+        const ty = ((v - Math.floor(v)) * TILE) | 0;
+        const intensity = tile[ty * TILE + tx];
 
         // Only render coherent nebula filaments (calm hierarchy, never noisy confetti)
         if (intensity > 0.48) {
           const jitter = (px * 7 + py * 13) & 15;
           const color = starNestColor(intensity, jitter);
-          occupied.add(idx);
+          occupied[idx] = 1;
           pixels.push({ x: px, y: py, color });
         }
       }
@@ -240,6 +273,93 @@ export function computeVoidInterior(
   }
 
   return pixels;
+}
+
+/** Paints the living Void interior directly onto a 2D canvas, batching by color with zero object allocations. */
+export function paintVoidInteriorDirect(
+  c: Painter,
+  world: VoidInteriorWorld,
+  animTime: number,
+  reduceEffects = false,
+): void {
+  if (reduceEffects) return;
+
+  const { w, h } = world.grid;
+  const occupied = getOccupiedMask(w * h);
+  const tile = starNestTile();
+  const TILE = STARNEST_TILE_SIZE;
+  const invTwoPi = 1 / Math.PI;
+  const uTime = animTime * 0.03;
+  const vTime = animTime * 0.025;
+
+  for (let b = 0; b < WISP_COLORS.length; b++) {
+    wispBucketX[b].length = 0;
+    wispBucketY[b].length = 0;
+  }
+
+  for (const p of world.portals) {
+    if (!p.active) continue;
+    const coreR = Math.max(3.6, p.radius * 0.42);
+    const minR = coreR + 1.8;
+    const maxReach = p.radius * 2.8;
+    const minR2 = minR * minR;
+    const maxR2 = maxReach * maxReach;
+
+    const xMin = Math.max(0, Math.floor(p.x - maxReach));
+    const xMax = Math.min(w - 1, Math.ceil(p.x + maxReach));
+    const yMin = Math.max(0, Math.floor(p.y - maxReach));
+    const yMax = Math.min(h - 1, Math.ceil(p.y + maxReach));
+
+    for (let py = yMin; py <= yMax; py++) {
+      const dy = py - p.y;
+      const dy2 = dy * dy;
+      const row = py * w;
+      for (let px = xMin; px <= xMax; px++) {
+        const idx = row + px;
+        if (world.material[idx] !== CellMaterial.VOID || occupied[idx]) continue;
+
+        const dx = px - p.x;
+        const r2 = dx * dx + dy2;
+        if (r2 <= minR2 || r2 >= maxR2) continue;
+
+        const r = Math.sqrt(r2);
+        const theta = Math.atan2(dy, dx);
+        const swirlAngle = theta + animTime * (0.65 / (1.0 + r * 0.15));
+        const logR = Math.log(r + 1.0);
+
+        const u = swirlAngle * invTwoPi + logR * 0.4 + uTime;
+        const v = r * 0.05 - vTime;
+        const tx = ((u - Math.floor(u)) * TILE) | 0;
+        const ty = ((v - Math.floor(v)) * TILE) | 0;
+        const intensity = tile[ty * TILE + tx];
+
+        if (intensity > 0.48) {
+          occupied[idx] = 1;
+          const jitter = (px * 7 + py * 13) & 15;
+          let colorIdx: number;
+          if (intensity > 0.88) {
+            colorIdx = jitter % 3 === 0 ? 0 : 1;
+          } else if (intensity > 0.68) {
+            colorIdx = (jitter & 1) === 0 ? 2 : 3;
+          } else {
+            colorIdx = jitter % 3 === 0 ? 4 : 5;
+          }
+          wispBucketX[colorIdx].push(px);
+          wispBucketY[colorIdx].push(py);
+        }
+      }
+    }
+  }
+
+  for (let b = 0; b < WISP_COLORS.length; b++) {
+    const xs = wispBucketX[b];
+    if (xs.length === 0) continue;
+    const ys = wispBucketY[b];
+    c.fillStyle = WISP_COLORS[b];
+    for (let i = 0; i < xs.length; i++) {
+      c.fillRect(xs[i], ys[i], 1, 1);
+    }
+  }
 }
 
 /** Painter interface matching paintVoidLedge */
