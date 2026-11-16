@@ -114,6 +114,8 @@ try {
     });
 
     await page.goto(URL, { waitUntil: "networkidle" });
+    await page.waitForSelector("[data-title-continue]", { state: "visible", timeout: 15000 });
+    await page.click("[data-title-continue]");
     await page.waitForSelector("#void-board-canvas", { state: "visible", timeout: 15000 });
     await page.waitForTimeout(350);
 
@@ -235,8 +237,10 @@ try {
     await page.screenshot({ path: path.join(OUT_DIR, `void-map-${vp.name}.png`) });
 
     if (vp.name === "desktop") {
-      // V5: Enable Reduce Motion & Ambient Flicker and capture reduced-effects comparison
+      // V5: Enable Reduce Motion & Ambient Flicker via Settings modal and capture reduced-effects comparison
+      await page.click("[data-open-settings]");
       await page.click("[data-set-motion]");
+      await page.click("[data-set-close]");
       await page.click('[data-void-tab="battle"]');
       await page.waitForTimeout(150);
       await page.screenshot({ path: path.join(OUT_DIR, "void-v5-reduced-effects.png") });

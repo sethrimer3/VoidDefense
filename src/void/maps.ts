@@ -9,7 +9,7 @@ export const SCENARIOS: readonly ScenarioConfig[] = [
   {
     id: "tutorialBreach",
     name: "Sector 01: Sub-Station Zero",
-    subtitle: "The failed teleporter core in Lower Manhattan. Contain the initial violet rupture.",
+    subtitle: "The failed teleporter core in Aegis Core. Contain the initial violet rupture.",
     seed: 0x3001_a110,
     worldW: DEFAULT_WORLD_W,
     worldH: DEFAULT_WORLD_H,
@@ -23,7 +23,7 @@ export const SCENARIOS: readonly ScenarioConfig[] = [
   },
   {
     id: "edgeAdvance",
-    name: "Sector 02: Hudson Riverfront",
+    name: "Sector 02: Westward Canal",
     subtitle: "The Void creeps across the northern district boundary along a wide metropolitan front.",
     seed: 0x3002_b220,
     worldW: DEFAULT_WORLD_W,
@@ -42,7 +42,7 @@ export const SCENARIOS: readonly ScenarioConfig[] = [
   {
     id: "centralRupture",
     name: "Sector 03: Midtown Spire Plaza",
-    subtitle: "A central singularity inside the high-rise financial core. Cast Hearthseed islands to split its perimeter budget.",
+    subtitle: "A central singularity inside the high-rise financial core. Cast Solar Anchor islands to split its perimeter budget.",
     seed: 0x3003_c330,
     worldW: DEFAULT_WORLD_W,
     worldH: DEFAULT_WORLD_H,
@@ -92,7 +92,7 @@ export const SCENARIOS: readonly ScenarioConfig[] = [
   },
   {
     id: "archipelagoCity",
-    name: "Sector 06: East River Transit Hubs",
+    name: "Sector 06: Tidal Channel Transit Hubs",
     subtitle: "Separated metropolitan islands connected by arterial bridges. Reclaim severed transit corridors.",
     seed: 0x3006_f660,
     worldW: LARGE_WORLD_W,

@@ -170,6 +170,8 @@ export class VoidApp {
   private lastCtrlKey = "";
   private lastSoundInBattle = false;
   private awaitingDeploy = false;
+  private titleOpen = true;
+  private coachStep = -1;
   private statsPillEls: { voidEl: HTMLElement; contactsEl: HTMLElement; unitsEl: HTMLElement; timeEl: HTMLElement } | null = null;
 
   constructor(
@@ -186,10 +188,17 @@ export class VoidApp {
     );
     this.awaitingDeploy = mode === "underSiege";
     if (this.awaitingDeploy) this.sim.paused = true;
+    this.syncAudioVolumes();
     this.buildDOM();
-    if (!this.save.profile) {
-      this.openProfileDialog(true);
-    }
+    this.showTitleScreen();
+  }
+
+  private syncAudioVolumes(): void {
+    this.soundEngine.setVolumes(
+      this.save.settings.masterVolume / 100,
+      this.save.settings.sfxVolume / 100,
+      this.save.settings.ambienceVolume / 100,
+    );
   }
 
   private buildDOM(): void {
@@ -247,6 +256,7 @@ export class VoidApp {
                   <div class="void-run-controls" data-run-controls></div>
                 </div>
 
+                <div class="void-coach" data-coach-card hidden></div>
                 <div class="void-inspector" data-tower-inspector hidden></div>
                 <div class="void-outcome-banner" data-outcome-banner hidden></div>
 
@@ -297,7 +307,21 @@ export class VoidApp {
           <button type="button" data-void-tab="map">Resistance Map</button>
         </div>
       </main>
+      <div class="void-title-screen" data-title-screen>
+        <canvas class="void-title-canvas" data-title-canvas aria-hidden="true"></canvas>
+        <div class="void-title-content">
+          <div class="void-title-badge">YEAR 3000 // METROPOLITAN CONTAINMENT</div>
+          <h1 class="void-title-logo">VOID DEFENSE</h1>
+          <p class="void-title-tag">Hold the crumbling skyline against an expanding cosmic rupture.</p>
+          <div class="void-title-actions">
+            <button type="button" class="primary-btn" data-title-continue hidden>Continue</button>
+            <button type="button" class="primary-btn" data-title-new>New Game</button>
+            <button type="button" class="secondary-btn" data-title-settings>Settings</button>
+          </div>
+        </div>
+      </div>
       <dialog id="void-profile-dialog" class="void-dialog"></dialog>
+      <dialog id="void-settings-dialog" class="void-dialog"></dialog>
     `;
 
     const canvas = this.root.querySelector<HTMLCanvasElement>("#void-board-canvas")!;
@@ -420,6 +444,7 @@ export class VoidApp {
     this.renderPalette();
     this.refreshHUD();
     this.navigate("battle");
+    this.maybeStartCoach();
   }
 
   private bindBoardPointers(canvas: HTMLCanvasElement): void {
@@ -559,10 +584,18 @@ export class VoidApp {
       const ty = cy - Math.floor(spec.h / 2);
       const placed = this.sim.placeTower(this.activeTool.type, tx, ty);
       if (placed) {
-        play("knock");
-        if (this.awaitingDeploy) {
+        this.soundEngine.playSfx("towerPlace");
+        this.renderer.triggerPlacementPulse(placed.x + placed.w * 0.5, placed.y + placed.h * 0.5);
+        if (this.awaitingDeploy && this.coachStep < 0) {
           this.awaitingDeploy = false;
           this.sim.paused = false;
+        }
+        if (this.coachStep === 1 && placed.type === "matterCannon") {
+          this.coachStep = 2;
+          this.renderCoach();
+        } else if (this.coachStep === 2 && placed.type === "repairDepot") {
+          this.coachStep = 3;
+          this.renderCoach();
         }
         this.selectedTowerUid = placed.uid;
         this.refreshHUD();
@@ -573,7 +606,8 @@ export class VoidApp {
     if (this.activeTool.kind === "castStrike") {
       const ok = this.sim.castStrike(this.activeTool.strike, fx, fy);
       if (ok) {
-        play("stone");
+        this.soundEngine.playSfx("strikeCast");
+        this.renderer.triggerPlacementPulse(fx, fy);
         this.activeTool = { kind: "none" };
         this.hoverPreview = null;
         this.renderPalette();
@@ -972,6 +1006,9 @@ export class VoidApp {
       return;
     }
     const spec = TOWER_SPECS[t.type];
+    const lvl = t.level ?? 1;
+    const upgCost = this.sim.upgradePrice(t.uid);
+    const canUpgrade = upgCost > 0 && this.sim.canModifyTowers() && (this.save.settings.devMode || this.sim.supplies >= upgCost);
     const refund = this.sim.refundAmount(t.uid);
     const canModify = this.sim.canModifyTowers();
     let extraInfo = "";
@@ -995,7 +1032,7 @@ export class VoidApp {
     const html = `
       <div class="void-insp-head">
         <strong>${spec.name}</strong>
-        <span class="void-insp-tag">#${t.uid}</span>
+        <span class="void-insp-tag">Lv ${lvl}</span>
         <button type="button" data-insp-close class="void-insp-close" aria-label="Close inspector">×</button>
       </div>
       <div class="void-insp-stats">
@@ -1003,24 +1040,38 @@ export class VoidApp {
         ${extraInfo}
       </div>
       <div class="void-insp-actions">
+        ${upgCost > 0 ? `<button type="button" data-insp-upgrade class="primary-btn" ${canUpgrade ? "" : "disabled"}>Lv ${lvl + 1} (${upgCost})</button>` : ""}
         ${rotateBtn}
-        <button type="button" data-insp-reticle class="secondary-btn">Set Focus</button>
+        <button type="button" data-insp-reticle class="secondary-btn">Focus</button>
         <button type="button" data-insp-sell class="danger-btn" ${canModify ? "" : "disabled"}>Sell (+${refund})</button>
       </div>
     `;
     this.setInspectorContent(html, (el) => {
+      const upgBtn = el.querySelector<HTMLButtonElement>("[data-insp-upgrade]");
+      if (upgBtn) {
+        upgBtn.onclick = () => {
+          if (this.sim.upgradeTower(t.uid)) {
+            this.soundEngine.playSfx("towerUpgrade");
+            this.renderer.triggerPlacementPulse(t.x + t.w * 0.5, t.y + t.h * 0.5);
+            this.refreshHUD();
+          }
+        };
+      }
       const rotBtn = el.querySelector<HTMLButtonElement>("[data-insp-rotate]");
       if (rotBtn) {
         rotBtn.onclick = () => {
           this.sim.combat.rotatePrism(t.uid);
+          this.soundEngine.playSfx("uiClick");
           this.refreshHUD();
         };
       }
       el.querySelector<HTMLButtonElement>("[data-insp-reticle]")!.onclick = () => {
         this.activeTool = { kind: "setReticle", towerUid: t.uid };
+        this.soundEngine.playSfx("uiClick");
       };
       el.querySelector<HTMLButtonElement>("[data-insp-sell]")!.onclick = () => {
         if (this.sim.sellTower(t.uid)) {
+          this.soundEngine.playSfx("towerSell");
           this.selectedTowerUid = null;
           this.refreshHUD();
         }
@@ -1124,55 +1175,13 @@ export class VoidApp {
               <p>Build, sell, and adapt in real time as the Void actively consumes the city. Earn continuous Supplies from surviving skyscrapers.</p>
             </button>
             <button type="button" class="void-mode-card ${currentMode === "buildAndWatch" ? "selected" : ""}" data-select-mode="buildAndWatch">
-              <strong>Build & Watch</strong>
+              <strong>Build &amp; Watch</strong>
               <p>Prepare your defenses beforehand with a fixed starting budget, then unleash the Void and watch your containment plan unfold.</p>
             </button>
           </div>
           <small>Note: Best survival percentages and attempt counts are tracked separately per mode. Each sector has <b>one shared Sparks of Defiance entitlement</b> (up to 3 Sparks), equal to the highest tier reached in either mode.</small>
         </section>
-
-        <section class="void-settings-panel">
-          <h3>Resistance Command Settings</h3>
-          <div class="void-settings-row">
-            <label><input type="checkbox" data-set-sound ${!this.save.settings.soundOff ? "checked" : ""} /> Audio Telemetry & Sound Effects</label>
-            <label><input type="checkbox" data-set-mag ${this.save.settings.magnifier ? "checked" : ""} /> Precision Placement Magnifier (Loupe)</label>
-            <label><input type="checkbox" data-set-motion ${this.save.settings.reduceMotion ? "checked" : ""} /> Reduce Motion & Ambient Flicker</label>
-            <label>Building Height (Oblique Depth)
-              <select data-set-bheight>
-                <option value="full" ${this.save.settings.buildingHeight === "full" ? "selected" : ""}>Full (1 px / 2 floors)</option>
-                <option value="low" ${this.save.settings.buildingHeight === "low" ? "selected" : ""}>Low (Half Height)</option>
-                <option value="flat" ${this.save.settings.buildingHeight === "flat" ? "selected" : ""}>Flat (Legacy Top-Down)</option>
-              </select>
-            </label>
-            <label><input type="checkbox" data-set-dev ${this.save.settings.devMode ? "checked" : ""} /> Developer Mode (Unlock All Towers/Strikes & Unlimited Supplies)</label>
-          </div>
-        </section>
     `;
-
-    secPage.querySelector<HTMLInputElement>("[data-set-sound]")!.onchange = (e) => {
-      this.save.settings.soundOff = !(e.target as HTMLInputElement).checked;
-      this.persist();
-    };
-    secPage.querySelector<HTMLInputElement>("[data-set-mag]")!.onchange = (e) => {
-      this.save.settings.magnifier = (e.target as HTMLInputElement).checked;
-      this.persist();
-    };
-    secPage.querySelector<HTMLInputElement>("[data-set-motion]")!.onchange = (e) => {
-      this.save.settings.reduceMotion = (e.target as HTMLInputElement).checked;
-      this.renderer.reduceEffects = this.save.settings.reduceMotion;
-      this.persist();
-    };
-    secPage.querySelector<HTMLSelectElement>("[data-set-bheight]")!.onchange = (e) => {
-      const v = (e.target as HTMLSelectElement).value;
-      this.save.settings.buildingHeight = v === "low" || v === "flat" ? v : "full";
-      this.renderer.buildingHeight = this.save.settings.buildingHeight;
-      this.persist();
-    };
-    secPage.querySelector<HTMLInputElement>("[data-set-dev]")!.onchange = (e) => {
-      this.save.settings.devMode = (e.target as HTMLInputElement).checked;
-      this.persist();
-      this.startNewRun(this.save.selectedScenario);
-    };
 
     secPage.querySelectorAll<HTMLButtonElement>("[data-select-mode]").forEach((btn) => {
       btn.onclick = () => {
@@ -1185,8 +1194,291 @@ export class VoidApp {
 
   }
 
+  private showTitleScreen(): void {
+    const titleEl = this.root.querySelector<HTMLElement>("[data-title-screen]")!;
+    const contBtn = titleEl.querySelector<HTMLButtonElement>("[data-title-continue]")!;
+    const newBtn = titleEl.querySelector<HTMLButtonElement>("[data-title-new]")!;
+    const setBtn = titleEl.querySelector<HTMLButtonElement>("[data-title-settings]")!;
+
+    this.titleOpen = true;
+    titleEl.hidden = false;
+    contBtn.hidden = !this.save.profile;
+
+    contBtn.onclick = () => {
+      play("knock");
+      this.titleOpen = false;
+      titleEl.hidden = true;
+      this.maybeStartCoach();
+    };
+    newBtn.onclick = () => {
+      play("knock");
+      this.titleOpen = false;
+      titleEl.hidden = true;
+      this.openProfileDialog(!this.save.profile);
+    };
+    setBtn.onclick = () => {
+      play("knock");
+      this.openSettingsDialog();
+    };
+  }
+
+  private paintTitleBackdrop(nowMs: number): void {
+    const canvas = this.root.querySelector<HTMLCanvasElement>("[data-title-canvas]");
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const scale = 3;
+    const w = Math.max(160, Math.floor(rect.width / scale));
+    const h = Math.max(100, Math.floor(rect.height / scale));
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width = w;
+      canvas.height = h;
+    }
+    const c = canvas.getContext("2d");
+    if (!c) return;
+    c.imageSmoothingEnabled = false;
+
+    // Deep cosmic sky
+    c.fillStyle = "#06080c";
+    c.fillRect(0, 0, w, h);
+
+    // Subtle stars
+    for (let i = 0; i < 42; i++) {
+      const sx = ((i * 73 + 19) % w);
+      const sy = ((i * 41 + 11) % Math.max(1, Math.floor(h * 0.65)));
+      c.fillStyle = i % 5 === 0 ? "#00e5ff" : i % 3 === 0 ? "#c080ff" : "#5a6b84";
+      c.fillRect(sx, sy, 1, 1);
+    }
+
+    // Rising Void horizon glow behind skyline
+    const t = this.save.settings.reduceMotion ? 0 : nowMs * 0.001;
+    const voidTop = Math.floor(h * 0.54 + Math.sin(t * 0.7) * 3);
+    c.fillStyle = "#190726";
+    c.fillRect(0, voidTop, w, h - voidTop);
+    c.fillStyle = "#3b0e57";
+    for (let x = 0; x < w; x += 2) {
+      const wave = Math.floor(Math.sin(x * 0.08 + t * 1.3) * 2 + Math.cos(x * 0.03 - t) * 2);
+      c.fillRect(x, voidTop + wave, 2, 2);
+    }
+    c.fillStyle = "#c040ff";
+    for (let x = 0; x < w; x += 3) {
+      const wave = Math.floor(Math.sin(x * 0.08 + t * 1.3) * 2 + Math.cos(x * 0.03 - t) * 2);
+      if ((x + Math.floor(t * 4)) % 6 === 0) c.fillRect(x, voidTop + wave, 1, 1);
+    }
+
+    // Pixel-art metropolitan skyline silhouettes with warm amber windows
+    const bWidth = 10;
+    const cols = Math.ceil(w / bWidth);
+    for (let i = 0; i < cols; i++) {
+      const bx = i * bWidth;
+      const bh = 22 + ((i * 37 + 13) % Math.max(16, Math.floor(h * 0.42)));
+      const by = h - bh;
+      c.fillStyle = i % 2 === 0 ? "#0d121b" : "#111824";
+      c.fillRect(bx, by, bWidth - 1, bh);
+      c.fillStyle = "#222d3f";
+      c.fillRect(bx, by, bWidth - 1, 1);
+      // Lit amber / cyan windows
+      for (let wy = by + 3; wy < h - 4; wy += 4) {
+        for (let wx = bx + 2; wx < bx + bWidth - 3; wx += 3) {
+          const lit = ((wx * 13 + wy * 7 + i) % 11) > 4;
+          if (lit) {
+            c.fillStyle = ((wx + wy) % 7 === 0) ? "#00e5ff" : "#ff9d2b";
+            c.fillRect(wx, wy, 1, 2);
+          }
+        }
+      }
+    }
+  }
+
+  private maybeStartCoach(): void {
+    if (
+      this.sim.scenario.id === "tutorialBreach" &&
+      !this.save.coachDone &&
+      !this.titleOpen &&
+      !this.root.querySelector("dialog[open]")
+    ) {
+      this.coachStep = 0;
+      this.awaitingDeploy = true;
+      this.sim.paused = true;
+      this.renderCoach();
+    } else {
+      this.coachStep = -1;
+      this.renderCoach();
+    }
+  }
+
+  private renderCoach(): void {
+    const el = this.root.querySelector<HTMLElement>("[data-coach-card]");
+    if (!el) return;
+
+    this.root.querySelectorAll(".void-coach-pulse").forEach((n) => n.classList.remove("void-coach-pulse"));
+
+    if (this.coachStep < 0 || this.sim.scenario.id !== "tutorialBreach" || this.save.coachDone) {
+      el.hidden = true;
+      return;
+    }
+
+    const steps = [
+      {
+        title: "1/4 · Contain the Breach",
+        body: "The Void consumes the city outward. Surviving buildings generate <b>Supplies</b> to fund your defenses.",
+        next: "Next",
+        highlight: "",
+      },
+      {
+        title: "2/4 · Place a Matter Cannon",
+        body: "Select <b>Matter</b> below and tap near the Void frontier to fire synthetic land pellets.",
+        next: "",
+        highlight: '[data-pick-tower="matterCannon"]',
+      },
+      {
+        title: "3/4 · Deploy Engineers",
+        body: "Select <b>Repair</b> (Repair Depot) to deploy engineers that salvage rubble and mend buildings.",
+        next: "Next",
+        highlight: '[data-pick-tower="repairDepot"]',
+      },
+      {
+        title: "4/4 · Start Containment",
+        body: "Press <b>Start Battle</b> when ready. Use orbital <b>Strikes</b> if the Void breaks through.",
+        next: "Got it",
+        highlight: "[data-start-battle]",
+      },
+    ];
+
+    const step = steps[this.coachStep];
+    if (!step) {
+      this.coachStep = -1;
+      el.hidden = true;
+      return;
+    }
+
+    if (step.highlight) {
+      this.root.querySelectorAll(step.highlight).forEach((n) => n.classList.add("void-coach-pulse"));
+    }
+
+    el.hidden = false;
+    el.innerHTML = `
+      <div class="void-coach-head">
+        <strong>${step.title}</strong>
+        <button type="button" class="secondary-btn void-coach-skip" data-coach-skip>Skip</button>
+      </div>
+      <p>${step.body}</p>
+      ${step.next ? `<div class="void-coach-actions"><button type="button" class="primary-btn" data-coach-next>${step.next}</button></div>` : ""}
+    `;
+
+    el.querySelector<HTMLButtonElement>("[data-coach-skip]")!.onclick = () => {
+      this.save.coachDone = true;
+      this.coachStep = -1;
+      this.persist();
+      this.renderCoach();
+    };
+    const nextBtn = el.querySelector<HTMLButtonElement>("[data-coach-next]");
+    if (nextBtn) {
+      nextBtn.onclick = () => {
+        if (this.coachStep >= 3) {
+          this.save.coachDone = true;
+          this.coachStep = -1;
+          this.persist();
+        } else {
+          this.coachStep++;
+        }
+        this.renderCoach();
+      };
+    }
+  }
+
   openSettingsDialog(): void {
-    // Implemented in Phase 3
+    const dlg = this.root.querySelector<HTMLDialogElement>("#void-settings-dialog");
+    if (!dlg) return;
+    const showDev =
+      (typeof location !== "undefined" && location.search.includes("dev=1")) ||
+      this.save.settings.devMode;
+
+    dlg.innerHTML = `
+      <div class="void-settings-modal">
+        <div class="void-dialog-head">
+          <span class="void-emblem" aria-hidden="true"></span>
+          <h2>Command Settings</h2>
+        </div>
+        <div class="void-settings-row">
+          <label><input type="checkbox" data-set-sound ${!this.save.settings.soundOff ? "checked" : ""} /> Audio &amp; Sound Effects</label>
+          <label class="void-slider-row"><span>Master Volume</span><input type="range" min="0" max="100" step="5" value="${this.save.settings.masterVolume}" data-set-vol-master /></label>
+          <label class="void-slider-row"><span>SFX Volume</span><input type="range" min="0" max="100" step="5" value="${this.save.settings.sfxVolume}" data-set-vol-sfx /></label>
+          <label class="void-slider-row"><span>Ambience Volume</span><input type="range" min="0" max="100" step="5" value="${this.save.settings.ambienceVolume}" data-set-vol-amb /></label>
+          <label><input type="checkbox" data-set-mag ${this.save.settings.magnifier ? "checked" : ""} /> Precision Placement Magnifier</label>
+          <label><input type="checkbox" data-set-motion ${this.save.settings.reduceMotion ? "checked" : ""} /> Reduce Motion &amp; Ambient Flicker</label>
+          <label><input type="checkbox" data-set-pfont ${this.save.settings.pixelFont ? "checked" : ""} /> Custom Pixel Font (Alembic)</label>
+          <label class="void-select-row"><span>Building Height</span>
+            <select data-set-bheight>
+              <option value="full" ${this.save.settings.buildingHeight === "full" ? "selected" : ""}>Full (1 px / 2 floors)</option>
+              <option value="low" ${this.save.settings.buildingHeight === "low" ? "selected" : ""}>Low (Half Height)</option>
+              <option value="flat" ${this.save.settings.buildingHeight === "flat" ? "selected" : ""}>Flat (Top-Down)</option>
+            </select>
+          </label>
+          ${
+            showDev
+              ? `<label><input type="checkbox" data-set-dev ${this.save.settings.devMode ? "checked" : ""} /> Developer Mode (Unlock All &amp; Unlimited Supplies)</label>`
+              : ""
+          }
+        </div>
+        <div class="void-dialog-actions">
+          <button type="button" class="primary-btn" data-set-close>Done</button>
+        </div>
+      </div>
+    `;
+
+    dlg.querySelector<HTMLInputElement>("[data-set-sound]")!.onchange = (e) => {
+      this.save.settings.soundOff = !(e.target as HTMLInputElement).checked;
+      this.persist();
+    };
+    dlg.querySelector<HTMLInputElement>("[data-set-vol-master]")!.oninput = (e) => {
+      this.save.settings.masterVolume = Number((e.target as HTMLInputElement).value);
+      this.syncAudioVolumes();
+      this.persist();
+    };
+    dlg.querySelector<HTMLInputElement>("[data-set-vol-sfx]")!.oninput = (e) => {
+      this.save.settings.sfxVolume = Number((e.target as HTMLInputElement).value);
+      this.syncAudioVolumes();
+      this.persist();
+    };
+    dlg.querySelector<HTMLInputElement>("[data-set-vol-amb]")!.oninput = (e) => {
+      this.save.settings.ambienceVolume = Number((e.target as HTMLInputElement).value);
+      this.syncAudioVolumes();
+      this.persist();
+    };
+    dlg.querySelector<HTMLInputElement>("[data-set-mag]")!.onchange = (e) => {
+      this.save.settings.magnifier = (e.target as HTMLInputElement).checked;
+      this.persist();
+    };
+    dlg.querySelector<HTMLInputElement>("[data-set-motion]")!.onchange = (e) => {
+      this.save.settings.reduceMotion = (e.target as HTMLInputElement).checked;
+      this.renderer.reduceEffects = this.save.settings.reduceMotion;
+      document.documentElement.classList.toggle("reduce-motion", this.save.settings.reduceMotion);
+      this.persist();
+    };
+    dlg.querySelector<HTMLInputElement>("[data-set-pfont]")!.onchange = (e) => {
+      this.save.settings.pixelFont = (e.target as HTMLInputElement).checked;
+      document.documentElement.classList.toggle("pixel-font", this.save.settings.pixelFont);
+      this.persist();
+    };
+    dlg.querySelector<HTMLSelectElement>("[data-set-bheight]")!.onchange = (e) => {
+      const v = (e.target as HTMLSelectElement).value;
+      this.save.settings.buildingHeight = v === "low" || v === "flat" ? v : "full";
+      this.renderer.buildingHeight = this.save.settings.buildingHeight;
+      this.persist();
+    };
+    const devInput = dlg.querySelector<HTMLInputElement>("[data-set-dev]");
+    if (devInput) {
+      devInput.onchange = (e) => {
+        this.save.settings.devMode = (e.target as HTMLInputElement).checked;
+        this.persist();
+        this.startNewRun(this.save.selectedScenario);
+      };
+    }
+    dlg.querySelector<HTMLButtonElement>("[data-set-close]")!.onclick = () => {
+      dlg.close();
+    };
+
+    dlg.showModal();
   }
 
   private openProfileDialog(firstTime: boolean): void {
@@ -1258,6 +1550,15 @@ export class VoidApp {
     const dt = this.lastFrameMs ? Math.min(0.1, (nowMs - this.lastFrameMs) / 1000) : 0.016;
     this.lastFrameMs = nowMs;
 
+    if (this.titleOpen) {
+      if (!document.hidden) this.paintTitleBackdrop(nowMs);
+      if (this.lastSoundInBattle) {
+        this.lastSoundInBattle = false;
+        this.soundEngine.update(100, 0, false);
+      }
+      return;
+    }
+
     const modalOpen = Boolean(this.root.querySelector("dialog[open]"));
     if (!document.hidden && this.tab === "battle") {
       const prevTick = this.sim.tick;
@@ -1267,12 +1568,34 @@ export class VoidApp {
       }
       const hudTick = Math.floor(this.sim.tick / 15) !== Math.floor(prevTick / 15);
       if (!hadOutcome && this.sim.outcome) {
+        this.soundEngine.playSfx(this.sim.outcome.status === "won" ? "victory" : "defeat");
+        this.renderer.triggerOutcomeFlash(this.sim.outcome.status === "won");
         this.persist();
         this.refreshHUD();
       } else if (hudTick) {
         this.refreshHUD();
         this.renderPalette();
       }
+
+      // Drain sim audio/visual events
+      const ev = this.sim.sfxEvents;
+      if (ev.pelletsFired > 0) this.soundEngine.playSfx("cannonFire");
+      if (ev.pelletsHit > 0) this.soundEngine.playSfx("shellImpact");
+      if (ev.collapses > 0) this.soundEngine.playSfx("collapse", Math.min(1.4, 0.75 + ev.collapses * 0.2));
+      if (ev.cellsConsumed > 0) this.soundEngine.playSfx("voidConsume");
+      if (ev.unitsLost > 0) this.soundEngine.playSfx("unitDeath");
+      if (ev.lastIncomeAmount > 0) {
+        const b = this.sim.world.buildings.find((mb) => mb.isSkyscraper) ?? this.sim.world.buildings[0];
+        if (b) {
+          this.renderer.triggerIncomePopup(b.x + b.w * 0.5, b.y + b.h * 0.5, ev.lastIncomeAmount);
+        }
+      }
+      ev.pelletsFired = 0;
+      ev.pelletsHit = 0;
+      ev.collapses = 0;
+      ev.cellsConsumed = 0;
+      ev.unitsLost = 0;
+      ev.lastIncomeAmount = 0;
       this.renderer.draw(
         this.sim,
         nowMs,

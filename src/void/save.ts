@@ -35,6 +35,8 @@ export type VoidSave = {
   settings: Settings;
   /** Resistance Map trails already drawn on for the player (optional; 0 when absent). */
   mapRevealed?: number;
+  /** Whether the Sector 01 tactical coach has been completed or skipped. */
+  coachDone?: boolean;
 };
 
 export function defaultVoidSave(): VoidSave {
@@ -93,6 +95,7 @@ export function decodeVoidSave(raw: string | null): VoidSave {
   out.settings = decodeSettings(s.settings);
   const revealed = int(s.mapRevealed, 0, 0, 64);
   if (revealed > 0) out.mapRevealed = revealed;
+  if (s.coachDone === true) out.coachDone = true;
 
   const w = s.wallet;
   if (w && typeof w === "object") {

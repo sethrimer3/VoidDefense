@@ -3,10 +3,76 @@
  * painters while presenting all 6 Resistance sectors on one zoomable/pannable
  * screen with multi-parent cross-links and full no-fee respec. */
 
-import { MagicCircle } from "../../magic-circle/render.ts";
 import { paintPathIcon, type PathHue, type PathIcon } from "../../ui/path-icons.ts";
 import { UpgradeGraph, type GraphNode } from "../../ui/upgrade-graph.ts";
 import { TECH_BY_ID, TECH_NODES, type TechSector } from "./catalog.ts";
+
+/** Sci-fi holographic tactical star-chart backdrop for the Tech Network. */
+class HoloGridBackdrop {
+  private canvas: HTMLCanvasElement;
+  private pulse = 0;
+
+  constructor(private readonly host: HTMLElement) {
+    this.canvas = document.createElement("canvas");
+    this.canvas.className = "void-holo-backdrop";
+    this.canvas.setAttribute("aria-hidden", "true");
+    this.host.prepend(this.canvas);
+  }
+
+  energize(): void {
+    this.pulse = 1;
+  }
+
+  frame(now: number, reduced: boolean): void {
+    const w = this.host.clientWidth;
+    const h = this.host.clientHeight;
+    if (w <= 0 || h <= 0) return;
+    if (this.canvas.width !== w || this.canvas.height !== h) {
+      this.canvas.width = w;
+      this.canvas.height = h;
+    }
+    const c = this.canvas.getContext("2d");
+    if (!c) return;
+    c.clearRect(0, 0, w, h);
+
+    const cx = w * 0.5;
+    const cy = h * 0.5;
+    const maxR = Math.min(w, h) * 0.46;
+    const t = reduced ? 0 : now * 0.00035;
+    this.pulse = Math.max(0, this.pulse - 0.03);
+
+    // Subtle polar telemetry rings
+    c.save();
+    for (let i = 1; i <= 4; i++) {
+      const r = (maxR * i) / 4;
+      c.strokeStyle = i === 4 ? "rgba(0, 229, 255, 0.14)" : "rgba(56, 82, 118, 0.22)";
+      c.lineWidth = 1;
+      c.beginPath();
+      c.arc(cx, cy, r, 0, Math.PI * 2);
+      c.stroke();
+    }
+
+    // Rotating dashed outer arc
+    c.strokeStyle = `rgba(255, 148, 0, ${0.18 + this.pulse * 0.35})`;
+    c.lineWidth = 1.5;
+    c.setLineDash([10, 14]);
+    c.beginPath();
+    c.arc(cx, cy, maxR * 0.88, t, t + Math.PI * 1.4);
+    c.stroke();
+    c.setLineDash([]);
+
+    // Orthogonal crosshair axes
+    c.strokeStyle = "rgba(0, 229, 255, 0.08)";
+    c.lineWidth = 1;
+    c.beginPath();
+    c.moveTo(cx - maxR, cy);
+    c.lineTo(cx + maxR, cy);
+    c.moveTo(cx, cy - maxR);
+    c.lineTo(cx, cy + maxR);
+    c.stroke();
+    c.restore();
+  }
+}
 
 /** Paints a crisp 32x32 Command Core / Keep icon for the root tech node. */
 export function paintCommandCoreIcon(canvas: HTMLCanvasElement): void {
@@ -70,7 +136,7 @@ const SECTOR_LABELS: Record<TechSector, string> = {
 
 export class VoidTechTreeView {
   private readonly graph: UpgradeGraph;
-  private readonly circle = new MagicCircle();
+  private readonly circle: HoloGridBackdrop;
   private picked = "commandCore";
   private filterSector: TechSector | "" = "";
   private searchQuery = "";
@@ -111,10 +177,8 @@ export class VoidTechTreeView {
       </div>
     `;
 
-    const stage = this.host.querySelector<HTMLElement>(".void-tech-stage")!;
-    this.circle.attach(stage);
-
     const graphEl = this.host.querySelector<HTMLElement>(".void-tech-graph")!;
+    this.circle = new HoloGridBackdrop(graphEl);
     this.graph = new UpgradeGraph(graphEl, {
       reduceMotion: this.reduceMotion,
       spatialCulling: true,
@@ -234,13 +298,10 @@ export class VoidTechTreeView {
     if (!this.hasFittedVisible && this.host.clientWidth > 0) {
       this.hasFittedVisible = true;
       this.graph.refit(true);
+      requestAnimationFrame(() => this.graph.refit(true));
     }
 
-    this.circle.set({
-      topic: "voidTech",
-      upgrades: TECH_NODES.map((n) => ({ id: n.id, rank: wallet.ranks[n.id] ?? 0 })),
-    });
-
+    this.circle.frame(performance.now(), this.reduceMotion());
     this.renderCard(wallet, inBattle, avail);
   }
 

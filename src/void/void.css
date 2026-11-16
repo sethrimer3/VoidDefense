@@ -1170,9 +1170,36 @@
 }
 
 .void-tech-graph {
+  position: relative;
   flex: 1;
   height: 100%;
-  min-height: 320px;
+  min-height: 240px;
+}
+
+.void-holo-backdrop {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.void-tech-graph .ug-tag {
+  font-size: 11px;
+  background: rgba(6, 9, 15, 0.88);
+  padding: 1px 4px;
+  border-radius: 2px;
+  color: #dce6f2;
+}
+
+.void-tech-graph .ug-node.owned {
+  box-shadow: 0 0 10px rgba(255, 165, 40, 0.45);
+}
+
+.void-tech-graph .ug-node.next {
+  border-color: var(--void-neon-cyan);
+  box-shadow: 0 0 8px rgba(0, 229, 255, 0.4);
 }
 
 .void-tech-card {
@@ -1188,6 +1215,21 @@
   overflow-y: auto;
   box-shadow: -4px 0 16px rgba(0, 0, 0, 0.85);
   backdrop-filter: blur(4px);
+}
+
+@media (max-width: 700px) {
+  .void-tech-stage {
+    flex-direction: column;
+  }
+  .void-tech-card {
+    width: 100%;
+    max-width: 100%;
+    max-height: 34vh;
+    border-left: none;
+    border-top: 2px solid var(--void-neon-orange);
+    padding: 0.65rem 0.85rem;
+    box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.85);
+  }
 }
 
 .void-card-sector {
@@ -1325,7 +1367,33 @@
   line-height: 1.35;
 }
 
-/* The map keeps its 16:9 shape inside the Mine-style brass frame. */
+/* ── Sci-Fi Frame & Scrollbar Overrides (eliminates medieval brass/stone/wood) ── */
+.void-shell,
+.void-shell *,
+.void-dialog,
+.void-dialog * {
+  scrollbar-color: #364761 #070a10;
+}
+
+.void-ops-view .ops-view,
+.void-map-view {
+  border: 1px solid #33435c !important;
+  border-top: 2px solid var(--void-neon-cyan) !important;
+  border-image: none !important;
+  background: #06090f !important;
+  box-shadow: inset 0 0 24px rgba(0, 0, 0, 0.9), 0 6px 20px rgba(0, 0, 0, 0.85) !important;
+  border-radius: 3px !important;
+}
+
+.void-ops-view .mine-hire,
+.void-ops-view .ops-head button {
+  background: linear-gradient(180deg, #1b2331 0%, #0d121a 100%) !important;
+  border: 1px solid #394861 !important;
+  color: #dce4f0 !important;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.8) !important;
+}
+
+/* The map keeps its 16:9 shape inside the sci-fi frame. */
 .void-map-view {
   flex: none;
   aspect-ratio: 16 / 9;
@@ -1624,6 +1692,167 @@
   cursor: pointer;
 }
 
+.void-settings-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.void-slider-row,
+.void-select-row {
+  justify-content: space-between;
+}
+
+.void-slider-row input[type="range"] {
+  width: 150px;
+  accent-color: var(--void-neon-orange);
+}
+
+.void-select-row select {
+  background: #080b10;
+  color: #e4ebf5;
+  border: 1px solid #35445c;
+  padding: 0.25rem 0.45rem;
+  border-radius: 2px;
+  font-family: inherit;
+  font-size: 0.8rem;
+}
+
+/* ── Title Screen ── */
+.void-title-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: #06080c;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.void-title-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+}
+
+.void-title-content {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 0.85rem;
+  padding: 2rem 1.5rem;
+  width: min(460px, 92vw);
+  background: rgba(8, 11, 17, 0.84);
+  border: 1px solid #334259;
+  border-top: 2px solid var(--void-neon-orange);
+  border-radius: 3px;
+  box-shadow: 0 14px 44px rgba(0, 0, 0, 0.92), 0 0 28px rgba(255, 119, 0, 0.16);
+  backdrop-filter: blur(6px);
+}
+
+.void-title-badge {
+  font-size: 0.7rem;
+  letter-spacing: 0.18em;
+  color: var(--void-neon-cyan);
+  text-transform: uppercase;
+}
+
+.void-title-logo {
+  margin: 0;
+  font-size: clamp(1.9rem, 5.5vw, 2.85rem);
+  letter-spacing: 0.14em;
+  color: #ffffff;
+  text-shadow: 0 0 18px rgba(255, 140, 0, 0.65), 0 2px 4px #000;
+}
+
+.void-title-tag {
+  margin: 0;
+  font-size: 0.86rem;
+  color: #b4c4d8;
+  line-height: 1.45;
+  max-width: 34ch;
+}
+
+.void-title-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  width: min(260px, 100%);
+  margin-top: 0.35rem;
+}
+
+.void-title-actions button {
+  min-height: 40px;
+  font-size: 0.88rem;
+}
+
+/* ── Sector 01 Tactical Coach ── */
+.void-coach {
+  position: absolute;
+  top: 2.9rem;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(350px, 92vw);
+  padding: 0.65rem 0.8rem;
+  background: rgba(11, 16, 24, 0.95);
+  border: 1px solid var(--void-neon-cyan);
+  border-top: 2px solid var(--void-neon-cyan);
+  border-radius: 3px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.92), 0 0 14px rgba(0, 229, 255, 0.25);
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  z-index: 12;
+}
+
+.void-coach-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.void-coach-head strong {
+  color: var(--void-neon-cyan);
+  font-size: 0.82rem;
+  letter-spacing: 0.04em;
+}
+
+.void-coach-skip {
+  min-height: 24px !important;
+  padding: 0.1rem 0.45rem !important;
+  font-size: 0.7rem !important;
+}
+
+.void-coach p {
+  margin: 0;
+  font-size: 0.78rem;
+  color: #dce6f2;
+  line-height: 1.4;
+}
+
+.void-coach-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.void-coach-actions button {
+  min-height: 28px;
+  padding: 0.2rem 0.7rem;
+  font-size: 0.74rem;
+}
+
+.void-coach-pulse {
+  outline: 2px solid var(--void-neon-cyan) !important;
+  box-shadow: 0 0 14px rgba(0, 229, 255, 0.75) !important;
+}
+
 .void-classic-switch button {
   background: transparent;
   border: 1px dashed #4b5d7d;
@@ -1819,6 +2048,14 @@
   .void-card-icon {
     width: 14px;
     height: 14px;
+  }
+  .void-inspector {
+    left: auto;
+    right: 0.5rem;
+    bottom: 3rem;
+    transform: none;
+    width: min(230px, 36vw);
+    padding: 0.4rem 0.5rem;
   }
   .void-nav {
     padding: 2px 4px;

@@ -17,20 +17,21 @@ Void Defense UI architecture, sole-game bootstrap, HUD controls, audio, profile,
 Constructed via clean DOM template strings in `src/void/ui.ts` and styled in `src/style.css` and `src/theme.css`:
 - **Scenario & Mission Selector:** Scenario cards across varied scales (384×512 to 512×768) with baseline density and objective parameters.
 - **Operating Modes:** Toggle between "Build & Watch" (planning and automated defense) and "Under Siege" (active tactical command with dynamic infantry rallies and strike drops).
-- **Tactical Hotbar & Tower Palette:** 9 defensive installations mapped to keyboard shortcuts `1` through `9`, with energy cost indicators and placement previews.
-- **Strike Abilities:** 5 orbital and tactical strike abilities mapped to keys `Q` through `T` with real-time cooldown tracking.
-- **Simulation Controls:** Real-time speed stepping (`1x`, `2x`, `5x`), pause/resume toggle, and emergency abort options.
-- **Telemetry & Warnings:** Real-time frontier edge counts, matter debris levels, city survival percentage, and perimeter collapse alerts.
+- **Tactical Hotbar & Tower Palette:** 9 defensive installations and 6 strike abilities in a centered bottom dock (horizontally scrollable on phones), plus a desktop right-side tactical panel (`>= 1000px`) with sector briefing, run controls, telemetry, and tower/building inspector.
+- **Title Screen, Onboarding & Sector 01 Coach:** Animated pixel-art skyline Title Screen (`Continue`, `New Game`, `Settings`), high-contrast Commander Profile dialog (`Welcome, Commander`), and a 4-step Sector 01 tactical coach (`VoidSave.coachDone`) that holds the simulation until ready.
+- **Settings Modal:** Opened from the header gear button or Title Screen with Master/SFX/Ambience volume sliders, Magnifier, Reduce Motion, Pixel Font, Building Height, and `?dev=1`-gated Developer Mode.
+- **Simulation Controls:** Real-time speed stepping (`1x`, `2x`, `3x`), pause/resume toggle, and retry.
+- **Telemetry & Warnings:** Real-time frontier edge counts, Void energy remaining, active units, city survival percentage, and tiered outcome modal.
 
 ## Technology Screen & DAG
 
-- **DAG Interface (`src/void/tech/tech-ui.ts`):** Renders the 33-node technology tree using `UpgradeGraph` (`src/ui/upgrade-graph.ts`), animated `TreeMotes` fluid particle flows (`src/ui/tree-motes.ts`), and mathematical `MagicCircle` backdrops (`src/magic-circle/`).
+- **DAG Interface (`src/void/tech/tech-ui.ts`):** Renders the 63-node technology tree using `UpgradeGraph` (`src/ui/upgrade-graph.ts`), `HoloGridBackdrop` holographic star-chart rings, and responsive bottom-sheet detail panel on `< 700px` screens.
 - **Research Operations:** Node selection, dependency checking, Sparks purchasing, and non-destructive cascading refund trees.
 
 ## Audio & Sound Synthesis
 
 - **Sound Catalogs (`src/sound-files.ts`):** Lists pre-recorded audio beds and one-shots stored in `public/assets/sounds/` with seamless loop crossfades.
-- **Void Audio Engine (`src/void/audio.ts`):** Procedural Web Audio synthesizer generating atmospheric cosmic drone soundscapes, Brownian noise buffers seeded deterministically via `stream("effects")` from `src/random.ts`, and dynamic firing/collapse cues.
+- **Void Audio Engine (`src/void/audio.ts`):** Procedural Web Audio synthesizer generating atmospheric cosmic drone soundscapes, Brownian noise buffers seeded deterministically via `stream("effects")` from `src/random.ts`, and rate-limited, voice-capped sci-fi SFX cues (`uiClick`, `towerPlace`, `towerSell`, `towerUpgrade`, `cannonFire`, `shellImpact`, `collapse`, `voidConsume`, `unitDeath`, `strikeCast`, `victory`, `defeat`) with Master/SFX/Ambience volume scaling.
 
 ## Player Profile & Call-Sign
 

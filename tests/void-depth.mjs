@@ -35,10 +35,11 @@ try {
     page.on("pageerror", (e) => errors.push(e.message));
 
     await page.goto(process.env.TEST_URL || "http://127.0.0.1:5173/");
+    await page.locator("[data-title-new]").click();
     await page.locator('input[name="callsign"]').fill("Depth Inspector");
     await page.locator('[data-dlg-mode="buildAndWatch"]').click();
-    await page.getByRole("button", { name: "Confirm & Enter Command", exact: true }).click();
-    await page.locator("[data-start-battle]").waitFor();
+    await page.locator('#void-profile-dialog button[type="submit"]').click();
+    await page.locator("[data-start-battle]:visible").waitFor();
 
     const ringedCheck = await page.evaluate(async () => {
       const { VoidSim } = await import("/src/void/sim.ts");

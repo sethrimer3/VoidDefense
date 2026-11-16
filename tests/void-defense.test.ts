@@ -533,3 +533,31 @@ test("12. Fine pixels erode independently while preserving the fixed-point energ
   assert.ok(Math.abs((before - field.energyRemaining) - field.totalWorkResisted) < 1e-9);
   assert.equal(world.hp[center + 2], 16, "non-frontier sibling pixels remain intact");
 });
+
+test("13. Save coachDone, audio volume settings, and in-run tower upgrade sink", () => {
+  const save = defaultVoidSave();
+  save.coachDone = true;
+  save.settings.masterVolume = 60;
+  save.settings.sfxVolume = 75;
+  save.settings.ambienceVolume = 40;
+  const restored = decodeVoidSave(JSON.stringify(save));
+  assert.equal(restored.coachDone, true);
+  assert.equal(restored.settings.masterVolume, 60);
+  assert.equal(restored.settings.sfxVolume, 75);
+  assert.equal(restored.settings.ambienceVolume, 40);
+
+  const sim = new VoidSim("tutorialBreach", "underSiege", emptyTechWallet());
+  sim.supplies = 500;
+  const tower = sim.placeTower("matterCannon", 20, 20);
+  assert.ok(tower, "Matter Cannon placed");
+  const baseHp = tower.maxHp;
+  const lv2Cost = sim.upgradePrice(tower.uid);
+  assert.ok(lv2Cost > 0);
+  assert.equal(sim.upgradeTower(tower.uid), true);
+  assert.equal(tower.level, 2);
+  assert.ok(tower.maxHp > baseHp);
+  assert.equal(sim.upgradeTower(tower.uid), true);
+  assert.equal(tower.level, 3);
+  assert.equal(sim.upgradePrice(tower.uid), 0, "Max level 3 has no further upgrade cost");
+  assert.equal(sim.upgradeTower(tower.uid), false);
+});

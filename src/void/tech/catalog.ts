@@ -54,7 +54,7 @@ export const TECH_NODES: readonly TechNodeDef[] = [
   {
     id: "commandCore",
     name: "Emergency Response Protocol",
-    description: "United Resistance command network online. Unlocks Matter Cannon, Repair Depot, Infantry Barracks, and Hearthseed drops.",
+    description: "United Resistance command network online. Unlocks Matter Cannon, Repair Depot, Infantry Barracks, and Solar Anchor drops.",
     sector: "foundation",
     kind: "passive",
     currency: "essence",
@@ -446,8 +446,8 @@ export const TECH_NODES: readonly TechNodeDef[] = [
   },
   {
     id: "unlockLanternBearer",
-    name: "Lantern Bearers",
-    description: "Unlocks Lantern Bearer: warm amber aura that stabilizes nearby frontier cells.",
+    name: "Beacon Drones",
+    description: "Unlocks Beacon Drone Post: warm amber field that stabilizes nearby frontier cells.",
     sector: "strikes",
     kind: "unlockTower",
     currency: "essence",
@@ -459,8 +459,8 @@ export const TECH_NODES: readonly TechNodeDef[] = [
   },
   {
     id: "lanternEscortRadius",
-    name: "Wide Lantern Halo",
-    description: "Expands each Lantern Bearer's solid-ground escort radius (+0.5 cell per rank, max +1).",
+    name: "Wide Beacon Field",
+    description: "Expands each Beacon Drone's solid-ground escort radius (+0.5 cell per rank, max +1).",
     sector: "strikes",
     kind: "passive",
     currency: "essence",
@@ -472,8 +472,8 @@ export const TECH_NODES: readonly TechNodeDef[] = [
   },
   {
     id: "lanternSurvivability",
-    name: "Tempered Lantern Ward",
-    description: "+35% Lantern Bearer health per rank so bearers survive enemy fire longer.",
+    name: "Reinforced Drone Hull",
+    description: "+35% Beacon Drone health per rank so drones survive enemy fire longer.",
     sector: "strikes",
     kind: "passive",
     currency: "essence",
@@ -484,8 +484,8 @@ export const TECH_NODES: readonly TechNodeDef[] = [
   },
   {
     id: "lanternStride",
-    name: "Escort Stride",
-    description: "+20% Lantern Bearer movement speed per rank.",
+    name: "Escort Thrusters",
+    description: "+20% Beacon Drone movement speed per rank.",
     sector: "strikes",
     kind: "passive",
     currency: "essence",
@@ -660,8 +660,8 @@ export const TECH_NODES: readonly TechNodeDef[] = [
   // ── Sector 5: Strike Command ──────────────────────────────────────────
   {
     id: "landfallPayload",
-    name: "Fertile Hearthseed",
-    description: "Expands Hearthseed radius (+1 cell per rank) and grows trees and farmland on newly raised islands.",
+    name: "Expanded Solar Anchor",
+    description: "Expands Solar Anchor radius (+1 cell per rank) and grows trees and farmland on newly raised islands.",
     sector: "strikes",
     kind: "passive",
     currency: "essence",
@@ -697,8 +697,8 @@ export const TECH_NODES: readonly TechNodeDef[] = [
   },
   {
     id: "unlockQuarantineBell",
-    name: "Quarantine Bell",
-    description: "Unlocks Quarantine Bell Strike: casts a 6s closed seal blocking Void propagation across its boundary in both directions.",
+    name: "Stasis Beacon",
+    description: "Unlocks Stasis Beacon Strike: projects a 6s closed seal blocking Void propagation across its boundary in both directions.",
     sector: "strikes",
     kind: "unlockStrike",
     currency: "essence",
@@ -710,8 +710,8 @@ export const TECH_NODES: readonly TechNodeDef[] = [
   },
   {
     id: "quarantineDuration",
-    name: "Resonant Chime",
-    description: "Increases Quarantine Bell seal duration by +1.5s per rank.",
+    name: "Sustained Stasis",
+    description: "Increases Stasis Beacon seal duration by +1.5s per rank.",
     sector: "strikes",
     kind: "passive",
     currency: "essence",
@@ -723,7 +723,7 @@ export const TECH_NODES: readonly TechNodeDef[] = [
   {
     id: "quarantineRadius",
     name: "Broadened Seal",
-    description: "Increases Quarantine Bell seal radius by +2 ground cells per rank.",
+    description: "Increases Stasis Beacon seal radius by +2 ground cells per rank.",
     sector: "strikes",
     kind: "passive",
     currency: "essence",

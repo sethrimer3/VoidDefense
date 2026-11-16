@@ -211,6 +211,28 @@ export class VoidRenderer {
   /** Per-building elevated roof & south-facade sprite cache. */
   readonly spriteCache = new BuildingSpriteCache();
   private lastDirtyChunks = new Uint8Array(0);
+  private placementPulses: { x: number; y: number; ageMs: number }[] = [];
+  private incomePopups: { x: number; y: number; text: string; ageMs: number }[] = [];
+  private outcomeFlashMs = 0;
+  private outcomeFlashWon = true;
+
+  triggerPlacementPulse(wx: number, wy: number): void {
+    if (this.reduceEffects) return;
+    if (this.placementPulses.length >= 12) this.placementPulses.shift();
+    this.placementPulses.push({ x: wx, y: wy, ageMs: 0 });
+  }
+
+  triggerIncomePopup(wx: number, wy: number, amount: number): void {
+    if (this.reduceEffects || amount <= 0) return;
+    if (this.incomePopups.length >= 8) this.incomePopups.shift();
+    this.incomePopups.push({ x: wx, y: wy, text: `+${amount}`, ageMs: 0 });
+  }
+
+  triggerOutcomeFlash(won: boolean): void {
+    if (this.reduceEffects) return;
+    this.outcomeFlashMs = 280;
+    this.outcomeFlashWon = won;
+  }
 
   // Tron light cycle trails along streets connecting buildings
   private corridors: TronCorridor[] = [];
@@ -2513,6 +2535,68 @@ export class VoidRenderer {
     output.setTransform(scale, 0, 0, scale, this.cam.x + shakeX, this.cam.y + shakeY);
     output.drawImage(this.sceneLayer, 0, 0);
     output.setTransform(1, 0, 0, 1, 0, 0);
+
+    // 15b. Pooled whole-pixel placement pulses, income popups & outcome flash
+    if (!this.reduceEffects) {
+      const dtMs = dt * 1000;
+      for (let i = this.placementPulses.length - 1; i >= 0; i--) {
+        const p = this.placementPulses[i];
+        p.ageMs += dtMs;
+        if (p.ageMs >= 320) {
+          this.placementPulses.splice(i, 1);
+          continue;
+        }
+        const t = p.ageMs / 320;
+        const sx = Math.round(this.cam.x + p.x * scale);
+        const sy = Math.round(this.cam.y + p.y * scale);
+        const rad = Math.round((3 + t * 9) * scale);
+        output.save();
+        output.globalAlpha = (1 - t) * 0.85;
+        output.strokeStyle = "#ffb84d";
+        output.lineWidth = Math.max(1, Math.round(scale * 0.5));
+        output.beginPath();
+        output.arc(sx, sy, rad, 0, Math.PI * 2);
+        output.stroke();
+        output.fillStyle = "#d8c9a8";
+        for (let k = 0; k < 4; k++) {
+          const ang = k * Math.PI * 0.5 + 0.4;
+          const dx = Math.round(sx + Math.cos(ang) * rad * 0.85);
+          const dy = Math.round(sy + Math.sin(ang) * rad * 0.85);
+          output.fillRect(dx, dy, Math.max(2, Math.round(scale)), Math.max(2, Math.round(scale)));
+        }
+        output.restore();
+      }
+
+      for (let i = this.incomePopups.length - 1; i >= 0; i--) {
+        const pop = this.incomePopups[i];
+        pop.ageMs += dtMs;
+        if (pop.ageMs >= 900) {
+          this.incomePopups.splice(i, 1);
+          continue;
+        }
+        const t = pop.ageMs / 900;
+        const sx = Math.round(this.cam.x + pop.x * scale);
+        const sy = Math.round(this.cam.y + pop.y * scale - t * 20);
+        output.save();
+        output.globalAlpha = 1 - t;
+        output.font = "bold 11px monospace";
+        output.textAlign = "center";
+        output.fillStyle = "#000000";
+        output.fillText(pop.text, sx + 1, sy + 1);
+        output.fillStyle = "#ffb833";
+        output.fillText(pop.text, sx, sy);
+        output.restore();
+      }
+
+      if (this.outcomeFlashMs > 0) {
+        this.outcomeFlashMs = Math.max(0, this.outcomeFlashMs - dtMs);
+        output.save();
+        output.globalAlpha = (this.outcomeFlashMs / 280) * 0.32;
+        output.fillStyle = this.outcomeFlashWon ? "#48e5ff" : "#ff334b";
+        output.fillRect(0, 0, this.canvas.width, this.canvas.height);
+        output.restore();
+      }
+    }
 
     // 16. Touch/drag magnifying glass (`Loupe`)
     if (showMagnifier && pointerForLoupe) {

@@ -47,6 +47,16 @@ export class VoidSim {
   outcome: RunOutcome | null = null;
   private acc = 0;
 
+  /** Lightweight per-frame audio/visual event counters drained by the UI/audio layer. */
+  readonly sfxEvents = {
+    pelletsFired: 0,
+    pelletsHit: 0,
+    collapses: 0,
+    cellsConsumed: 0,
+    unitsLost: 0,
+    lastIncomeAmount: 0,
+  };
+
   constructor(
     scenarioId: ScenarioId,
     mode: PlayStyleMode,
@@ -128,6 +138,35 @@ export class VoidSim {
     return true;
   }
 
+  /** Cost in Supplies to upgrade a placed tower to its next level (max Lv 3), or 0 if maxed/missing. */
+  upgradePrice(uid: number): number {
+    const t = this.combat.towers.find((tw) => tw.uid === uid);
+    if (!t) return 0;
+    const lvl = t.level ?? 1;
+    if (lvl >= 3) return 0;
+    const specCost = TOWER_SPECS[t.type].cost;
+    const mult = lvl === 1 ? 0.9 : 1.5;
+    return Math.max(25, Math.round((specCost * mult) / 5) * 5);
+  }
+
+  /** Upgrades a placed tower (max Lv 3), boosting max HP, healing, and cycling speed. */
+  upgradeTower(uid: number): boolean {
+    if (!this.canModifyTowers()) return false;
+    const t = this.combat.towers.find((tw) => tw.uid === uid);
+    if (!t) return false;
+    const lvl = t.level ?? 1;
+    if (lvl >= 3) return false;
+    const price = this.upgradePrice(uid);
+    if (!this.devUnlimited && price > this.supplies) return false;
+    if (!this.devUnlimited) this.supplies -= price;
+    t.level = lvl + 1;
+    t.paid += price;
+    t.maxHp = Math.round(t.maxHp * 1.3);
+    t.hp = t.maxHp;
+    this.playerActionsCount++;
+    return true;
+  }
+
   setTowerFocus(uid: number, x: number, y: number): boolean {
     const t = this.combat.towers.find((tw) => tw.uid === uid);
     if (!t || !this.world.grid.inBounds(Math.floor(x), Math.floor(y))) return false;
@@ -188,7 +227,9 @@ export class VoidSim {
 
     // 1. Periodic Supplies income from surviving & developed civilian buildings (Under Siege mode only)
     if (this.mode === "underSiege" && this.tick % SUPPLIES_ECONOMY.incomeTickInterval === 0) {
-      this.supplies += computeCityIncomePerCycle(this.world, this.tech);
+      const inc = computeCityIncomePerCycle(this.world, this.tech);
+      this.supplies += inc;
+      this.sfxEvents.lastIncomeAmount = inc;
     }
 
     // 2. Step Void field expansion & frontier work distribution
@@ -216,10 +257,15 @@ export class VoidSim {
     );
 
     // 3. Step structural integrity & debris fragments
+    const prevChunks = this.physics.activeFallingChunkCount();
     this.physics.stepStructuralSupport(this.world, TICK_DT);
+    if (this.physics.activeFallingChunkCount() > prevChunks + 2) {
+      this.sfxEvents.collapses++;
+    }
 
     // 3b. Ingest Void-caused cell losses into Chrono Cannon bounded journal
     if (this.physics.recentCellLosses.length > 0) {
+      this.sfxEvents.cellsConsumed += this.physics.recentCellLosses.length;
       for (let i = 0; i < this.physics.recentCellLosses.length; i++) {
         const loss = this.physics.recentCellLosses[i];
         this.combat.recordChronoLoss(
@@ -248,6 +294,14 @@ export class VoidSim {
     this.voidField.stepCountervoidField(this.world, TICK_DT, hearts, this.tech);
 
     // 4. Step towers, projectiles, autonomous agents, and cosmic organisms
+    for (let i = 0; i < this.combat.towers.length; i++) {
+      const t = this.combat.towers[i];
+      if ((t.level ?? 1) > 1 && t.cooldown > 0) {
+        t.cooldown = Math.max(0, t.cooldown - TICK_DT * 0.2 * ((t.level ?? 1) - 1));
+      }
+    }
+    const prevPellets = this.combat.pellets.length;
+    const prevAgents = this.combat.agents.length;
     this.combat.step(
       this.world,
       this.physics,
@@ -257,6 +311,9 @@ export class VoidSim {
       this.tech,
       allowOrganisms,
     );
+    if (this.combat.pellets.length > prevPellets) this.sfxEvents.pelletsFired++;
+    else if (this.combat.pellets.length < prevPellets) this.sfxEvents.pelletsHit++;
+    if (this.combat.agents.length < prevAgents) this.sfxEvents.unitsLost++;
 
     this.farms.step(TICK_DT, this.combat.lasers);
 

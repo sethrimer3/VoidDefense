@@ -15,10 +15,11 @@ try {
     const errors = [];
     page.on('pageerror', e => errors.push(e.message));
     await page.goto(process.env.TEST_URL || 'http://127.0.0.1:5173/');
+    await page.locator('[data-title-new]').click();
     await page.locator('input[name="callsign"]').fill('Crisp Inspector');
     await page.locator('[data-dlg-mode="buildAndWatch"]').click();
-    await page.getByRole('button', { name: 'Confirm & Enter Command', exact: true }).click();
-    await page.locator('[data-start-battle]').waitFor();
+    await page.locator('#void-profile-dialog button[type="submit"]').click();
+    await page.locator('[data-start-battle]:visible').waitFor();
     await page.screenshot({ path: `test-results/void-crisp/city-${width}.png` });
     const result = await page.evaluate(async () => {
       const { pixelPainter } = await import('/src/void/pixel-painter.ts');

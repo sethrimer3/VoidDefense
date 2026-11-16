@@ -15,10 +15,46 @@
 import { audioGraph, soundOn } from "../sound.ts";
 import { stream } from "../random.ts";
 
+export type VoidSfxCue =
+  | "uiClick"
+  | "towerPlace"
+  | "towerSell"
+  | "towerUpgrade"
+  | "cannonFire"
+  | "shellImpact"
+  | "collapse"
+  | "voidConsume"
+  | "unitDeath"
+  | "strikeCast"
+  | "victory"
+  | "defeat";
+
+const SFX_COOLDOWN_MS: Record<VoidSfxCue, number> = {
+  uiClick: 35,
+  towerPlace: 50,
+  towerSell: 50,
+  towerUpgrade: 60,
+  cannonFire: 75,
+  shellImpact: 85,
+  collapse: 140,
+  voidConsume: 180,
+  unitDeath: 110,
+  strikeCast: 120,
+  victory: 400,
+  defeat: 400,
+};
+
 export class VoidSoundEngine {
   private active = false;
   private ctx: AudioContext | null = null;
   private masterGain: GainNode | null = null;
+  private sfxGain: GainNode | null = null;
+  private volMaster = 0.8;
+  private volSfx = 0.85;
+  private volAmbience = 0.65;
+  private lastSfxAt = new Map<VoidSfxCue, number>();
+  private activeVoices = 0;
+  private readonly maxVoices = 10;
 
   // Sub-bass oscillators
   private oscSubL: OscillatorNode | null = null;
@@ -66,7 +102,8 @@ export class VoidSoundEngine {
 
     // Dynamic targets:
     // 1. Master volume grows deeper and fuller as Void engulfs the metropolis
-    const targetGain = 0.08 + takeover * 0.45 + chunkNorm * 0.08;
+    const ambScale = this.volMaster * this.volAmbience;
+    const targetGain = (0.08 + takeover * 0.45 + chunkNorm * 0.08) * ambScale;
     this.masterGain.gain.setTargetAtTime(targetGain, now, 0.4);
 
     // 2. Filter cutoff opens from a muffled 45Hz sub-hum to a roaring 220Hz stereo roar
@@ -107,6 +144,10 @@ export class VoidSoundEngine {
     this.masterGain = ctx.createGain();
     this.masterGain.gain.setValueAtTime(0.001, now);
     this.masterGain.connect(out);
+
+    this.sfxGain = ctx.createGain();
+    this.sfxGain.gain.setValueAtTime(this.volMaster * this.volSfx, now);
+    this.sfxGain.connect(out);
 
     // Left Sub-Bass Oscillator (Sine for deep body)
     this.oscSubL = ctx.createOscillator();
@@ -231,6 +272,109 @@ export class VoidSoundEngine {
   }
 
   private lastAnimalSoundAt = 0;
+
+  /** Updates master, SFX, and ambience volume levels (0..1). */
+  setVolumes(master: number, sfx: number, ambience: number): void {
+    this.volMaster = Math.max(0, Math.min(1, master));
+    this.volSfx = Math.max(0, Math.min(1, sfx));
+    this.volAmbience = Math.max(0, Math.min(1, ambience));
+    if (this.ctx && this.sfxGain) {
+      this.sfxGain.gain.setTargetAtTime(this.volMaster * this.volSfx, this.ctx.currentTime, 0.05);
+    }
+  }
+
+  /** Plays a rate-limited, voice-capped procedural sci-fi sound effect. */
+  playSfx(cue: VoidSfxCue, intensity = 1): void {
+    if (!soundOn() || document.hidden) return;
+    const nowMs = performance.now();
+    const prev = this.lastSfxAt.get(cue) ?? 0;
+    if (nowMs - prev < SFX_COOLDOWN_MS[cue]) return;
+    if (this.activeVoices >= this.maxVoices) return;
+
+    if (!this.active) {
+      this.initGraph();
+    }
+    if (!this.ctx || !this.sfxGain || this.ctx.state !== "running") return;
+
+    this.lastSfxAt.set(cue, nowMs);
+    const ctx = this.ctx;
+    const out = this.sfxGain;
+    const now = ctx.currentTime;
+    const scale = Math.max(0.25, Math.min(1.5, intensity));
+
+    const tone = (
+      type: OscillatorType,
+      f0: number,
+      f1: number,
+      dur: number,
+      peak: number,
+      delay = 0,
+    ) => {
+      if (this.activeVoices >= this.maxVoices) return;
+      this.activeVoices++;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = type;
+      osc.frequency.setValueAtTime(f0, now + delay);
+      if (f1 !== f0) osc.frequency.exponentialRampToValueAtTime(Math.max(20, f1), now + delay + dur);
+      gain.gain.setValueAtTime(0.0001, now + delay);
+      gain.gain.linearRampToValueAtTime(peak * scale, now + delay + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + delay + dur);
+      osc.connect(gain);
+      gain.connect(out);
+      osc.onended = () => {
+        this.activeVoices = Math.max(0, this.activeVoices - 1);
+      };
+      osc.start(now + delay);
+      osc.stop(now + delay + dur + 0.02);
+    };
+
+    switch (cue) {
+      case "uiClick":
+        tone("triangle", 820, 540, 0.055, 0.09);
+        break;
+      case "towerPlace":
+        tone("sine", 140, 62, 0.14, 0.22);
+        tone("triangle", 520, 780, 0.1, 0.1, 0.02);
+        break;
+      case "towerSell":
+        tone("triangle", 480, 190, 0.14, 0.14);
+        break;
+      case "towerUpgrade":
+        tone("triangle", 440, 660, 0.12, 0.14);
+        tone("sine", 660, 990, 0.16, 0.12, 0.07);
+        break;
+      case "cannonFire":
+        tone("sawtooth", 170, 52, 0.12, 0.14);
+        break;
+      case "shellImpact":
+        tone("triangle", 220, 75, 0.09, 0.11);
+        break;
+      case "collapse":
+        tone("sawtooth", 92, 34, 0.28, 0.2 * scale);
+        tone("sine", 58, 28, 0.34, 0.18 * scale);
+        break;
+      case "voidConsume":
+        tone("sine", 620, 290, 0.08, 0.045);
+        break;
+      case "unitDeath":
+        tone("square", 320, 110, 0.07, 0.05);
+        break;
+      case "strikeCast":
+        tone("sawtooth", 240, 880, 0.18, 0.16);
+        tone("sine", 880, 220, 0.28, 0.14, 0.12);
+        break;
+      case "victory":
+        tone("triangle", 440, 440, 0.22, 0.15, 0);
+        tone("triangle", 554.37, 554.37, 0.24, 0.15, 0.11);
+        tone("triangle", 659.25, 659.25, 0.38, 0.18, 0.22);
+        break;
+      case "defeat":
+        tone("sawtooth", 220, 196, 0.24, 0.14, 0);
+        tone("sawtooth", 164.8, 110, 0.42, 0.16, 0.16);
+        break;
+    }
+  }
 
   /** Plays a short synthesized sheep ("baa") or cow ("moo") sound when farmland livestock falls into the Void. */
   playAnimalSound(kind: "sheep" | "cow"): void {

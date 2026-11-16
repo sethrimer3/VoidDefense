@@ -287,6 +287,7 @@ export type PlacedTower = {
   lureUntilTick?: number;
   lureCooldownUntilTick?: number;
   paid: number;
+  level?: number;
   placedAtTick: number;
   cooldown: number;
   lastDamageCause?: "enemy" | "masonry" | "void";

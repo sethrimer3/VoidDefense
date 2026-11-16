@@ -17,10 +17,11 @@ try {
     const errors = [];
     page.on('pageerror', e => errors.push(e.message));
     await page.goto(process.env.TEST_URL || 'http://127.0.0.1:5173/');
+    await page.locator('[data-title-new]').click();
     await page.locator('input[name="callsign"]').fill('Pixel Inspector');
     await page.locator('[data-dlg-mode="buildAndWatch"]').click();
-    await page.getByRole('button', { name: 'Confirm & Enter Command', exact: true }).click();
-    await page.locator('[data-start-battle]').waitFor();
+    await page.locator('#void-profile-dialog button[type="submit"]').click();
+    await page.locator('[data-start-battle]:visible').waitFor();
     await page.screenshot({ path: `${output}/city-${viewport.width}.png` });
     const result = await page.evaluate(async () => {
       const { VoidRenderer } = await import('/src/void/render.ts');
