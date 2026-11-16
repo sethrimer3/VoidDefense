@@ -637,6 +637,7 @@ export class VoidRenderer {
       this.terrainLayer.height = targetH;
       this.terrainImageData = this.tctx.createImageData(targetW, targetH);
       this.terrainU32 = new Uint32Array(this.terrainImageData.data.buffer);
+      this.initShadowCache(world);
       this.ledgeDirty = true;
       world.grid.markAllDirty();
     }
@@ -650,7 +651,29 @@ export class VoidRenderer {
       this.lastDirtyChunks = new Uint8Array(dirtyChunks.length);
     }
     this.lastDirtyChunks.set(dirtyChunks);
-    this.ledgeDirty = true;
+
+    // Incrementally update shadowMap when building footprints change in dirty chunks
+    const { buildingAt } = world;
+    for (let cy = 0; cy < chunksH; cy++) {
+      for (let cx = 0; cx < chunksW; cx++) {
+        if (!dirtyChunks[cy * chunksW + cx]) continue;
+        const x0 = cx * CHUNK_SIZE;
+        const y0 = cy * CHUNK_SIZE;
+        const x1 = Math.min(targetW, x0 + CHUNK_SIZE);
+        const y1 = Math.min(targetH, y0 + CHUNK_SIZE);
+        for (let y = y0; y < y1; y++) {
+          const row = y * targetW;
+          for (let x = x0; x < x1; x++) {
+            const idx = row + x;
+            const cur = buildingAt[idx];
+            if (cur !== this.prevBuildingAt[idx]) {
+              this.prevBuildingAt[idx] = cur;
+              this.refreshShadowAround(world, x, y, dirtyChunks, chunksW);
+            }
+          }
+        }
+      }
+    }
 
     let minX = targetW;
     let minY = targetH;
@@ -682,12 +705,72 @@ export class VoidRenderer {
     world.grid.clearDirtyFlags();
   }
 
+  private initShadowCache(world: VoidWorld): void {
+    const { w, h, count } = world.grid;
+    const mode = this.buildingHeight === "flat" ? "full" : this.buildingHeight;
+    this.buildingElevs = new Uint8Array(world.buildings.length);
+    for (let i = 0; i < world.buildings.length; i++) {
+      this.buildingElevs[i] = elevationOf(world.buildings[i], mode);
+    }
+    this.shadowMap = new Uint8Array(count);
+    this.prevBuildingAt = new Int32Array(world.buildingAt);
+    const { buildingAt, buildings, material } = world;
+    for (let y = 0; y < h; y++) {
+      const row = y * w;
+      for (let x = 0; x < w; x++) {
+        const idx = row + x;
+        if (material[idx] === CellMaterial.VOID) continue;
+        const bId = buildingAt[idx];
+        const selfHeight = bId >= 0 ? (buildings[bId]?.height ?? 0) : 0;
+        const selfElev = bId >= 0 ? (this.buildingElevs[bId] ?? 0) : 0;
+        this.shadowMap[idx] = Math.round(this.computeShadowAt(world, x, y, selfHeight, selfElev) * 100);
+      }
+    }
+  }
+
+  private refreshShadowAround(
+    world: VoidWorld,
+    x: number,
+    y: number,
+    dirtyChunks: Uint8Array,
+    chunksW: number,
+  ): void {
+    const { w, h } = world.grid;
+    const { buildingAt, buildings } = world;
+    const updateAt = (tx: number, ty: number): void => {
+      if (tx < 0 || tx >= w || ty < 0 || ty >= h) return;
+      const idx = ty * w + tx;
+      const bId = buildingAt[idx];
+      const selfHeight = bId >= 0 ? (buildings[bId]?.height ?? 0) : 0;
+      const selfElev = bId >= 0 ? (this.buildingElevs[bId] ?? 0) : 0;
+      const next = Math.round(this.computeShadowAt(world, tx, ty, selfHeight, selfElev) * 100);
+      if (this.shadowMap[idx] !== next) {
+        this.shadowMap[idx] = next;
+        dirtyChunks[((ty / CHUNK_SIZE) | 0) * chunksW + ((tx / CHUNK_SIZE) | 0)] = 1;
+      }
+    };
+    updateAt(x, y);
+    updateAt(x + 1, y);
+    updateAt(x, y + 1);
+    for (let step = 1; step <= 9; step++) {
+      updateAt(x + step, y + step);
+    }
+  }
+
   /** Computes elevation-based directional shadow darkness (0..0.68) cast onto `(x, y)` toward the SE
    * up to `ceil(E * 0.6)` world pixels away. */
-  private computeShadowAt(world: VoidWorld, x: number, y: number, selfHeight: number): number {
+  private computeShadowAt(
+    world: VoidWorld,
+    x: number,
+    y: number,
+    selfHeight: number,
+    selfElevOverride?: number,
+  ): number {
     const { w } = world.grid;
     const mode = this.buildingHeight === "flat" ? "full" : this.buildingHeight;
-    const selfElev = selfHeight > 0 ? elevationOf({ height: selfHeight }, mode) : 0;
+    const selfElev = selfElevOverride !== undefined
+      ? selfElevOverride
+      : (selfHeight > 0 ? elevationOf({ height: selfHeight }, mode) : 0);
     let maxShade = 0;
     // Maximum elevation is 15 px -> ceil(15 * 0.6) = 9 px reach
     for (let step = 1; step <= 9; step++) {
@@ -696,14 +779,11 @@ export class VoidRenderer {
       if (nx >= 0 && ny >= 0) {
         const bId = world.buildingAt[ny * w + nx];
         if (bId >= 0) {
-          const b = world.buildings[bId];
-          if (b) {
-            const bElev = elevationOf(b, mode);
-            const deltaE = bElev - selfElev;
-            const reach = Math.ceil(deltaE * 0.6);
-            if (deltaE > 0 && step <= reach) {
-              maxShade = Math.max(maxShade, 0.62 - (step - 1) * (0.42 / Math.max(1, reach)));
-            }
+          const bElev = this.buildingElevs[bId] ?? 0;
+          const deltaE = bElev - selfElev;
+          const reach = Math.ceil(deltaE * 0.6);
+          if (deltaE > 0 && step <= reach) {
+            maxShade = Math.max(maxShade, 0.62 - (step - 1) * (0.42 / Math.max(1, reach)));
           }
         }
       }
@@ -779,9 +859,8 @@ export class VoidRenderer {
         const b = bId >= 0 ? buildings[bId] : undefined;
         const hp = maxHpArr[idx] > 0 ? hpArr[idx] / maxHpArr[idx] : 1;
         const damage = hp <= 0.3 ? 3 : hp < 0.4 ? 2 : hp < 0.75 ? 1 : 0;
-        const shadowRaw = mat !== CellMaterial.VOID
-          ? this.computeShadowAt(world, x, y, b?.height ?? 0) : 0;
-        const shadow = Math.round(shadowRaw * 100);
+        const shadow = mat !== CellMaterial.VOID ? this.shadowMap[idx] : 0;
+        const shadowRaw = shadow * 0.01;
         const distance = nearVoid
           ? Math.min(127, this.distWindow[distRow + x]) : 127;
         const edges = nearVoid
@@ -853,10 +932,12 @@ export class VoidRenderer {
       }
     }
     if (!any) return false;
-    // Forward pass
-    for (let ly = 0; ly < N; ly++) {
+    // Forward pass (only rows up to CORRUPTION_REACH + CHUNK_SIZE can propagate SE into the chunk)
+    const fwdMaxY = CORRUPTION_REACH + CHUNK_SIZE;
+    for (let ly = 0; ly < fwdMaxY; ly++) {
+      const row = ly * N;
       for (let lx = 0; lx < N; lx++) {
-        const i = ly * N + lx;
+        const i = row + lx;
         let v = D[i];
         if (v === 0) continue;
         if (lx > 0) v = Math.min(v, D[i - 1] + 3);
@@ -868,10 +949,11 @@ export class VoidRenderer {
         D[i] = v;
       }
     }
-    // Backward pass
-    for (let ly = N - 1; ly >= 0; ly--) {
+    // Backward pass (only rows down to CORRUPTION_REACH can propagate NW/NE into the chunk)
+    for (let ly = N - 1; ly >= CORRUPTION_REACH; ly--) {
+      const row = ly * N;
       for (let lx = N - 1; lx >= 0; lx--) {
-        const i = ly * N + lx;
+        const i = row + lx;
         let v = D[i];
         if (v === 0) continue;
         if (lx + 1 < N) v = Math.min(v, D[i + 1] + 3);
@@ -2218,6 +2300,7 @@ export class VoidRenderer {
     });
     const swallowCount = swallowPortals.length;
     let sparkAlphaActive = false;
+    let lastRawFill = "";
 
     for (let i = 0; i < physics.debris.length; i++) {
       const d = physics.debris[i];
@@ -2248,6 +2331,7 @@ export class VoidRenderer {
         c.fillStyle = "rgba(0, 0, 0, 0.5)";
         c.fillRect(d.x - half, d.y + half - 0.24, sz, 0.24);
         c.fillRect(d.x + half - 0.24, d.y - half, 0.24, sz);
+        lastRawFill = "";
       } else {
         if (!sparkAlphaActive) {
           rawScene.globalAlpha = 0.55;
@@ -2258,25 +2342,33 @@ export class VoidRenderer {
           let y0 = Math.round(d.py);
           const x1 = Math.round(d.x);
           const y1 = Math.round(d.y);
-          rawScene.fillStyle = d.glowColor;
-          if (x0 === x1 && y0 === y1) {
+          if (lastRawFill !== d.glowColor) {
+            rawScene.fillStyle = d.glowColor;
+            lastRawFill = d.glowColor;
+          }
+          const dxAbs = x1 >= x0 ? x1 - x0 : x0 - x1;
+          const dyAbs = y1 >= y0 ? y1 - y0 : y0 - y1;
+          if (dxAbs <= 1 && dyAbs <= 1) {
             rawScene.fillRect(x0, y0, 1, 1);
+            if (x0 !== x1 || y0 !== y1) rawScene.fillRect(x1, y1, 1, 1);
           } else {
-            const dx = Math.abs(x1 - x0);
-            const dy = -Math.abs(y1 - y0);
+            const dy = -dyAbs;
             const sx = x0 < x1 ? 1 : -1;
             const sy = y0 < y1 ? 1 : -1;
-            let err = dx + dy;
+            let err = dxAbs + dy;
             for (;;) {
               rawScene.fillRect(x0, y0, 1, 1);
               if (x0 === x1 && y0 === y1) break;
               const e2 = 2 * err;
               if (e2 >= dy) { err += dy; x0 += sx; }
-              if (e2 <= dx) { err += dx; y0 += sy; }
+              if (e2 <= dxAbs) { err += dxAbs; y0 += sy; }
             }
           }
         }
-        rawScene.fillStyle = d.color;
+        if (lastRawFill !== d.color) {
+          rawScene.fillStyle = d.color;
+          lastRawFill = d.color;
+        }
         const sz = Math.max(1, Math.round(d.size * 0.8));
         rawScene.fillRect(Math.floor(d.x - d.size * 0.4), Math.floor(d.y - d.size * 0.4), sz, sz);
       }
