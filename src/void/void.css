@@ -1963,9 +1963,16 @@
     align-self: center;
     margin-top: 0.2rem;
   }
+  .void-coach {
+    top: 5.4rem;
+  }
 }
 
 @media (max-width: 600px) {
+  .void-board-stage {
+    align-items: flex-start;
+    padding-top: 4.9rem;
+  }
   .void-dock-label {
     display: none;
   }
@@ -2051,8 +2058,27 @@
     padding: 0.18rem 0.3rem;
   }
   .void-inspector {
-    bottom: 3.9rem;
-    padding: 0.45rem 0.55rem;
+    bottom: 3.55rem;
+    padding: 0.3rem 0.45rem;
+    gap: 0.2rem;
+  }
+  .void-insp-head {
+    gap: 0.35rem;
+  }
+  .void-insp-head strong {
+    font-size: 0.78rem;
+  }
+  .void-insp-stats {
+    font-size: 0.68rem;
+    gap: 0.4rem;
+  }
+  .void-insp-actions {
+    gap: 0.3rem;
+  }
+  .void-insp-actions button {
+    min-height: 26px;
+    padding: 0.15rem 0.4rem;
+    font-size: 0.7rem;
   }
   .void-nav {
     padding: 3px 4px;
@@ -2100,20 +2126,63 @@
     min-height: 24px;
     font-size: 0.8rem;
   }
+  .void-dialog {
+    padding: 0.65rem 0.85rem;
+    max-height: calc(100dvh - 14px);
+    overflow-y: auto;
+  }
+  .void-dialog h2 {
+    font-size: 0.95rem;
+  }
+  .void-dialog p,
+  .void-dialog label,
+  .void-dialog legend {
+    font-size: 0.74rem;
+    line-height: 1.3;
+  }
+  .void-profile-form {
+    gap: 0.4rem;
+  }
+  .void-profile-form input {
+    padding: 0.28rem 0.5rem;
+    margin-top: 0.15rem;
+  }
+  .void-mode-fieldset {
+    padding: 0.35rem 0.5rem;
+    gap: 0.25rem;
+  }
+  .void-dialog-actions {
+    margin-top: 0.25rem;
+  }
+  .void-board-stage {
+    align-items: center;
+    padding-top: 0;
+  }
   .void-hud-top {
-    padding-top: 0.18rem;
-    flex-direction: row;
-    justify-content: center;
-    gap: 0.35rem;
+    position: absolute;
+    top: 0.3rem;
+    left: 0.45rem;
+    padding-top: 0;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.2rem;
+    width: min(230px, 29vw);
   }
   .void-hud-bar {
-    width: 160px;
+    width: 100%;
+    max-width: 100%;
     height: 12px;
+  }
+  .void-hud-stats {
+    max-width: 100%;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    padding: 0.12rem 0.35rem;
   }
   .void-hud-top-right {
     position: absolute;
-    top: 0.18rem;
-    right: 0.4rem;
+    top: 0.3rem;
+    right: 0.45rem;
     margin-top: 0;
   }
   .void-hud-top-right .void-run-controls button {
@@ -2121,11 +2190,27 @@
     padding: 0.12rem 0.4rem;
     font-size: 0.66rem;
   }
+  .void-coach {
+    top: auto;
+    bottom: 3.4rem;
+    width: min(300px, 44vw);
+    padding: 0.45rem 0.6rem;
+  }
   .void-hud-bottom {
-    padding-bottom: 0.2rem;
+    left: 0.45rem;
+    right: auto;
+    bottom: 0.3rem;
+    padding-bottom: 0;
+    justify-content: flex-start;
   }
   .void-hud-tray {
-    padding: 0.18rem 0.35rem;
+    padding: 0.2rem 0.3rem;
+    max-width: min(260px, 31vw);
+    flex-wrap: wrap;
+  }
+  .void-palette,
+  .void-strikes {
+    flex-wrap: wrap;
   }
   .void-pal-btn {
     min-height: 34px;

@@ -1326,7 +1326,7 @@ export class VoidApp {
       },
       {
         title: "2/4 · Place a Matter Cannon",
-        body: "Select <b>Matter</b> below and tap near the Void frontier to fire synthetic land pellets.",
+        body: "Pick <b>Matter</b> below, then tap a spot near the Void's edge. The cannon fires matter back into the Void and rebuilds the ground.",
         next: "",
         highlight: '[data-pick-tower="matterCannon"]',
       },
