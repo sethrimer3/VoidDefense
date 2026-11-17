@@ -1,5 +1,4 @@
 import "./style.css";
-import "./theme.css";
 import "./loading.css";
 import { LoadingScreen } from "./ui/loading-screen.ts";
 import { within, mayAutoReload } from "./ui/boot-guard.ts";
