@@ -1,274 +1,267 @@
-# Void Defense: Polish Plan
+# Void Defense: Polish Plan (v2, for handoff)
 
-What the game needs to look and feel professional and finished, from a review on 2026-11-13 of `main` at `3bb506f`. Each work item ends with a short prompt you can paste into Claude or Gemini. The prompts name files and a finish line, and skip background the agent can read in `AGENTS.md`.
+Updated 2026-11-17 against `main` at `fcac337`. The first version of this plan (2026-11-13, `3bb506f`) listed 21 items. Most of them shipped on 2026-11-15 in a different shape than that plan proposed. This version keeps only what is still outstanding, rewrites those items for the code as it is now, and adds problems found in a fresh playthrough.
 
-## How this review was done
+This file is written to be handed to another coding agent. Everything it needs is below or in the repository.
 
-- Read the source (`src/void/`, `src/ui/`, CSS, sound, i18n) and the docs.
-- `npm test`: 106 of 106 pass. `npm run test:defense`: passes.
-- Played a fresh profile in headless Chromium at 1280×800 (desktop), 390×844 (portrait phone) and 844×390 (landscape phone): onboarding, a full run of Sector 01 at 3× speed, Tech Network, Resistance Ops and Resistance Map.
+## How this was checked
 
-## The short version
+- `npm test`: 107 of 107 pass. `npm run build`: clean.
+- `npm run test:defense`: passes. Render p95 was 15.9 ms (Sector 03, 384×512) and 15.6 ms (Sector 06, 512×768) in a headless container.
+- Played a fresh profile in headless Chromium at 1280×800 (desktop), 390×844 (phone portrait) and 844×390 (phone landscape): loading screen, title screen, Welcome dialog, Sector 01 coach, a full Sector 01 run at 2×, Tech Network, Resistance Ops, Resistance Map and Settings.
 
-The world art is the game's strength. The city, the Void, the Ops lab and the campaign map look good. What makes it feel unfinished is everything around the world: two panels have no styling at all, the battle starts before the player is ready, nothing teaches the game, almost nothing makes a sound, and the phone layout wastes most of the screen. Fix those, then the theme leftovers from the old medieval game, and the game will read as a product instead of a prototype.
+---
 
-## Observations
+## Part 1: Repository context for the implementing agent
 
-### What already works
+Read this before starting any item.
 
-- **City and Void art.** Varied buildings with 2.5D depth, roads, parks, farmland, and a Void with a starfield interior and glowing rim (`test-results/void-v1-city-overview.png`). Close-up the portrait and rim hold up at whole-pixel scale.
-- **Resistance Ops scene.** Lit lab and engineering bay with good mood (`void-operations-desktop.png`).
-- **Resistance Map.** Farmland patchwork with river, sector badges and a Void blot. Reads well.
-- **Performance is acceptable.** Benchmark: 384×512 sim p50 2.6 ms, render p50 13 ms; 512×768 sim p50 4.3 ms, render p50 18.7 ms (p95 31 ms). The large map is over a 16 ms frame on desktop headless, so phones will drop frames there.
-- **Tests and determinism.** Good coverage and pinned randomness.
+### What the game is
 
-### Bugs that make it look broken (P0)
+Void Defense is a mobile-first city-defense game in TypeScript and Vite. There is no backend, no game engine and no UI framework. A canvas draws the world; the DOM (HTML template strings in `src/void/ui.ts`) provides HUD, controls and dialogs. A violet Void spreads outward through a pixel-art futuristic city surrounded by farmland, and the player places towers and casts strikes to contain it. Saves live in `localStorage` under the key `voiddefense.v1`. It deploys to GitHub Pages from `main` (`sethrimer3/VoidDefense`).
 
-1. **The tower/building inspector has no CSS.** `.void-inspector` (`src/void/ui.ts:238`) has no rule in any stylesheet. It renders as bare text and buttons pinned to the far top-left, half off the map on desktop and on top of the map on phones (`void-v3-active-battle.png`, `void-battle-portrait.png`, `void-battle-landscape.png`).
-2. **The end-of-run banner has no CSS.** `[data-outcome-banner]` (`renderOutcomeBanner`, `src/void/ui.ts:888`) is unstyled text over the map, on top of the inspector. The single most important screen in a run looks like a debug print.
-3. **The battle runs behind the first-launch dialog.** On a fresh profile the HUD shows `Time 3.0s` and 99.0% preserved while the onboarding dialog is still open. The player loses city before they can act.
-4. **Onboarding dialog art collides.** The red wax seal sits on top of the title "Resistance Commander Onboarding", and the title and intro text are dim brown on dark blue (low contrast).
+### Where things live
 
-### First-time experience
+| Area | Files |
+|------|-------|
+| Battle HUD, dialogs, title screen, coach, settings modal, outcome modal | `src/void/ui.ts`, styles in `src/void/void.css` |
+| Old shared skin (still loaded) | `src/theme.css`, `src/style.css`, textures in `assets/theme/` |
+| Simulation | `src/void/sim.ts`, `src/void/void-field.ts`, `src/void/physics.ts`, `src/void/world.ts` |
+| Towers, strikes, organisms | `src/void/towers.ts` (`TOWER_SPECS`: 16 towers, `STRIKE_SPECS`: 6 strikes) |
+| Sectors | `src/void/maps.ts` (`SCENARIOS`) |
+| Scoring and rewards | `src/void/scoring.ts` |
+| Rendering | `src/void/render.ts`, `contour.ts`, `interior.ts`, `elevation.ts`, `pixel-painter.ts`, `farms.ts` |
+| Audio | `src/void/audio.ts` (procedural Void SFX), `src/sound.ts` + `src/sound-files.ts` (legacy sampled sounds) |
+| Tech Network | `src/void/tech/catalog.ts` (63 nodes), `tech-ui.ts`, `wallet.ts`; graph widget `src/ui/upgrade-graph.ts` |
+| Resistance Ops / Map | `src/void/operations/`, `src/void/map/` |
+| Saves and settings | `src/void/save.ts`, `src/settings.ts` |
+| Localization | `src/i18n/` (mostly legacy text from the old medieval game) |
+| Architecture docs | `docs/architecture/*.md` (read only the file for your area) |
+| Glossary | `CONTEXT.md` |
 
-- No title screen. The loading screen is an empty dark gradient with a tiny "loading." bar in the corner, then the game drops straight into a battle.
-- The word "Onboarding" is developer language, and the seal is a castle icon.
-- No tutorial. Sector 01 is called a tutorial but gives no hints: what Supplies are, where to place, what Masons or Hearthseed do. A run with one cannon placed ended as "VICTORY" with 28% of the city left.
-- Mixed messages on outcome: 72% of the city lost is labelled "BREACH CONTAINED - VICTORY".
+### Commands
 
-### HUD and layout
+Node 22.18 or newer.
 
-- **Phone portrait:** the header (title, four chips) takes about 300 of 844 px. Pause/Speed/Retry float over the map. The tower bar clips its last card (Hearthseed) with no scroll cue.
-- **Phone landscape:** the map is a small column about one eighth of the screen; header and tab bar take the rest.
-- **Desktop:** the map is a narrow column with large empty starfield on both sides. No side panel uses that space.
-- Tab names are odd: the battle tab is "Defense Feed".
-- Supplies pile up unspent (25,137 at the end of the test run). The economy gives the player nothing to do with income late in a run, or the HUD does not push them to spend it.
-- **Settings are hidden** at the bottom of the Resistance Map page. No volume slider, no language picker, and "Developer Mode (Unlimited Supplies)" is offered to every player.
+```sh
+npm install
+npm run dev            # Vite on http://127.0.0.1:5173
+npm test               # all tests/*.test.ts (node:test, runs .ts directly)
+npm run build          # tsc --noEmit && vite build
+npm run test:defense   # browser battle flow + screenshots in test-results/ (needs dev server)
+npm run test:pixels | test:crisp | test:ledge | test:visuals | test:farms | test:depth   # visual checks (need dev server)
+```
 
-### Tech Network
+Browser checks write screenshots to `test-results/` at 1280×800, 390×844 and 844×390. Use them as before/after evidence.
 
-- Nodes sit in a clump in the lower-left, overlapping the alchemical magic circle; Fit View does not frame them (`void-network-desktop.png`).
-- Node labels are too small to read at default zoom.
-- On phones the detail panel takes half the width and the graph is mostly cut off (`void-network-portrait.png`).
+### Rules that apply to every item
 
-### Theme consistency
+1. **Pixel art in code, at whole-pixel scale.** All world and UI art is drawn in code. No image sprites, no fractional pixel positions, no smoothing. One world pixel is one simulation cell. Keep the look consistent: farmland outside, a futuristic city, and the violet Void.
+2. **Deterministic rendering.** Golden tests compare pixels across Node versions. Do not use `Math.random()` in rendering; use the named streams in `src/random.ts`. Avoid floating-point math whose result can differ between engines in anything a golden test captures (prefer integer math and the existing helpers).
+3. **Imports use explicit `.ts` extensions** (`import { x } from "./foo.ts"`). Node runs the sources directly.
+4. **Text uses `var(--font)`**, never a font name. The pixel font is Alembic; if a glyph is missing, add it to `scripts/pixel-font/glyphs.txt` and run `npm run font`.
+5. **Save compatibility.** Never rename internal ids (tower ids, strike ids, tech node ids, save keys). Rename only player-facing `name`, `shortName` and `description`. New save fields must be optional and decoded in `decodeVoidSave` with a safe default.
+6. **Docs.** When you add, rename or remove a module, command or save field, update the matching `docs/architecture/*.md` in the same commit. Keep `AGENTS.md` short; detail belongs in `docs/architecture/`. `CLAUDE.md` only imports `AGENTS.md`; do not edit it. Use `CONTEXT.md` terms.
+7. **Before you finish an item:** run `npm test` and `npm run build`, run `npm run test:defense`, and look at the desktop, portrait and landscape screenshots. Then commit to `main` and push (the owner's standing preference is to merge finished, validated work straight to `main` and delete any branch afterwards).
+8. One item per session and per commit. Each item below is independent unless it says otherwise.
 
-The game was converted from a medieval tower defense, and leftovers break the sci-fi city tone:
+---
 
-- **UI skin:** `src/theme.css` is "dressed stone, brass, parchment, alchemical circle" (see `AGENTS.md`). The battle HUD is steel and amber, but dialogs use a wax seal and parchment, and the Tech Network sits on an alchemical circle (`src/magic-circle/`).
-- **Names:** "Hearthseed", "Masons" (Mason Depot), "Lantern Bearer", "Quarantine Bell" next to "Matter Cannon" and "Orbital Drop Squad".
-- **Sounds:** `src/sound-files.ts` maps arrow hits, sword punches, fireballs, wooden houses and a keep collapse. UI clicks use cues named `stone` and `knock`.
-- **Dead i18n:** `src/i18n/siege.ts`, `ambush.ts`, `building-menu.ts` are legacy text. The Void UI itself is hard-coded English, so the language setting does nothing in the actual game.
-- **Real place names:** sector text says "Lower Manhattan", "Hudson Riverfront", "East River" while the map is invented farmland.
+## Part 2: What already shipped (do not redo)
 
-### Audio
+These items from the first plan are done. They are listed so you do not rebuild them. Where a follow-up is needed, it is a separate item in Part 3.
 
-- The only in-battle sound is a procedural drone (`src/void/audio.ts`). No cannon fire, impacts, building collapse, Void consumption, unit death, victory or defeat stings.
-- No music.
-- 7.3 MB of recorded clips ship in `public/assets/sounds/`, almost all for medieval events the game no longer has.
+| Old # | Item | State now |
+|---|---|---|
+| 1 | Style inspector and outcome modal | Done. Desktop inspector sits in a right-side panel; phones use a bottom sheet. Outcome is a centred modal with Spark icons, preserved %, sector best, rewards and three buttons. |
+| 2 | Hold the battle until ready | Done. Runs start in a prep state with **Start Battle**; time stays 0.0s while the Welcome dialog is open. |
+| 3 | Fix onboarding dialog | Done. Titled "Welcome, Commander", sci-fi emblem, readable contrast. (Landscape overflow: see item 3 below.) |
+| 4 | Phone HUD layout | Mostly done. Compact one-row header, scrollable tower dock with edge fade. Leftovers in item 3. |
+| 5 | Desktop side panel | Done at ≥1000 px: sector, command, telemetry, inspector. |
+| 6 | Guided first sector | Done. 4-step coach, `coachDone` saved in `voiddefense.v1`. Copy and placement follow-ups in item 3. |
+| 7 | Combat SFX | Done in `src/void/audio.ts` (`uiClick`, `towerPlace`, `towerSell`, `towerUpgrade`, `cannonFire`, `shellImpact`, `collapse`, `voidConsume`, `unitDeath`, `strikeCast`, `victory`, `defeat`). Battle buttons still call legacy cues: item 5. |
+| 8 | Title and loading screen | Done. Title screen with skyline and rising Void, New Game / Continue / Settings; loading screen shows the logo. |
+| 9 | Settings page | Done. Gear-button modal with Master / SFX / Ambience sliders; Developer Mode only with `?dev=1`. No language picker yet (item 7). |
+| 10 | Tech Network framing | **Not done in practice.** See item 1. |
+| 11 | Sci-fi UI skin pass | Mostly done for visible screens; old textures and tokens remain in `src/theme.css`. See item 6. |
+| 12 | Rename medieval leftovers | Mostly done (Solar Anchor, Repair Depot, Beacon Drone Post, Stasis Beacon, fictional sector names). Leftovers in item 4. |
+| 13 | Outcome tiers | Done (City Lost / Pyrrhic Containment / Breach Contained / Flawless Defense). Tier thresholds need balance: item 2. |
+| 14 | Placement and big-moment feedback | Done (placement dust/ring, floating +N Supplies, end flash, Reduce Motion respected). |
+| 15 | Late Supplies sink | Partly done: towers upgrade Lv 1–3 in the inspector. Income still piles up: item 2. |
+| 16 | Large-map render perf | Done for now (p95 ≈ 15.6–15.9 ms). Watch item 11. |
 
-### Game feel
+`docs/release-polish.md` in the repo is the checklist that tracked this work. Its Verification section is still unticked; item 9 closes it out.
 
-- Placing a tower gives no feedback beyond the range ring: no thump, flash, or dust.
-- No screen-space juice on big moments (skyscraper collapse, portal closing, victory). Shake was recently reduced to only close collapses, which is fine; a flash or slow-mo on the final moment would help.
-- No floating numbers or icons for Supplies income or rewards.
+---
 
-### Docs and repo hygiene
-
-- README "How to play" lists towers and strikes that do not match the code (Kinetic Cannon, Laser Battery, EMP Emitter; the code has Matter Cannon, Mason Depot, Infantry Barracks and 16 towers, and 63 tech nodes, not 33).
-- Five planning files clutter the repo root (`3dPlan.md`, `VoidDefensePlan.md`, `VoidDefence.md`, `TurretAndStrikeIdeas.md`, `ToDo.md`). `docs/void-defense-progress.md` has stale numbers.
-- No social preview (`og:` meta), no offline service worker despite a manifest.
-
-## Prioritized work items
-
-Order matters: P0 first, then P1 in order. Each item is one agent session. Every prompt assumes the agent follows `AGENTS.md` (tests, build, docs, merge to `main`).
+## Part 3: Outstanding work, prioritized
 
 | # | Item | Priority | Size |
 |---|------|----------|------|
-| 1 | Style the inspector and end-of-run dialog | P0 | S |
-| 2 | Hold the battle until the player is ready | P0 | S |
-| 3 | Fix the onboarding dialog | P0 | S |
-| 4 | Phone HUD layout | P1 | M |
-| 5 | Desktop side panel | P1 | M |
-| 6 | Guided first sector | P1 | M |
-| 7 | Combat and UI sound effects | P1 | M |
-| 8 | Title screen and loading screen | P1 | S |
-| 9 | Settings page | P1 | S |
-| 10 | Tech Network framing and readability | P1 | M |
-| 11 | Sci-fi UI skin pass | P2 | L |
-| 12 | Rename medieval leftovers | P2 | S |
-| 13 | Outcome tiers and reward screen | P2 | S |
-| 14 | Game feel: placement and big moments | P2 | M |
-| 15 | Economy sink for late Supplies | P2 | M |
-| 16 | Large-map render performance | P2 | M |
-| 17 | Localize the Void UI | P3 | L |
-| 18 | Music | P3 | M |
-| 19 | Remove dead legacy code and assets | P3 | S |
-| 20 | Docs, README and repo tidy | P3 | S |
-| 21 | Release polish: share card, offline, favicon | P3 | S |
+| 1 | Tech Network: frame the graph and make it readable | P0 | M |
+| 2 | Balance: idle runs should not win, Supplies should not pile up | P0 | M |
+| 3 | Phone layout and coach leftovers | P1 | S |
+| 4 | Finish the medieval-name sweep | P1 | S |
+| 5 | Route battle UI sounds through the Void audio engine | P1 | S |
+| 6 | Remove the old medieval skin from `theme.css` | P2 | M |
+| 7 | Localize the Void UI | P2 | L |
+| 8 | Music | P2 | M |
+| 9 | Docs, README, glossary and repo tidy | P2 | M |
+| 10 | Remove dead legacy code and assets | P3 | M |
+| 11 | Render performance headroom | P3 | M |
+| 12 | Release polish: share card, offline, icons | P3 | S |
 
-## Prompts
+---
 
-Paste one at a time. Each one is meant to be self-contained.
+### 1. Tech Network: frame the graph and make it readable (P0, M)
 
-### 1. Style the inspector and end-of-run dialog (P0)
+**Problem.** On the Global Tech Network tab (1280×800), the 63 nodes sit in a clump at the bottom-left of the canvas and run off the bottom edge. A large dashed-line constellation fills the middle of the canvas and is the most prominent thing on screen, while the nodes themselves are small and their labels are unreadable (a few screen pixels tall). Pressing **Fit View** does not change the framing. On 390×844 the toolbar (title, blurb, currency line, sector select, search, Fit View, Refund All) takes the top third of the screen and the graph is a small blob in the middle; the detail sheet takes the bottom half.
 
-```
-VoidDefense: `.void-inspector` (src/void/ui.ts ~line 238, filled in renderInspector) and `[data-outcome-banner]` (renderOutcomeBanner ~line 888) have no CSS, so they render as bare text at the top-left over the map. Style both in src/void/void.css using the existing steel/amber HUD tokens.
-- Inspector: a compact panel anchored to the bottom of the map area above the tower bar (phone) or next to the selected tower (desktop), never covering the HUD.
-- Outcome: a centered modal with a dim backdrop, title, preserved %, rewards and the three buttons; it hides the inspector while open.
-Done when: screenshots at 1280×800, 390×844 and 844×390 (npm run test:defense writes them to test-results/) show both panels styled with no overlap; npm test and npm run build pass.
-```
+**Files.** `src/void/tech/tech-ui.ts` (page, toolbar, holographic backdrop `HoloGridBackdrop`, detail panel), `src/ui/upgrade-graph.ts` (pan/zoom/fit, node and label drawing), `src/void/void.css`.
 
-### 2. Hold the battle until the player is ready (P0)
+**Do.**
+- Make the initial view and **Fit View** compute the bounding box of the visible nodes (respecting the sector filter) and fit it to the canvas with padding. Find why Fit View currently has no effect (likely it fits a different bounds, such as the backdrop's, or runs before the canvas has its size) and fix the cause.
+- Centre the backdrop on the node cluster and make it clearly secondary: lower opacity, thinner lines, behind nodes. Nodes and their edges must be the brightest things on the canvas.
+- Labels: draw at a minimum 10 px on screen; below the zoom where that does not fit, hide labels and show the hovered or tapped node's name in a tooltip.
+- Phones (<700 px wide): collapse the toolbar into one row (currency + a filter button that opens sector select, search and Refund All), so the graph gets at least 55% of the viewport height.
 
-```
-VoidDefense: on a fresh profile the simulation runs while the onboarding dialog is open (HUD reaches "Time 3.0s"). In src/void/ui.ts and src/void/sim.ts, keep the sim paused while any modal is open, and start each run in a paused "Deploy" state with a clear "Start" button so the player can place towers first (Build Under Siege included). Pressing Start or placing the first tower begins the clock.
-Done when: a Playwright check (add to tests/void-defense.mjs) shows Time 0.0s after 3 s with the dialog open, and the clock moves only after Start; npm test, npm run build pass.
-```
+**Done when.** At 1280×800 and 390×844, every node is inside the canvas after load and after Fit View, labels are legible at the default zoom on desktop, and the backdrop no longer competes with the nodes. Add an assertion to `tests/void-defense.mjs` that, after Fit View, every node's screen position is within the graph canvas. `npm test`, `npm run build`, `npm run test:defense` pass.
 
-### 3. Fix the onboarding dialog (P0)
+---
 
-```
-VoidDefense: the first-launch dialog (search "Resistance Commander Onboarding" in src/void/ui.ts; styles in src/theme.css / src/void/void.css) has a wax seal overlapping the title and low-contrast brown intro text. Retitle it "Welcome, Commander", replace the castle seal with a small sci-fi emblem drawn in code (or remove it), give the title and intro text at least 4.5:1 contrast, and keep the callsign field and two mode cards.
-Done when: screenshots at 1280×800 and 390×844 show no overlap and readable text; npm test, npm run build pass.
-```
+### 2. Balance: idle runs should not win, Supplies should not pile up (P0, M)
 
-### 4. Phone HUD layout (P1)
+**Problem.** On a fresh profile, Sector 01 played with **zero towers placed** ended after 96 s as "Pyrrhic Containment" with 23.3% of the city preserved, +480 Void Essence and +1 Spark. Supplies reached 24,294 unspent. So the tutorial sector is won by doing nothing, and income still dwarfs what the player can spend, even with the new Lv 2–3 tower upgrades.
 
-```
-VoidDefense: on 390×844 the battle header takes ~300 px, Pause/Speed/Retry overlap the map and the tower bar clips its last card; on 844×390 the map is a tiny column. Rework the media queries in src/void/void.css (and markup in src/void/ui.ts if needed):
-- Portrait: one-row header (title shrinks to an icon, Supplies/Essence/Sparks as a single compact row, profile chip moves to a menu); speed controls in a slim row under the progress bar; tower bar scrolls horizontally with a visible edge fade.
-- Landscape: header and tab bar collapse into a left rail so the map gets the full height.
-Done when: in test-results/void-battle-portrait.png the map fills at least 65% of the height, and in void-battle-landscape.png at least 80% of the height; no clipped controls; npm test, npm run build pass.
-```
+**Files.** `src/void/scoring.ts` (preserved %, Sparks, Essence, outcome tier), `src/void/sim.ts` (income tick, end conditions), `src/void/maps.ts` (per-sector parameters such as Void energy), `src/void/towers.ts` (costs, `upgradePrice`), `renderOutcomeBanner` in `src/void/ui.ts`.
 
-### 5. Desktop side panel (P1)
+**Do.**
+- Decide and document a loss threshold: below it (suggest 35% preserved, tune per sector if needed) the outcome is "City Lost", with no Spark and reduced Essence. Pyrrhic Containment starts above it.
+- Scale Supplies income so a greedy player who spends as soon as they can ends Sector 01 with under 3,000 unspent. Options: income proportional to surviving buildings with diminishing returns over time, or a cap on banked Supplies shown in the HUD. Pick one and explain it in the commit message.
+- Keep Sector 01 winnable for a new player who follows the coach (one Matter Cannon, one Repair Depot, one Solar Anchor).
 
-```
-VoidDefense: at 1280×800 the battle map is a narrow column with empty space on both sides. Use the right side for a fixed panel (src/void/ui.ts, src/void/void.css): sector name and goal, the selected tower's inspector, wave/organism warnings, and the speed controls. Keep the tower bar at the bottom. Hide the panel below 1000 px width.
-Done when: test-results/void-battle-desktop.png shows the panel with no overlap on the map; npm test, npm run build pass.
-```
+**Done when.** New tests in `tests/void-defense.test.ts` (deterministic, headless `VoidSim` runs) show: an idle Sector 01 run ends as City Lost with 0 Sparks; a scripted "coach" run (place what the coach suggests at fixed cells, cast Solar Anchor once) earns at least 1 Spark; a greedy-spend run ends with under 3,000 unspent Supplies. Update `docs/architecture/void-defense.md` with the thresholds. `npm test`, `npm run build`, `npm run test:defense` pass.
 
-### 6. Guided first sector (P1)
+---
 
-```
-VoidDefense: Sector 01 (tutorialBreach in src/void/maps.ts) teaches nothing. Add a short step-by-step coach in src/void/ui.ts that runs only the first time a player plays it (store a flag in the voiddefense.v1 save via src/void/save.ts, with a migration default): 1) what the Void and Supplies are, 2) place a Matter Cannon (highlight its card and a suggested spot), 3) place Masons, 4) use Hearthseed, 5) press Start. Each step is one sentence in a small callout with Next/Skip, and waits for the action. Pause the sim during steps.
-Done when: a test in tests/void-defense.test.ts covers the save flag; a Playwright run shows each callout; npm test, npm run build pass; docs/architecture/shell-ui.md mentions the coach.
-```
+### 3. Phone layout and coach leftovers (P1, S)
 
-### 7. Combat and UI sound effects (P1)
+**Problems.**
+- **Landscape 844×390:** the Welcome dialog is taller than the screen; its **Enter Command** button sits at y ≈ 454–490 px, below the 390 px viewport. Confirm whether the dialog scrolls; either way it must fit or scroll with the button reachable.
+- **Landscape battle:** the progress bar and the telemetry pill overlap the top of the map, and the map uses about 62% of the height.
+- **Portrait 390×844 battle:** there is an empty band (about 60 CSS px) between the Start/Speed/Retry row and the top of the map. With a tower selected, the inspector bottom sheet covers the lower quarter of the map.
+- **Portrait coach:** the coach callout is drawn on top of the Start Battle / speed / Retry row, hiding those buttons.
+- **Coach copy:** step 2 says "tap near the Void frontier to fire synthetic land pellets". Use plain words, for example "Pick **Matter** below, then tap a spot near the Void's edge. The cannon fires matter back into the Void and rebuilds the ground."
 
-```
-VoidDefense: the battle only has a drone (src/void/audio.ts); UI uses medieval cues ("stone", "knock" in src/sound.ts). Add procedural Web Audio sounds in code (no new files) in src/void/audio.ts for: tower placed, tower sold, cannon fire, shell impact, building collapse (scaled by height), Void consuming a cell (rate-limited), unit death, strike cast, victory sting, defeat sting, button press. Trigger them from src/void/sim.ts / towers.ts / physics.ts events, with a voice limit and distance-based volume from the camera centre. Respect settings.soundOff.
-Done when: each event plays once per trigger without clipping at 3× speed with 40 units; npm test, npm run build pass; docs/architecture/void-defense.md lists the cues.
-```
+**Files.** `src/void/ui.ts` (Welcome dialog, coach steps, HUD markup), `src/void/void.css` (media queries).
 
-### 8. Title screen and loading screen (P1)
+**Done when.** In the `npm run test:defense` screenshots plus a fresh-profile capture: landscape Welcome dialog's button is reachable; nothing overlaps the map's top edge in landscape and the map uses at least 75% of the height; no empty band in portrait; the coach callout never covers HUD buttons; the portrait inspector is compact (one row of buttons) or collapses to a chip. `npm test`, `npm run build` pass.
 
-```
-VoidDefense: the loading screen (src/ui/loading-screen.ts, src/loading.css, index.html) is an empty gradient with a small corner bar, and the game opens straight into a battle. Add a title screen: the city skyline with a slow Void rising behind it (drawn in code, whole pixels, reuse src/void/render.ts helpers where possible), the "VOID DEFENSE" logo in Alembic, and buttons Continue / New Run / Settings. Show the logo on the loading screen too.
-Done when: screenshots at 1280×800 and 390×844 show the title screen; Continue resumes the last sector; npm test, npm run build pass.
-```
+---
 
-### 9. Settings page (P1)
+### 4. Finish the medieval-name sweep (P1, S)
 
-```
-VoidDefense: settings live at the bottom of the Resistance Map page (renderMapPage in src/void/ui.ts). Move them to their own dialog opened from a gear button in the header. Add a master volume slider and separate SFX/ambience sliders (src/sound.ts gain nodes, saved in voiddefense.v1 via src/void/save.ts), keep reduce motion, magnifier and building height, and hide Developer Mode unless the URL has ?dev=1.
-Done when: settings persist across reload (cover in tests/void-defense.test.ts); the Map page no longer shows settings; npm test, npm run build pass; docs/architecture/shell-ui.md updated.
-```
+**Remaining player-facing leftovers.**
+- Tech node `masonThroughput` is named "Automated Exosuit Masons" (`src/void/tech/catalog.ts` ~line 144). Rename the display name only (for example "Automated Repair Crews").
+- Sector 03 is "Midtown Spire Plaza" (`src/void/maps.ts` ~line 44). "Midtown" reads as a real Manhattan place; pick an invented district name for consistency with the other renamed sectors.
+- Check every `name`/`description`/coach/tooltip string in `src/void/` for "Mason", "Hearthseed", "Lantern", "Bell", "seed", "keep", "castle" and similar. Comments and internal ids may stay.
 
-### 10. Tech Network framing and readability (P1)
+**Done when.** `grep -rniE "mason|hearthseed|lantern|bell|midtown|manhattan|hudson" src/void --include=*.ts` finds only internal ids, field names and comments, never a player-visible string. `npm test`, `npm run build` pass.
 
-```
-VoidDefense: in the Tech Network (src/void/tech/tech-ui.ts, src/ui/upgrade-graph.ts) nodes clump in the lower-left over the magic circle, Fit View does not frame them, and labels are unreadable. Make Fit View (and the initial view) frame all visible nodes with padding; centre the backdrop circle on the node cluster; draw labels at a minimum 10 px screen size or hide them below a zoom threshold and show on hover/tap; on screens under 700 px wide, show the detail panel as a bottom sheet instead of a side column.
-Done when: test-results/void-network-desktop.png and void-network-portrait.png show the whole graph framed and legible; npm test, npm run build pass.
-```
+---
 
-### 11. Sci-fi UI skin pass (P2)
+### 5. Route battle UI sounds through the Void audio engine (P1, S)
 
-```
-VoidDefense: src/theme.css and assets/theme/*.svg give dialogs and menus a medieval skin (stone, parchment, wax seal, brass), clashing with the steel/amber battle HUD in src/void/void.css. Replace the textures with sci-fi equivalents drawn as small tiling SVGs (brushed steel, hazard stripe, circuit trace, riveted frame) and swap the alchemical circle behind the tech graph (src/magic-circle/) for a holographic grid or star chart. Keep the token names (--stone, --parchment, etc.) or rename them everywhere; keep Alembic as the font.
-Done when: no parchment, wax seal or stone texture is visible on any page at 1280×800 or 390×844; AGENTS.md's theme bullet is updated; npm test, npm run build pass.
-```
+**Problem.** Battle UI buttons still call the legacy sampled cues `play("stone")` and `play("knock")` from `src/sound.ts` (`src/void/ui.ts` lines ~354, 362, 621, 632, 1208, 1214, 1220). Those are medieval stone and wood samples. `src/void/audio.ts` already has a procedural `uiClick` cue that respects the Master/SFX sliders.
 
-### 12. Rename medieval leftovers (P2)
+**Do.** Replace those calls with the Void audio cues (`uiClick` for buttons; add a softer `uiBack`/`uiToggle` variant if useful). Make sure the first user gesture still unlocks the AudioContext.
 
-```
-VoidDefense: rename player-facing names that read as medieval: "Hearthseed" (strike), "Mason Depot"/"Masons", "Lantern Bearer", "Quarantine Bell" in src/void/towers.ts and any text in src/void/maps.ts, src/void/tech/catalog.ts, src/void/ui.ts. Suggest sci-fi names, keep internal ids unchanged so saves still load. Also replace real place names in src/void/maps.ts ("Lower Manhattan", "Hudson", "East River") with invented ones.
-Done when: grep for the old names in src/ finds only ids/comments; CONTEXT.md and README match; npm test, npm run build pass.
-```
+**Done when.** `grep -n 'play("' src/void/` returns nothing; all UI clicks respect the SFX slider; `npm test`, `npm run build` pass; `docs/architecture/shell-ui.md` lists the cues used.
 
-### 13. Outcome tiers and reward screen (P2)
+---
 
-```
-VoidDefense: a run that loses 72% of the city is titled "BREACH CONTAINED - VICTORY" (renderOutcomeBanner, src/void/ui.ts). Title the result by Sparks tier (e.g. 0: "City Lost", 1: "Pyrrhic Containment", 2: "Containment", 3: "Flawless Defense"), show three Spark icons that fill in one by one, count up Essence, and show the best-ever result for the sector. Builds on item 1's modal.
-Done when: a unit test covers the tier-to-title mapping; screenshots show the animated screen; npm test, npm run build pass.
-```
+### 6. Remove the old medieval skin from `theme.css` (P2, M)
 
-### 14. Game feel: placement and big moments (P2)
+**Problem.** The visible screens now use the steel and amber style from `src/void/void.css`, but `src/theme.css` (2,376 lines) still defines the medieval skin: `--wood`, `--stone`, `--parchment` texture tokens, wax `seal.svg`, `sigil.svg` alchemical circles (lines ~20–23, 1035, 1045, 1711, 1813). Some of it is probably dead and some may still leak into edge screens. `AGENTS.md`'s conventions bullet still describes "dressed stone … parchment … an alchemical circle behind the tech DAG", which is now wrong. The Resistance Map frame still has brass corner nails.
 
-```
-VoidDefense: add whole-pixel feedback in src/void/render.ts (respect reduceEffects): a 3-frame dust puff and brief ring flash when a tower is placed; a short white flash and 0.3 s time slow when the last portal closes or the city falls; small floating "+N" Supplies text over buildings when income ticks (rate-limited, pooled). Keep rendering deterministic for the golden tests.
-Done when: each effect is visible in a Playwright capture, disabled with Reduce Motion; npm test, npm run build pass.
-```
+**Files.** `src/theme.css`, `src/style.css`, `assets/theme/*.svg`, `src/void/void.css`, `AGENTS.md`.
 
-### 15. Economy sink for late Supplies (P2)
+**Do.** Find which rules in `theme.css`/`style.css` still match elements the Void game renders (check in the browser on every tab and dialog). Move what is used into `void.css` with sci-fi tokens (for example `--panel`, `--steel`, `--amber`, `--cyan`, `--void`), delete the rest, and delete unused `assets/theme/*.svg`. Rewrite the theme bullet in `AGENTS.md` in one or two lines.
 
-```
-VoidDefense: in a Sector 01 run Supplies reached 25,137 unspent by the end. Inspect income in src/void/scoring.ts and costs in src/void/towers.ts, then either scale income down after the first minute or add a sink: in-run tower upgrades (2 levels, shown in the inspector) costing Supplies. Pick the one that keeps decisions interesting and explain the choice in the commit.
-Done when: a simulated run in tests/void-defense.test.ts ends with under 3,000 unspent Supplies when the player spends greedily; npm test, npm run build pass.
-```
+**Done when.** No stone, parchment, wax-seal, sigil or brass-nail styling is visible anywhere at 1280×800 or 390×844 (screenshot every tab plus Welcome, Settings, outcome); CSS bundle is smaller (report before/after from `npm run build`); `npm test`, `npm run build`, all `npm run test:*` browser checks pass.
 
-### 16. Large-map render performance (P2)
+---
 
-```
-VoidDefense: npm run test:defense reports 512×768 (organismEscalation) render p50 18.7 ms / p95 31 ms on desktop. Profile src/void/render.ts with the benchmark and get render p95 under 16 ms on desktop without changing the look (cache static layers, skip off-screen chunks, cap debris draws). See docs/PERFORMANCE.md.
-Done when: test-results/void-defense-report.json shows renderP95Ms < 16 for both sectors; pixel/crisp/depth checks still pass; npm test, npm run build pass; docs/PERFORMANCE.md has the new numbers.
-```
+### 7. Localize the Void UI (P2, L)
 
-### 17. Localize the Void UI (P3)
+**Problem.** All Void UI text in `src/void/ui.ts`, `src/void/tech/`, `src/void/map/`, `src/void/operations/`, `src/void/towers.ts`, `src/void/maps.ts` and `src/void/tech/catalog.ts` is hard-coded English. `src/i18n/` holds mostly legacy medieval text (`siege.ts`, `ambush.ts`, `building-menu.ts`). The Settings modal has no language picker.
 
-```
-VoidDefense: all text in src/void/ui.ts, src/void/tech/, src/void/map/ and src/void/towers.ts is hard-coded English, while src/i18n/ only holds legacy text. Move Void UI strings into a new src/i18n/void.ts using the existing translate() table and languages, wire the language setting into the Void UI, and drop siege.ts/ambush.ts/building-menu.ts if unused. Follow docs/LOCALIZATION.md.
-Done when: switching language changes the battle HUD, tabs, dialogs and tech panel; tests in tests/ cover missing keys; npm test, npm run build pass.
-```
+**Do.** Follow `docs/LOCALIZATION.md`. Add `src/i18n/void.ts` with keys for all Void UI strings and wire it through the existing `translate()` machinery and language list. Add a Language select to the Settings modal. Keep English as the source; machine-quality translations are acceptable as a first pass if marked as such in the doc.
 
-### 18. Music (P3)
+**Done when.** Switching language changes the HUD, tabs, dialogs, coach, outcome modal and tech panel; a test fails if a key is missing in any language; `npm test`, `npm run build` pass; `docs/LOCALIZATION.md` and `docs/architecture/shell-ui.md` updated. Do item 10's i18n deletions after this item, not before.
 
-```
-VoidDefense: there is no music. Add a procedural, low-CPU ambient score in src/void/audio.ts (or a new src/void/music.ts): a calm synth pad on menus, a tenser layer during battle that rises with Void contact count, and a resolve on victory/defeat. Its own volume slider in settings. No new audio files.
-Done when: music plays and crossfades between menu, battle and outcome; volume persists; npm test, npm run build pass; docs updated.
-```
+---
 
-### 19. Remove dead legacy code and assets (P3)
+### 8. Music (P2, M)
 
-```
-VoidDefense: find and delete code and assets left from the medieval game that the Void game no longer uses: medieval clips in public/assets/sounds/ and their entries in src/sound-files.ts, unused cues in src/sound.ts, legacy i18n files, unused rules in src/style.css and src/theme.css. Use the build output and grep to prove each is unused before deleting.
-Done when: npm test, npm run build and all npm run test:* browser checks pass; dist/ is smaller (report before/after size); docs/architecture/*.md no longer mention removed modules.
-```
+**Problem.** There is no music. Only the procedural drone and SFX play.
 
-### 20. Docs, README and repo tidy (P3)
+**Do.** Add a procedural, low-CPU ambient score (Web Audio, no new audio files) in a new `src/void/music.ts`: a calm pad on the title screen and between runs, a tenser layer during battle that rises with Void frontier contacts, and a short resolve on victory or defeat. Add a Music volume slider to Settings (new optional `musicVolume` setting in `src/settings.ts`, default around 50). Any randomness must come from a named stream in `src/random.ts`.
 
-```
-VoidDefense: README "How to play" lists towers/strikes that don't exist (Kinetic Cannon, Laser Battery, EMP...) and says 33 tech nodes (code has 63). Rewrite it from src/void/towers.ts, src/void/maps.ts and src/void/tech/catalog.ts. Move 3dPlan.md, VoidDefensePlan.md, VoidDefence.md, TurretAndStrikeIdeas.md and ToDo.md into docs/archive/ and update links. Refresh docs/void-defense-progress.md numbers from test-results/void-defense-report.json.
-Done when: every tower/strike named in README exists in code; repo root has only README, AGENTS, CLAUDE, CONTEXT and config files; npm test, npm run build pass.
-```
+**Done when.** Music plays and crossfades between title, battle and outcome; the slider persists across reload (cover in `tests/void-defense.test.ts`); CPU impact is negligible in `npm run test:defense`'s benchmark; docs updated.
 
-### 21. Release polish: share card, offline, favicon (P3)
+---
 
-```
-VoidDefense: add og:title/og:description/og:image and twitter:card meta to index.html with a 1200×630 screenshot in public/ (capture it with Playwright from the title screen); add a small service worker that caches the built assets so the PWA in public/manifest.webmanifest works offline (Vite base "./" must keep paths relative); check favicon and icons are the Void emblem, not legacy art.
-Done when: Lighthouse PWA "installable" passes against npm run preview; the game loads offline after one visit; npm test, npm run build pass.
-```
+### 9. Docs, README, glossary and repo tidy (P2, M)
+
+**Problems.**
+- `README.md` "How to play" lists towers and strikes that do not exist (Kinetic Cannon, Laser Battery, EMP Emitter; strikes Orbital Strike, EMP Blast, Nanite Swarm, Kinetic Drop, Singularity Inversion) and says 33 tech nodes. The code has 16 towers and 6 strikes in `src/void/towers.ts` and 63 nodes in `src/void/tech/catalog.ts`.
+- `CONTEXT.md` (896 lines) is still the glossary of the old medieval tower defense (walkers, Drowned Temple creatures, wizard towers, mines). It should define Void Defense terms.
+- `AGENTS.md` says "9 towers & 5 strikes"; `docs/architecture/void-defense.md` still says "Mason Depot" and lists old strikes.
+- Planning files clutter the repo root: `3dPlan.md`, `VoidDefensePlan.md`, `VoidDefence.md`, `TurretAndStrikeIdeas.md`, `ToDo.md`. `docs/void-defense-progress.md` has stale numbers. `docs/release-polish.md` has an unticked Verification section.
+
+**Do.** Rewrite README "How to play" and "How it's built" from the code. Replace `CONTEXT.md` with a Void Defense glossary (Void, frontier, perimeter budget, Supplies, Void Essence, Sparks, sector, Build Under Siege, Build & Watch, each tower and strike, Resistance Ops, Resistance Map, coach). Fix counts and names in `AGENTS.md` (keep it short) and `docs/architecture/*.md`. Move the root planning files and `docs/release-polish.md` into `docs/archive/` and fix links. Refresh `docs/void-defense-progress.md` from `test-results/void-defense-report.json`.
+
+**Done when.** Every tower and strike named in README and `CONTEXT.md` exists in code with the same player-facing name; the repo root holds only README, AGENTS, CLAUDE, CONTEXT and config files; `npm test`, `npm run build` pass.
+
+---
+
+### 10. Remove dead legacy code and assets (P3, M)
+
+**Candidates (prove each is unused before deleting).**
+- `public/assets/sounds/` (7.3 MB of medieval clips: arrow hits, sword punches, fireballs, wooden houses, keep collapse, boat splashes) and their entries in `src/sound-files.ts`. Keep any clip the Void game actually plays, or that a reworked cue could reuse (for example a large explosion for skyscraper collapse); otherwise delete.
+- Legacy cues in `src/sound.ts` once item 5 is done.
+- `src/i18n/siege.ts`, `ambush.ts`, `building-menu.ts` once item 7 is done (note `src/i18n/index.ts` imports `building-menu.ts`, and `src/settings.ts` mentions `MenuSizing`).
+- `src/magic-circle/` (only imported by `src/ui/upgrade-graph.ts`; check whether the Tech Network still draws it after item 1), `src/ui/tree-motes.ts`, `src/ui/branch-art.ts`, `src/ui/farmland-bar.ts`, `src/ui/path-icons.ts` if unused.
+- Unused settings in `src/settings.ts` left from the old game.
+
+**Done when.** `npm test`, `npm run build` and every `npm run test:*` browser check pass; `dist/` size before/after is reported in the commit message; `docs/architecture/*.md` no longer mention removed modules.
+
+---
+
+### 11. Render performance headroom (P3, M)
+
+**Problem.** Render p95 is 15.6–15.9 ms in the headless benchmark, right at the 16 ms frame budget, and the Sector 06 (512×768) map is the heaviest. Phones will drop frames in busy moments.
+
+**Do.** Profile with `npm run test:defense`'s benchmark and `docs/PERFORMANCE.md`. Look for per-frame work that can be cached or skipped: static layers, off-screen chunks, debris and dust draw caps, contour recomputation when the frontier has not changed. Do not change the look; golden and visual checks must still pass.
+
+**Done when.** `test-results/void-defense-report.json` shows `renderP95Ms` ≤ 12 for both benchmark sectors; `npm run test:pixels`, `test:crisp`, `test:depth`, `test:visuals` pass; `docs/PERFORMANCE.md` has the new numbers.
+
+---
+
+### 12. Release polish: share card, offline, icons (P3, S)
+
+**Do.** Add `og:title`, `og:description`, `og:image` and `twitter:card` meta to `index.html` with a 1200×630 image in `public/` captured with Playwright from the title screen. Add a small service worker that caches built assets so the PWA in `public/manifest.webmanifest` works offline (paths must stay relative because Vite `base` is `"./"`). Check `public/favicon.ico`, `GameIcon*.png` and `apple-touch-icon.png` show the Void emblem, not legacy art.
+
+**Done when.** The game loads offline after one visit from `npm run preview`; Lighthouse reports the PWA as installable; `npm test`, `npm run build` pass; `docs/architecture/shell-ui.md` mentions the service worker.
+
+---
 
 ## Definition of "finished"
 
-The game can be called finished when:
-
-- A new player can open the link, see a title screen, get through Sector 01 with guidance, and understand their result without reading anything outside the game.
-- Every screen is styled, nothing overlaps at 1280×800, 390×844 or 844×390, and the map uses most of the screen on phones.
-- Every player action and every big world event has a sound.
-- No medieval names, textures or sounds remain in what the player sees or hears.
-- Render p95 stays under 16 ms on desktop for the largest sector.
-- README matches the game.
+- A new player opens the link, sees the title screen, gets through Sector 01 with the coach, and understands why they won or lost. Doing nothing loses.
+- Every screen is styled and nothing overlaps at 1280×800, 390×844 or 844×390. The map uses most of the screen on phones, and the Tech Network shows the whole graph legibly.
+- Every player action and every big world event has a sound, and there is music.
+- No medieval names, textures or sounds remain in what the player sees or hears, and none remain in the code that ships.
+- Render p95 has headroom under 16 ms for the largest sector.
+- README, `AGENTS.md`, `CONTEXT.md` and `docs/architecture/` match the game.
