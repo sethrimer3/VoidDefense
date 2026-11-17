@@ -46,3 +46,7 @@ Constructed via clean DOM template strings in `src/void/ui.ts` and styled in `sr
   - If `voiddefense.v1` does not exist on initial launch, the loader checks `towerdefense.v1` for existing player profiles and visual settings (`reduceMotion`, `pixelFont`, `soundOn`).
   - These values are gracefully imported into the initial `voiddefense.v1` payload.
   - The legacy `towerdefense.v1` key in `localStorage` is **never modified, mutated, or deleted**, preserving existing player storage.
+
+## Localization (`src/i18n/`)
+
+- Supports 9 languages (`en`, `es`, `fr`, `de`, `pt-BR`, `it`, `ja`, `ko`, `zh-CN`), with Void Defense UI strings in `src/i18n/void.ts` wired through `t()`, `translateWithin()`, and the Language selector in Command Settings (`settings.language`).

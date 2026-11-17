@@ -2,11 +2,12 @@
 import {SIEGE_TEXT} from "./siege.ts";
 import {AMBUSH_TEXT} from "./ambush.ts";
 import {BUILDING_MENU_TEXT} from "./building-menu.ts";
-import {CORE} from "./core.ts";
-import {SETTINGS_TEXT} from "./settings.ts";
-import {LANGUAGES,isLanguage,type Language} from "./languages.ts";
-export {LANGUAGES,isLanguage,type Language} from "./languages.ts";
-export const MESSAGES=[...CORE,...SETTINGS_TEXT,...AMBUSH_TEXT,...SIEGE_TEXT,...BUILDING_MENU_TEXT] as const;
+import { CORE } from "./core.ts";
+import { SETTINGS_TEXT } from "./settings.ts";
+import { VOID_TEXT } from "./void.ts";
+import { LANGUAGES, isLanguage, type Language } from "./languages.ts";
+export { LANGUAGES, isLanguage, type Language } from "./languages.ts";
+export const MESSAGES = [...CORE, ...SETTINGS_TEXT, ...AMBUSH_TEXT, ...SIEGE_TEXT, ...BUILDING_MENU_TEXT, ...VOID_TEXT] as const;
 export type MessageKey=(typeof MESSAGES)[number][0];
 const rows=new Map<string,readonly string[]>(MESSAGES.map(row=>[row[0],row]));
 let language:Language="en";

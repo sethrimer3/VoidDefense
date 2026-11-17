@@ -3,6 +3,7 @@
  * painters while presenting all 6 Resistance sectors on one zoomable/pannable
  * screen with multi-parent cross-links and full no-fee respec. */
 
+import { t, translateWithin } from "../../i18n/index.ts";
 import { paintPathIcon, type PathHue, type PathIcon } from "../../ui/path-icons.ts";
 import { UpgradeGraph, type GraphNode } from "../../ui/upgrade-graph.ts";
 import { TECH_BY_ID, TECH_NODES, type TechSector } from "./catalog.ts";
@@ -155,24 +156,24 @@ export class VoidTechTreeView {
     this.host.innerHTML = `
       <header class="void-tech-header">
         <div class="void-tech-title">
-          <strong>Resistance Global Technology Network</strong>
-          <small>All unlocked towers, strikes, AI logic, and passives apply globally across every run. Free between-run refunds.</small>
+          <strong data-i18n="void.tech.title">Resistance Global Technology Network</strong>
+          <small data-i18n="void.tech.blurb">All unlocked towers, strikes, AI logic, and passives apply globally across every run. Free between-run refunds.</small>
         </div>
         <div class="void-tech-controls">
           <span class="void-tech-pools" data-tech-pools></span>
-          <button type="button" class="secondary-btn" data-tech-fit>Fit View</button>
-          <button type="button" class="secondary-btn void-tech-filter-btn" data-tech-filter-toggle aria-expanded="false">Filter</button>
+          <button type="button" class="secondary-btn" data-tech-fit data-i18n="void.tech.fit">Fit View</button>
+          <button type="button" class="secondary-btn void-tech-filter-btn" data-tech-filter-toggle aria-expanded="false" data-i18n="void.tech.filter">Filter</button>
           <div class="void-tech-filter-drawer" data-tech-filter-drawer>
-            <label>Sector
+            <label><span data-i18n="void.tech.sector">Sector</span>
               <select data-tech-sector>
-                <option value="">All 6 Sectors (${TECH_NODES.length} nodes)</option>
+                <option value="">${t("void.tech.allSectors", { n: TECH_NODES.length })}</option>
                 ${(Object.keys(SECTOR_LABELS) as TechSector[])
                   .map((s) => `<option value="${s}">${SECTOR_LABELS[s]}</option>`)
                   .join("")}
               </select>
             </label>
-            <input type="search" data-tech-search placeholder="Search tech..." aria-label="Search technology nodes" />
-            <button type="button" data-tech-respec class="danger-btn">Refund All</button>
+            <input type="search" data-tech-search placeholder="${t("void.tech.search")}" aria-label="${t("void.tech.search")}" />
+            <button type="button" data-tech-respec class="danger-btn" data-i18n="void.tech.refundAll">Refund All</button>
           </div>
         </div>
       </header>
@@ -248,6 +249,18 @@ export class VoidTechTreeView {
     this.render();
   }
 
+  retranslate(): void {
+    translateWithin(this.host);
+    const allOpt = this.host.querySelector<HTMLOptionElement>('[data-tech-sector] option[value=""]');
+    if (allOpt) allOpt.textContent = t("void.tech.allSectors", { n: TECH_NODES.length });
+    const searchEl = this.host.querySelector<HTMLInputElement>("[data-tech-search]");
+    if (searchEl) {
+      searchEl.placeholder = t("void.tech.search");
+      searchEl.setAttribute("aria-label", t("void.tech.search"));
+    }
+    this.render();
+  }
+
   frame(now: number): void {
     this.circle.frame(now, this.reduceMotion(), this.graph.getClusterScreen());
   }
@@ -259,7 +272,7 @@ export class VoidTechTreeView {
     const alloc = allocatedCurrencies(wallet.ranks);
 
     const poolsEl = this.host.querySelector<HTMLElement>("[data-tech-pools]")!;
-    poolsEl.innerHTML = `<span class="badge-essence">${avail.essence} Void Essence</span> · <span class="badge-sparks">${avail.sparks} Sparks of Defiance</span>`;
+    poolsEl.innerHTML = `<span class="badge-essence">${avail.essence} ${t("void.curr.essence")}</span> · <span class="badge-sparks">${avail.sparks} ${t("void.curr.sparks")}</span>`;
 
     const respecBtn = this.host.querySelector<HTMLButtonElement>("[data-tech-respec]")!;
     respecBtn.disabled = inBattle || (alloc.essence === 0 && alloc.sparks === 0);
@@ -331,7 +344,7 @@ export class VoidTechTreeView {
     const nextCost = rank < maxRank ? node.costs[rank] : 0;
     const canAfford =
       node.currency === "sparks" ? avail.sparks >= nextCost : avail.essence >= nextCost;
-    const currLabel = node.currency === "sparks" ? "Sparks of Defiance" : "Void Essence";
+    const currLabel = node.currency === "sparks" ? t("void.curr.sparks") : t("void.curr.essence");
 
     const reqNames = [
       ...(node.parent ? [TECH_BY_ID.get(node.parent)?.name ?? node.parent] : []),
@@ -343,17 +356,17 @@ export class VoidTechTreeView {
       <h3>${node.name}</h3>
       <p class="void-card-desc">${node.description}</p>
       <div class="void-card-meta">
-        <span>Rank: <b>${rank} / ${maxRank}</b></span>
-        <span>Currency: <b>${currLabel}</b></span>
+        <span>${t("void.tech.rank")}: <b>${rank} / ${maxRank}</b></span>
+        <span>${t("void.tech.currency")}: <b>${currLabel}</b></span>
       </div>
       ${
         reqNames.length
-          ? `<div class="void-card-reqs">Requires: ${reqNames.join(" + ")}</div>`
+          ? `<div class="void-card-reqs">${t("void.tech.requires")}: ${reqNames.join(" + ")}</div>`
           : ""
       }
       ${
         inBattle
-          ? `<p class="void-card-warn">Tech allocation is locked while an encounter is active.</p>`
+          ? `<p class="void-card-warn">${t("void.tech.lockedBattle")}</p>`
           : ""
       }
       <div class="void-card-actions">
@@ -361,16 +374,14 @@ export class VoidTechTreeView {
           node.id !== "commandCore" && rank < maxRank
             ? `<button type="button" class="primary-btn" data-card-buy ${
                 inBattle || !met || !canAfford ? "disabled" : ""
-              }>Research Rank ${rank + 1} (${nextCost} ${
-                node.currency === "sparks" ? "Sparks" : "Essence"
-              })</button>`
-            : `<button type="button" class="secondary-btn" disabled>Max Rank Reached</button>`
+              }>${t("void.tech.research", { r: rank + 1, cost: nextCost, curr: currLabel })}</button>`
+            : `<button type="button" class="secondary-btn" disabled>${t("void.tech.maxRank")}</button>`
         }
         ${
           node.id !== "commandCore" && rank > 0
             ? `<button type="button" data-card-refund class="secondary-btn" ${
                 inBattle ? "disabled" : ""
-              }>Refund Node (Cascades Dependents)</button>`
+              }>${t("void.tech.refundNode")}</button>`
             : ""
         }
       </div>

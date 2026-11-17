@@ -2,6 +2,7 @@
  * Pointers, Profile Mode Picker, and Tab Navigation for Void Defense. */
 
 import { cleanName, defaultFlag, escapeText, flagSvg, randomPlayerName } from "../profile/model.ts";
+import { getLanguage, LANGUAGES, setLanguage, t, t as tr, translateWithin } from "../i18n/index.ts";
 import { VoidSoundEngine } from "./audio.ts";
 import type {
   PlayStyleMode,
@@ -188,7 +189,9 @@ export class VoidApp {
     this.awaitingDeploy = mode === "underSiege";
     if (this.awaitingDeploy) this.sim.paused = true;
     this.syncAudioVolumes();
+    setLanguage(this.save.settings.language);
     this.buildDOM();
+    translateWithin(this.root);
     this.showTitleScreen();
   }
 
@@ -214,17 +217,17 @@ export class VoidApp {
           <div class="void-currencies">
             <div class="void-curr void-curr--supplies" title="Supplies: runtime construction & strike resource earned from surviving city blocks">
               <i class="void-curr-gem void-curr-gem--supplies" aria-hidden="true"></i>
-              <span class="void-curr-label">Supplies</span>
+              <span class="void-curr-label" data-i18n="void.curr.supplies">Supplies</span>
               <b data-curr-supplies>0</b>
             </div>
             <div class="void-curr void-curr--essence" title="Void Essence: repeatable between-run technology resource">
               <i class="void-curr-gem void-curr-gem--essence" aria-hidden="true"></i>
-              <span class="void-curr-label">Essence</span>
+              <span class="void-curr-label" data-i18n="void.curr.essence">Essence</span>
               <b data-curr-essence>0</b>
             </div>
             <div class="void-curr void-curr--sparks" title="Sparks of Defiance: rare milestone breakthroughs (1 shared entitlement per sector)">
               <i class="void-curr-gem void-curr-gem--sparks" aria-hidden="true"></i>
-              <span class="void-curr-label">Sparks</span>
+              <span class="void-curr-label" data-i18n="void.curr.sparks">Sparks</span>
               <b data-curr-sparks>0</b>
             </div>
           </div>
@@ -276,19 +279,19 @@ export class VoidApp {
                   <strong data-side-sector-name>Sector 01</strong>
                   <span class="void-side-mode-badge" data-side-mode-badge>Under Siege</span>
                 </div>
-                <p class="void-side-goal" data-side-goal>Contain the Void breach before the city falls.</p>
+                <p class="void-side-goal" data-side-goal data-i18n="void.hud.goal">Contain the Void breach before the city falls.</p>
               </div>
               <div class="void-side-section">
-                <div class="void-side-label">Command</div>
+                <div class="void-side-label" data-i18n="void.hud.command">Command</div>
                 <div class="void-run-controls void-side-controls" data-side-run-controls></div>
               </div>
               <div class="void-side-section">
-                <div class="void-side-label">Telemetry</div>
+                <div class="void-side-label" data-i18n="void.hud.telemetry">Telemetry</div>
                 <div class="void-side-telemetry" data-side-telemetry></div>
               </div>
               <div class="void-side-section void-side-insp-wrap" data-side-inspector-host>
-                <div class="void-side-label">Selected Unit / Structure</div>
-                <div class="void-side-insp-empty" data-side-insp-empty>Tap any tower or building on the map to inspect or sell it.</div>
+                <div class="void-side-label" data-i18n="void.hud.selected">Selected Unit / Structure</div>
+                <div class="void-side-insp-empty" data-side-insp-empty data-i18n="void.hud.emptyInsp">Tap any tower or building on the map to inspect or sell it.</div>
                 <div class="void-side-insp-body" data-side-inspector hidden></div>
               </div>
             </aside>
@@ -300,10 +303,10 @@ export class VoidApp {
         <section id="void-page-map" class="void-page"></section>
 
         <div class="void-nav" role="tablist" aria-label="Resistance Navigation">
-          <button type="button" data-void-tab="battle" class="selected">Battlefield</button>
-          <button type="button" data-void-tab="network">Global Tech Network</button>
-          <button type="button" data-void-tab="operations">Resistance Ops</button>
-          <button type="button" data-void-tab="map">Resistance Map</button>
+          <button type="button" data-void-tab="battle" class="selected" data-i18n="void.tab.battle">Battlefield</button>
+          <button type="button" data-void-tab="network" data-i18n="void.tab.network">Global Tech Network</button>
+          <button type="button" data-void-tab="operations" data-i18n="void.tab.operations">Resistance Ops</button>
+          <button type="button" data-void-tab="map" data-i18n="void.tab.map">Resistance Map</button>
         </div>
       </main>
       <div class="void-title-screen" data-title-screen>
@@ -311,11 +314,11 @@ export class VoidApp {
         <div class="void-title-content">
           <div class="void-title-badge">YEAR 3000 // METROPOLITAN CONTAINMENT</div>
           <h1 class="void-title-logo">VOID DEFENSE</h1>
-          <p class="void-title-tag">Hold the crumbling skyline against an expanding cosmic rupture.</p>
+          <p class="void-title-tag" data-i18n="void.title.subtitle">Contain the Violet Breach</p>
           <div class="void-title-actions">
-            <button type="button" class="primary-btn" data-title-continue hidden>Continue</button>
-            <button type="button" class="primary-btn" data-title-new>New Game</button>
-            <button type="button" class="secondary-btn" data-title-settings>Settings</button>
+            <button type="button" class="primary-btn" data-title-continue hidden data-i18n="void.title.continue">Continue</button>
+            <button type="button" class="primary-btn" data-title-new data-i18n="void.title.newGame">New Game</button>
+            <button type="button" class="secondary-btn" data-title-settings data-i18n="void.title.settings">Settings</button>
           </div>
         </div>
       </div>
@@ -803,12 +806,13 @@ export class VoidApp {
 
     const profBar = this.root.querySelector<HTMLElement>("[data-profile-bar]")!;
     const p = this.save.profile;
-    const profileKey = p ? `${p.name}\0${p.flag}\0${p.mode}` : "__none__";
+    const lang = getLanguage();
+    const profileKey = p ? `${lang}\0${p.name}\0${p.flag}\0${p.mode}` : `${lang}\0__none__`;
     if (profileKey !== this.lastProfileKey) {
       this.lastProfileKey = profileKey;
       profBar.innerHTML = p
-        ? `<button type="button" class="void-prof-btn" data-edit-profile>${flagSvg(p.flag, "void-mini-flag")} <span>${escapeText(p.name)}</span> <small>(${p.mode === "underSiege" ? "Under Siege" : "Build & Watch"})</small></button>`
-        : `<button type="button" class="void-prof-btn" data-edit-profile>Set Commander Profile</button>`;
+        ? `<button type="button" class="void-prof-btn" data-edit-profile>${flagSvg(p.flag, "void-mini-flag")} <span>${escapeText(p.name)}</span> <small>(${p.mode === "underSiege" ? t("void.mode.underSiege") : t("void.mode.buildAndWatch")})</small></button>`
+        : `<button type="button" class="void-prof-btn" data-edit-profile>${t("void.profile.edit")}</button>`;
       profBar.querySelector<HTMLButtonElement>("[data-edit-profile]")!.onclick = () =>
         this.openProfileDialog(false);
     }
@@ -830,10 +834,10 @@ export class VoidApp {
     if (statsPills) {
       if (!this.statsPillEls || !statsPills.isConnected || statsPills.childElementCount === 0) {
         statsPills.innerHTML = `
-          <span class="void-hud-pill" title="Void Energy Remaining">Void <b data-pill-void></b></span>
-          <span class="void-hud-pill" title="Active Frontier Contacts">Contacts <b data-pill-contacts></b></span>
-          <span class="void-hud-pill" title="Active Units">Units <b data-pill-units></b></span>
-          <span class="void-hud-pill" title="Elapsed Battle Time">Time <b data-pill-time></b></span>
+          <span class="void-hud-pill" title="Void Energy Remaining">${t("void.hud.voidEnergy")} <b data-pill-void></b></span>
+          <span class="void-hud-pill" title="Active Frontier Contacts">${t("void.hud.contacts")} <b data-pill-contacts></b></span>
+          <span class="void-hud-pill" title="Active Units">${t("void.hud.units")} <b data-pill-units></b></span>
+          <span class="void-hud-pill" title="Elapsed Battle Time">${t("void.hud.time")} <b data-pill-time></b></span>
         `;
         this.statsPillEls = {
           voidEl: statsPills.querySelector<HTMLElement>("[data-pill-void]")!,
@@ -852,37 +856,37 @@ export class VoidApp {
     const sideName = this.root.querySelector<HTMLElement>("[data-side-sector-name]");
     if (sideName) sideName.textContent = this.sim.scenario.name;
     const sideMode = this.root.querySelector<HTMLElement>("[data-side-mode-badge]");
-    if (sideMode) sideMode.textContent = this.sim.mode === "underSiege" ? "Under Siege" : "Build & Watch";
+    if (sideMode) sideMode.textContent = this.sim.mode === "underSiege" ? t("void.mode.underSiege") : t("void.mode.buildAndWatch");
     const sideGoal = this.root.querySelector<HTMLElement>("[data-side-goal]");
     if (sideGoal) {
       sideGoal.textContent = this.sim.scenario.endless
         ? "Survive the endless Void escalation as long as possible."
-        : "Contain the Void breach before the city falls.";
+        : t("void.hud.goal");
     }
     const sideTel = this.root.querySelector<HTMLElement>("[data-side-telemetry]");
     if (sideTel) {
       const contacts = this.sim.voidField.totalContactEdges();
       sideTel.innerHTML = `
-        <div class="void-tel-row"><span>Void Energy</span><b>${energyText}</b></div>
-        <div class="void-tel-row ${contacts > 800 ? "warn" : ""}"><span>Frontier Contacts</span><b>${contacts}</b></div>
-        <div class="void-tel-row"><span>Active Units</span><b>${this.sim.combat.agents.length}</b></div>
-        <div class="void-tel-row"><span>Elapsed Time</span><b>${this.sim.elapsedSeconds.toFixed(1)}s</b></div>
+        <div class="void-tel-row"><span>${t("void.hud.voidEnergy")}</span><b>${energyText}</b></div>
+        <div class="void-tel-row ${contacts > 800 ? "warn" : ""}"><span>${t("void.hud.contacts")}</span><b>${contacts}</b></div>
+        <div class="void-tel-row"><span>${t("void.hud.units")}</span><b>${this.sim.combat.agents.length}</b></div>
+        <div class="void-tel-row"><span>${t("void.hud.time")}</span><b>${this.sim.elapsedSeconds.toFixed(1)}s</b></div>
       `;
     }
 
-    // Run controls (rebuild only when phase/paused/speed/deploy changes so buttons don't detach mid-click)
-    const ctrlKey = `${this.sim.phase}:${this.awaitingDeploy ? 1 : 0}:${this.sim.paused ? 1 : 0}:${this.sim.speed}`;
+    // Run controls (rebuild only when phase/paused/speed/deploy/lang changes so buttons don't detach mid-click)
+    const ctrlKey = `${lang}:${this.sim.phase}:${this.awaitingDeploy ? 1 : 0}:${this.sim.paused ? 1 : 0}:${this.sim.speed}`;
     if (ctrlKey !== this.lastCtrlKey) {
       this.lastCtrlKey = ctrlKey;
       const isDeployReady = this.sim.phase === "prep" || this.awaitingDeploy;
       const ctrlHtml = `
         ${
           isDeployReady
-            ? `<button type="button" class="primary-btn void-start-btn" data-start-battle>Start Battle</button>`
-            : `<button type="button" class="void-ctrl-btn" data-toggle-pause>${this.sim.paused ? "Resume" : "Pause"}</button>`
+            ? `<button type="button" class="primary-btn void-start-btn" data-start-battle>${t("void.hud.startBattle")}</button>`
+            : `<button type="button" class="void-ctrl-btn" data-toggle-pause>${this.sim.paused ? t("void.hud.resume") : t("void.hud.pause")}</button>`
         }
         <button type="button" data-cycle-speed>${this.sim.speed}x</button>
-        <button type="button" data-retry-run>Retry</button>
+        <button type="button" data-retry-run>${t("void.hud.retry")}</button>
       `;
       const ctrlContainers = [
         this.root.querySelector<HTMLElement>("[data-run-controls]"),
@@ -1031,18 +1035,18 @@ export class VoidApp {
     const html = `
       <div class="void-insp-head">
         <strong>${spec.name}</strong>
-        <span class="void-insp-tag">Lv ${lvl}</span>
+        <span class="void-insp-tag">${tr("void.insp.lv", { n: lvl })}</span>
         <button type="button" data-insp-close class="void-insp-close" aria-label="Close inspector">×</button>
       </div>
       <div class="void-insp-stats">
-        <span>HP: <b>${Math.ceil(t.hp)}/${t.maxHp}</b></span>
+        <span>${tr("void.insp.hp")}: <b>${Math.ceil(t.hp)}/${t.maxHp}</b></span>
         ${extraInfo}
       </div>
       <div class="void-insp-actions">
-        ${upgCost > 0 ? `<button type="button" data-insp-upgrade class="primary-btn" ${canUpgrade ? "" : "disabled"}>Lv ${lvl + 1} (${upgCost})</button>` : ""}
+        ${upgCost > 0 ? `<button type="button" data-insp-upgrade class="primary-btn" ${canUpgrade ? "" : "disabled"}>${tr("void.insp.upgrade", { n: lvl + 1, cost: upgCost })}</button>` : ""}
         ${rotateBtn}
-        <button type="button" data-insp-reticle class="secondary-btn">Focus</button>
-        <button type="button" data-insp-sell class="danger-btn" ${canModify ? "" : "disabled"}>Sell (+${refund})</button>
+        <button type="button" data-insp-reticle class="secondary-btn">${tr("void.insp.focus")}</button>
+        <button type="button" data-insp-sell class="danger-btn" ${canModify ? "" : "disabled"}>${tr("void.insp.sell", { n: refund })}</button>
       </div>
     `;
     this.setInspectorContent(html, (el) => {
@@ -1090,12 +1094,12 @@ export class VoidApp {
     }
     banner.hidden = false;
     const tierTitles: Record<number, string> = {
-      0: "CITY LOST",
-      1: "PYRRHIC CONTAINMENT",
-      2: "BREACH CONTAINED",
-      3: "FLAWLESS DEFENSE",
+      0: t("void.outcome.lost"),
+      1: t("void.outcome.pyrrhic"),
+      2: t("void.outcome.contained"),
+      3: t("void.outcome.flawless"),
     };
-    const title = outcome.status === "won" ? (tierTitles[outcome.sparksTier] ?? "BREACH CONTAINED") : "CITY LOST";
+    const title = outcome.status === "won" ? (tierTitles[outcome.sparksTier] ?? t("void.outcome.contained")) : t("void.outcome.lost");
     const sparksHtml = [1, 2, 3]
       .map((n) => `<span class="void-outcome-spark ${n <= outcome.sparksTier ? "filled" : ""}" aria-hidden="true">◆</span>`)
       .join("");
@@ -1106,13 +1110,13 @@ export class VoidApp {
         <div class="void-outcome-sparks" aria-label="${outcome.sparksTier} of 3 Sparks">${sparksHtml}</div>
         <h2>${title}</h2>
         <div class="void-outcome-stats">
-          <div><span>City Preserved</span><b>${outcome.preservedPercent.toFixed(1)}%</b></div>
-          <div><span>Sector Best</span><b>${bestPct}%</b></div>
-          <div><span>Duration</span><b>${outcome.elapsedSeconds}s</b></div>
+          <div><span>${t("void.outcome.preserved")}</span><b>${outcome.preservedPercent.toFixed(1)}%</b></div>
+          <div><span>${t("void.outcome.best")}</span><b>${bestPct}%</b></div>
+          <div><span>${t("void.hud.time")}</span><b>${outcome.elapsedSeconds}s</b></div>
         </div>
         <div class="void-outcome-rewards">
-          <span class="void-reward-chip void-reward-chip--essence">+${outcome.voidEssenceAwarded} Void Essence</span>
-          <span class="void-reward-chip void-reward-chip--sparks">+${outcome.sparksAwarded} Sparks</span>
+          <span class="void-reward-chip void-reward-chip--essence">+${outcome.voidEssenceAwarded} ${t("void.outcome.essenceEarned")}</span>
+          <span class="void-reward-chip void-reward-chip--sparks">+${outcome.sparksAwarded} ${t("void.outcome.sparksEarned")}</span>
         </div>
         ${
           !outcome.participated && outcome.status === "lost"
@@ -1120,9 +1124,9 @@ export class VoidApp {
             : ""
         }
         <div class="void-outcome-actions">
-          <button type="button" class="primary-btn" data-out-retry>Deploy Again</button>
-          ${outcome.status === "won" ? `<button type="button" class="primary-btn" data-out-map>Resistance Map</button>` : ""}
-          <button type="button" class="secondary-btn" data-out-tech>Tech Network</button>
+          <button type="button" class="primary-btn" data-out-retry>${t("void.outcome.retry")}</button>
+          ${outcome.status === "won" ? `<button type="button" class="primary-btn" data-out-map>${t("void.outcome.map")}</button>` : ""}
+          <button type="button" class="secondary-btn" data-out-tech>${t("void.outcome.tech")}</button>
         </div>
       </div>
     `;
@@ -1318,27 +1322,27 @@ export class VoidApp {
 
     const steps = [
       {
-        title: "1/4 · Contain the Breach",
-        body: "The Void consumes the city outward. Surviving buildings generate <b>Supplies</b> to fund your defenses.",
-        next: "Next",
+        title: t("void.coach.1.title"),
+        body: t("void.coach.1.body"),
+        next: t("void.coach.next"),
         highlight: "",
       },
       {
-        title: "2/4 · Place a Matter Cannon",
-        body: "Pick <b>Matter</b> below, then tap a spot near the Void's edge. The cannon fires matter back into the Void and rebuilds the ground.",
+        title: t("void.coach.2.title"),
+        body: t("void.coach.2.body"),
         next: "",
         highlight: '[data-pick-tower="matterCannon"]',
       },
       {
-        title: "3/4 · Deploy Engineers",
-        body: "Select <b>Repair</b> (Repair Depot) to deploy engineers that salvage rubble and mend buildings.",
-        next: "Next",
+        title: t("void.coach.3.title"),
+        body: t("void.coach.3.body"),
+        next: t("void.coach.next"),
         highlight: '[data-pick-tower="repairDepot"]',
       },
       {
-        title: "4/4 · Start Containment",
-        body: "Press <b>Start Battle</b> when ready. Use orbital <b>Strikes</b> if the Void breaks through.",
-        next: "Got it",
+        title: t("void.coach.4.title"),
+        body: t("void.coach.4.body"),
+        next: t("void.coach.gotIt"),
         highlight: "[data-start-battle]",
       },
     ];
@@ -1358,7 +1362,7 @@ export class VoidApp {
     el.innerHTML = `
       <div class="void-coach-head">
         <strong>${step.title}</strong>
-        <button type="button" class="secondary-btn void-coach-skip" data-coach-skip>Skip</button>
+        <button type="button" class="secondary-btn void-coach-skip" data-coach-skip>${t("void.coach.skip")}</button>
       </div>
       <p>${step.body}</p>
       ${step.next ? `<div class="void-coach-actions"><button type="button" class="primary-btn" data-coach-next>${step.next}</button></div>` : ""}
@@ -1385,6 +1389,16 @@ export class VoidApp {
     }
   }
 
+  private applyLanguage(): void {
+    translateWithin(this.root);
+    this.statsPillEls = null;
+    this.lastCtrlKey = "";
+    this.lastProfileKey = "";
+    this.refreshHUD();
+    this.renderCoach();
+    this.techView.retranslate();
+  }
+
   openSettingsDialog(): void {
     const dlg = this.root.querySelector<HTMLDialogElement>("#void-settings-dialog");
     if (!dlg) return;
@@ -1396,17 +1410,22 @@ export class VoidApp {
       <div class="void-settings-modal">
         <div class="void-dialog-head">
           <span class="void-emblem" aria-hidden="true"></span>
-          <h2>Command Settings</h2>
+          <h2>${t("void.settings.title")}</h2>
         </div>
         <div class="void-settings-row">
-          <label><input type="checkbox" data-set-sound ${!this.save.settings.soundOff ? "checked" : ""} /> Audio &amp; Sound Effects</label>
-          <label class="void-slider-row"><span>Master Volume</span><input type="range" min="0" max="100" step="5" value="${this.save.settings.masterVolume}" data-set-vol-master /></label>
-          <label class="void-slider-row"><span>SFX Volume</span><input type="range" min="0" max="100" step="5" value="${this.save.settings.sfxVolume}" data-set-vol-sfx /></label>
-          <label class="void-slider-row"><span>Ambience Volume</span><input type="range" min="0" max="100" step="5" value="${this.save.settings.ambienceVolume}" data-set-vol-amb /></label>
-          <label><input type="checkbox" data-set-mag ${this.save.settings.magnifier ? "checked" : ""} /> Precision Placement Magnifier</label>
-          <label><input type="checkbox" data-set-motion ${this.save.settings.reduceMotion ? "checked" : ""} /> Reduce Motion &amp; Ambient Flicker</label>
-          <label><input type="checkbox" data-set-pfont ${this.save.settings.pixelFont ? "checked" : ""} /> Custom Pixel Font (Alembic)</label>
-          <label class="void-select-row"><span>Building Height</span>
+          <label class="void-select-row"><span>${t("void.settings.language")}</span>
+            <select data-set-lang>
+              ${LANGUAGES.map((l) => `<option value="${l.code}" ${this.save.settings.language === l.code ? "selected" : ""}>${l.name}</option>`).join("")}
+            </select>
+          </label>
+          <label><input type="checkbox" data-set-sound ${!this.save.settings.soundOff ? "checked" : ""} /> ${t("void.settings.sound")}</label>
+          <label class="void-slider-row"><span>${t("void.settings.master")}</span><input type="range" min="0" max="100" step="5" value="${this.save.settings.masterVolume}" data-set-vol-master /></label>
+          <label class="void-slider-row"><span>${t("void.settings.sfx")}</span><input type="range" min="0" max="100" step="5" value="${this.save.settings.sfxVolume}" data-set-vol-sfx /></label>
+          <label class="void-slider-row"><span>${t("void.settings.ambience")}</span><input type="range" min="0" max="100" step="5" value="${this.save.settings.ambienceVolume}" data-set-vol-amb /></label>
+          <label><input type="checkbox" data-set-mag ${this.save.settings.magnifier ? "checked" : ""} /> ${t("void.settings.magnifier")}</label>
+          <label><input type="checkbox" data-set-motion ${this.save.settings.reduceMotion ? "checked" : ""} /> ${t("void.settings.motion")}</label>
+          <label><input type="checkbox" data-set-pfont ${this.save.settings.pixelFont ? "checked" : ""} /> ${t("void.settings.pixelFont")}</label>
+          <label class="void-select-row"><span>${t("void.settings.bheight")}</span>
             <select data-set-bheight>
               <option value="full" ${this.save.settings.buildingHeight === "full" ? "selected" : ""}>Full (1 px / 2 floors)</option>
               <option value="low" ${this.save.settings.buildingHeight === "low" ? "selected" : ""}>Low (Half Height)</option>
@@ -1420,10 +1439,20 @@ export class VoidApp {
           }
         </div>
         <div class="void-dialog-actions">
-          <button type="button" class="primary-btn" data-set-close>Done</button>
+          <button type="button" class="primary-btn" data-set-close>${t("void.settings.done")}</button>
         </div>
       </div>
     `;
+
+    dlg.querySelector<HTMLSelectElement>("[data-set-lang]")!.onchange = (e) => {
+      const lang = (e.target as HTMLSelectElement).value as typeof this.save.settings.language;
+      this.save.settings.language = lang;
+      setLanguage(lang);
+      this.persist();
+      this.applyLanguage();
+      dlg.close();
+      this.openSettingsDialog();
+    };
 
     dlg.querySelector<HTMLInputElement>("[data-set-sound]")!.onchange = (e) => {
       this.save.settings.soundOff = !(e.target as HTMLInputElement).checked;
@@ -1489,7 +1518,7 @@ export class VoidApp {
       <form class="void-profile-form">
         <div class="void-dialog-head">
           <span class="void-emblem" aria-hidden="true"></span>
-          <h2>${firstTime ? "Welcome, Commander" : "Commander Profile"}</h2>
+          <h2>${firstTime ? t("void.profile.welcome") : t("void.profile.edit")}</h2>
         </div>
         <p>Year 3000: Reality has ruptured in the metropolitan core. Set your callsign and operational doctrine before deployment.</p>
         <label>Commander Callsign
@@ -1498,17 +1527,17 @@ export class VoidApp {
         <fieldset class="void-mode-fieldset">
           <legend>Operational Doctrine</legend>
           <button type="button" class="void-mode-card ${chosenMode === "underSiege" ? "selected" : ""}" data-dlg-mode="underSiege">
-            <strong>Build Under Siege (Recommended)</strong>
+            <strong>${t("void.mode.underSiege")}</strong>
             <p>Build and adapt in real time as the Void consumes the city. Earn continuous Supplies from surviving blocks.</p>
           </button>
           <button type="button" class="void-mode-card ${chosenMode === "buildAndWatch" ? "selected" : ""}" data-dlg-mode="buildAndWatch">
-            <strong>Build &amp; Watch</strong>
+            <strong>${t("void.mode.buildAndWatch")}</strong>
             <p>Prepare your defenses with a fixed starting budget, then unleash the Void and watch your plan unfold.</p>
           </button>
         </fieldset>
         <div class="void-dialog-actions">
           ${!firstTime ? `<button type="button" class="secondary-btn" data-dlg-cancel>Cancel</button>` : ""}
-          <button type="submit" class="primary-btn">${firstTime ? "Enter Command" : "Save & Redeploy"}</button>
+          <button type="submit" class="primary-btn">${firstTime ? t("void.profile.enter") : t("void.profile.save")}</button>
         </div>
       </form>
     `;

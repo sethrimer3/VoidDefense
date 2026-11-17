@@ -7,7 +7,7 @@ The first release includes English, Spanish, French, German, Brazilian Portugues
 ## Catalog and rendering
 
 - `src/i18n/languages.ts` defines stable language codes and native names. `settings.ts` derives the saved choice from this list.
-- `core.ts` and `settings.ts` under `src/i18n/` contain rows of plain text: key, English, Spanish, French, German, Portuguese, Italian, Japanese, Korean, Chinese. Every locale must preserve the English row's `{placeholders}`. Keep HTML out of messages.
+- `core.ts`, `settings.ts`, and `void.ts` under `src/i18n/` contain rows of plain text: key, English, Spanish, French, German, Portuguese, Italian, Japanese, Korean, Chinese. Every locale must preserve the English row's `{placeholders}`. Keep HTML out of messages. Non-English rows in `void.ts` are machine-translated first passes pending native-speaker review.
 - `t(key, values)` selects a message; `translate(locale, key, values)` is the pure version. Missing translations use English. Message keys are checked by TypeScript. Interpolated values are literal, not replacement patterns.
 - Call `t()` where dynamic HTML is built. For persistent static labels, place `data-i18n="key"` on the text-only element; `translateWithin()` updates these without replacing buttons, listeners, canvases or focus. `data-i18n-title` and `data-i18n-aria-label` translate those attributes. Do not annotate an element containing interactive children.
 - Include `getLanguage()` in cached text signatures (Mine/Library). The app updates annotations on selection; pages redraw dynamic labels through their existing show/refresh methods. There is no DOM observer or additional animation loop.
