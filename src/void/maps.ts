@@ -41,7 +41,7 @@ export const SCENARIOS: readonly ScenarioConfig[] = [
   },
   {
     id: "centralRupture",
-    name: "Sector 03: Midtown Spire Plaza",
+    name: "Sector 03: Zenith Spire Plaza",
     subtitle: "A central singularity inside the high-rise financial core. Cast Solar Anchor islands to split its perimeter budget.",
     seed: 0x3003_c330,
     worldW: DEFAULT_WORLD_W,

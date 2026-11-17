@@ -141,7 +141,7 @@ export const TECH_NODES: readonly TechNodeDef[] = [
   },
   {
     id: "masonThroughput",
-    name: "Automated Exosuit Masons",
+    name: "Automated Repair Crews",
     description: "1×2 Engineers move 18% faster and repair/build +25% more structural integrity per trip.",
     sector: "reclamation",
     kind: "passive",
