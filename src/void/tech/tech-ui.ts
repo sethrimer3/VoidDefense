@@ -160,17 +160,20 @@ export class VoidTechTreeView {
         </div>
         <div class="void-tech-controls">
           <span class="void-tech-pools" data-tech-pools></span>
-          <label>Sector
-            <select data-tech-sector>
-              <option value="">All 6 Sectors (${TECH_NODES.length} nodes)</option>
-              ${(Object.keys(SECTOR_LABELS) as TechSector[])
-                .map((s) => `<option value="${s}">${SECTOR_LABELS[s]}</option>`)
-                .join("")}
-            </select>
-          </label>
-          <input type="search" data-tech-search placeholder="Search tech..." aria-label="Search technology nodes" />
           <button type="button" class="secondary-btn" data-tech-fit>Fit View</button>
-          <button type="button" data-tech-respec class="danger-btn">Refund All</button>
+          <button type="button" class="secondary-btn void-tech-filter-btn" data-tech-filter-toggle aria-expanded="false">Filter</button>
+          <div class="void-tech-filter-drawer" data-tech-filter-drawer>
+            <label>Sector
+              <select data-tech-sector>
+                <option value="">All 6 Sectors (${TECH_NODES.length} nodes)</option>
+                ${(Object.keys(SECTOR_LABELS) as TechSector[])
+                  .map((s) => `<option value="${s}">${SECTOR_LABELS[s]}</option>`)
+                  .join("")}
+              </select>
+            </label>
+            <input type="search" data-tech-search placeholder="Search tech..." aria-label="Search technology nodes" />
+            <button type="button" data-tech-respec class="danger-btn">Refund All</button>
+          </div>
         </div>
       </header>
       <div class="void-tech-stage">
@@ -180,7 +183,6 @@ export class VoidTechTreeView {
     `;
 
     const graphEl = this.host.querySelector<HTMLElement>(".void-tech-graph")!;
-    this.circle = new HoloGridBackdrop(graphEl);
     this.graph = new UpgradeGraph(graphEl, {
       reduceMotion: this.reduceMotion,
       spatialCulling: true,
@@ -198,7 +200,15 @@ export class VoidTechTreeView {
         });
       },
     });
+    this.circle = new HoloGridBackdrop(graphEl);
     this.graph.setSecondaryEdges(secondaryTechEdges());
+
+    const filterBtn = this.host.querySelector<HTMLButtonElement>("[data-tech-filter-toggle]")!;
+    const filterDrawer = this.host.querySelector<HTMLElement>("[data-tech-filter-drawer]")!;
+    filterBtn.onclick = () => {
+      const open = filterDrawer.classList.toggle("open");
+      filterBtn.setAttribute("aria-expanded", String(open));
+    };
 
     this.host.querySelector<HTMLSelectElement>("[data-tech-sector]")!.onchange = (e) => {
       this.filterSector = (e.target as HTMLSelectElement).value as TechSector | "";
@@ -239,7 +249,7 @@ export class VoidTechTreeView {
   }
 
   frame(now: number): void {
-    this.circle.frame(now, this.reduceMotion());
+    this.circle.frame(now, this.reduceMotion(), this.graph.getClusterScreen());
   }
 
   render(): void {
@@ -261,21 +271,20 @@ export class VoidTechTreeView {
       const unlocked = prerequisitesMet(n, wallet.ranks);
       const state: "owned" | "next" | "locked" =
         rank > 0 ? "owned" : unlocked ? "next" : "locked";
-      const dimmedBySector = this.filterSector && n.sector !== this.filterSector && n.id !== "commandCore";
-      const dimmedBySearch =
+      const dimmedBySector = Boolean(this.filterSector && n.sector !== this.filterSector && n.id !== "commandCore");
+      const dimmedBySearch = Boolean(
         this.searchQuery &&
         !n.name.toLowerCase().includes(this.searchQuery) &&
         !n.description.toLowerCase().includes(this.searchQuery) &&
-        n.id !== "commandCore";
+        n.id !== "commandCore",
+      );
       const dimmed = dimmedBySector || dimmedBySearch;
-      const nextCost = rank < maxRank ? n.costs[rank] : n.costs[maxRank - 1];
-      const currSymbol = n.currency === "sparks" ? " SPK" : " ESS";
       const tag =
         n.id === "commandCore"
           ? "CORE"
           : rank >= maxRank
-            ? `MAX (${rank}/${maxRank})`
-            : `${rank}/${maxRank} - ${nextCost}${currSymbol}`;
+            ? "MAX"
+            : `${rank}/${maxRank}`;
       const face =
         n.icon === "keep"
           ? `<canvas width="32" height="32" data-icon="keep"></canvas>`
@@ -286,9 +295,11 @@ export class VoidTechTreeView {
         parent: n.parent,
         side: n.side,
         state: dimmed ? "locked" : state,
+        dimmed,
         face,
         hue: `hue-${n.hue}`,
         tag,
+        label: n.name,
       };
     });
 
@@ -303,7 +314,7 @@ export class VoidTechTreeView {
       requestAnimationFrame(() => this.graph.refit(true));
     }
 
-    this.circle.frame(performance.now(), this.reduceMotion());
+    this.circle.frame(performance.now(), this.reduceMotion(), this.graph.getClusterScreen());
     this.renderCard(wallet, inBattle, avail);
   }
 

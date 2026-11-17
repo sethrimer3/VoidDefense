@@ -221,6 +221,20 @@ try {
     await page.waitForTimeout(250);
     const nodeCount = await page.locator(".void-tech-graph button.ug-node").count();
     assert.ok(nodeCount >= 30, `Expected >=30 tech nodes rendered, got ${nodeCount}`);
+    await page.click("[data-tech-fit]");
+    await page.waitForTimeout(150);
+    const fitCheck = await page.evaluate(() => {
+      const g = document.querySelector(".void-tech-graph").getBoundingClientRect();
+      const out = [];
+      for (const el of document.querySelectorAll(".void-tech-graph button.ug-node")) {
+        const r = el.getBoundingClientRect();
+        if (r.left < g.left - 2 || r.top < g.top - 2 || r.right > g.right + 2 || r.bottom > g.bottom + 2) {
+          out.push({ id: el.dataset.node, left: Math.round(r.left - g.left), top: Math.round(r.top - g.top), right: Math.round(r.right - g.left), bottom: Math.round(r.bottom - g.top), gw: Math.round(g.width), gh: Math.round(g.height) });
+        }
+      }
+      return out;
+    });
+    assert.equal(fitCheck.length, 0, `Tech nodes out of canvas after Fit View (${vp.name}): ${JSON.stringify(fitCheck.slice(0, 5))}`);
     await page.screenshot({ path: path.join(OUT_DIR, `void-network-${vp.name}.png`) });
 
     // Open Resistance Operations tab
