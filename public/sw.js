@@ -16,7 +16,7 @@ async function precacheApp(cache) {
         queue.push(u);
       }
     }
-    while (queue.length > 0) {
+    while (queue.length > 0 && seen.size < 32) {
       const u = queue.shift();
       await cache.add(u).catch(() => {});
       if (!u.endsWith(".js") && !u.endsWith(".css")) continue;
@@ -73,13 +73,13 @@ self.addEventListener("fetch", (event) => {
   }
 
   event.respondWith(
-    caches.match(req).then(
+    caches.match(req.url, { ignoreSearch: true }).then(
       (cached) =>
         cached ||
         fetch(req).then((res) => {
           if (res.ok) {
             const copy = res.clone();
-            caches.open(CACHE).then((c) => c.put(req, copy));
+            caches.open(CACHE).then((c) => c.put(req.url, copy));
           }
           return res;
         }),
