@@ -32,6 +32,10 @@ export type GraphNode = {
   face: string;
   /** A short tag under it (a price, or a numeral). */
   tag?: string;
+  /** Full name shown in a hover/tap tooltip. */
+  label?: string;
+  /** Dimmed by a filter; excluded from Fit View bounds when any node is active. */
+  dimmed?: boolean;
   /** A path's colours (`hue-*` class), if any. */
   hue?: string;
   /** A choice down another branch: placed beside its parent and below,
@@ -117,6 +121,9 @@ export class UpgradeGraph {
   private drag: { id: string; pointer: number; x0: number; y0: number; moved: boolean; pan?: { x: number; y: number } } | null = null;
   private pinch = new Map<number, { x: number; y: number }>();
   private secondaryEdges: readonly [string, string][] = [];
+  private readonly tooltip: HTMLElement;
+  private hoveredId = "";
+  private clusterCenter = { x: 0, y: 0, r: 300 };
 
   constructor(
     host: HTMLElement,
@@ -130,15 +137,17 @@ export class UpgradeGraph {
   ) {
     this.el = host;
     host.classList.add("ug");
-    host.innerHTML = `<canvas class="ug-branches"></canvas><canvas class="ug-motes" aria-hidden="true"></canvas><div class="ug-view"><div class="ug-nodes"></div></div>`;
+    host.innerHTML = `<canvas class="ug-branches"></canvas><canvas class="ug-motes" aria-hidden="true"></canvas><div class="ug-view"><div class="ug-nodes"></div></div><div class="ug-tooltip" hidden></div>`;
     this.view = host.querySelector(".ug-view")!;
     this.canvas = host.querySelector("canvas")!;
     this.moteCanvas = host.querySelector(".ug-motes")!;
     this.layer = host.querySelector(".ug-nodes")!;
+    this.tooltip = host.querySelector(".ug-tooltip")!;
     host.addEventListener("pointerdown", this.down);
     host.addEventListener("pointermove", this.move);
     host.addEventListener("pointerup", this.up);
     host.addEventListener("pointercancel", this.up);
+    host.addEventListener("pointerleave", this.leave);
     host.addEventListener("wheel", this.wheel, { passive: false });
     this.raf = requestAnimationFrame(this.tick);
   }
@@ -150,6 +159,7 @@ export class UpgradeGraph {
     this.el.removeEventListener("pointermove", this.move);
     this.el.removeEventListener("pointerup", this.up);
     this.el.removeEventListener("pointercancel", this.up);
+    this.el.removeEventListener("pointerleave", this.leave);
     this.el.removeEventListener("wheel", this.wheel);
     this.el.innerHTML = "";
   }
@@ -165,6 +175,7 @@ export class UpgradeGraph {
    * growing them up as a tree. */
   set(nodes: GraphNode[], picked: string, web?: readonly { id: string; parent?: string }[]) {
     const homes = web ? webLayout(web) : layout(nodes), still = this.opts.reduceMotion();
+    const initial = this.bodies.size === 0;
     const live = new Set(nodes.map((n) => n.id));
     for (const [id, b] of this.bodies) {
       if (live.has(id) || b.dying >= 0) continue;
@@ -186,11 +197,12 @@ export class UpgradeGraph {
         el.className = "ug-node";
         el.dataset.node = n.id;
         this.layer.append(el);
-        b = { n, el, x: still || !from ? hx : from.x, y: still || !from ? hy : from.y, vx: 0, vy: 0, hx, hy, dying: -1, spin: 0 };
-        if (!still && from) el.classList.add("sprouting");
+        const placeDirect = still || initial || !from;
+        b = { n, el, x: placeDirect ? hx : from.x, y: placeDirect ? hy : from.y, vx: 0, vy: 0, hx, hy, dying: -1, spin: 0 };
+        if (!placeDirect) el.classList.add("sprouting");
         this.bodies.set(n.id, b);
       }
-      const changed = b.n.state !== n.state || b.n.face !== n.face || b.n.tag !== n.tag || !b.el.innerHTML;
+      const changed = b.n.state !== n.state || b.n.face !== n.face || b.n.tag !== n.tag || b.n.dimmed !== n.dimmed || !b.el.innerHTML;
       b.n = n;
       b.hx = hx;
       b.hy = hy;
@@ -198,7 +210,7 @@ export class UpgradeGraph {
         b.el.innerHTML = `${n.face}${n.tag ? `<small>${n.tag}</small>` : ""}`;
         this.opts.paint(b.el);
       }
-      b.el.className = `ug-node ${n.state}${n.hue ? ` ${n.hue}` : ""}${b.el.classList.contains("sprouting") ? " sprouting" : ""}`;
+      b.el.className = `ug-node ${n.state}${n.dimmed ? " dimmed" : ""}${n.hue ? ` ${n.hue}` : ""}${b.el.classList.contains("sprouting") ? " sprouting" : ""}`;
       b.el.setAttribute("aria-pressed", String(n.id === picked));
     }
     // What trails off, for anyone reading the page (tests among them).
@@ -213,21 +225,44 @@ export class UpgradeGraph {
   pick(id: string) {
     this.picked = id;
     for (const [nid, b] of this.bodies) b.el.classList.toggle("picked", nid === id);
+    this.updateTooltip();
   }
 
-  /** Fits the whole tree in view (eased unless `now`). */
+  /** Screen-space center and radius of the node cluster (for backdrops). */
+  getClusterScreen(): { x: number; y: number; r: number } {
+    return {
+      x: this.pan.x + this.clusterCenter.x * this.pan.s,
+      y: this.pan.y + this.clusterCenter.y * this.pan.s,
+      r: this.clusterCenter.r * this.pan.s,
+    };
+  }
+
+  /** Fits the visible tree in view (eased unless `now`). */
   refit(now = false) {
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    let hasActive = false;
+    for (const b of this.bodies.values()) {
+      if (b.dying < 0 && !b.n.dimmed) { hasActive = true; break; }
+    }
     for (const b of this.bodies.values()) {
       if (b.dying >= 0) continue;
-      // Room for the lines trailing off it too.
-      const r = b.n.hidden?.length || b.n.closed?.length ? TRAIL_FROM + TRAIL_MAX * 0.7 : 0;
-      x0 = Math.min(x0, b.hx - r); x1 = Math.max(x1, b.hx + r);
-      y0 = Math.min(y0, b.hy - r); y1 = Math.max(y1, b.hy + r);
+      if (hasActive && b.n.dimmed) continue;
+      // Room for the node box (44x44 + tag) and any trailing lines.
+      const trail = b.n.hidden?.length || b.n.closed?.length ? TRAIL_FROM + TRAIL_MAX * 0.7 : 0;
+      const rx = Math.max(26, trail);
+      const ryTop = Math.max(26, trail);
+      const ryBot = Math.max(36, trail);
+      x0 = Math.min(x0, b.hx - rx); x1 = Math.max(x1, b.hx + rx);
+      y0 = Math.min(y0, b.hy - ryTop); y1 = Math.max(y1, b.hy + ryBot);
     }
     if (x0 > x1) return;
+    this.clusterCenter = {
+      x: (x0 + x1) / 2,
+      y: (y0 + y1) / 2,
+      r: Math.max(120, Math.hypot(x1 - x0, y1 - y0) * 0.45),
+    };
     this.area = panArea(x0, y0, x1, y1);
-    const w = this.el.clientWidth || 300, h = this.el.clientHeight || 300, pad = 46;
+    const w = this.el.clientWidth || 300, h = this.el.clientHeight || 300, pad = 16;
     const s = Math.min(1.25, (w - pad * 2) / Math.max(1, x1 - x0), (h - pad * 2) / Math.max(1, y1 - y0));
     this.fit = { s, x: w / 2 - ((x0 + x1) / 2) * s, y: h / 2 - ((y0 + y1) / 2) * s };
     this.minS = s / ZOOM_OUT;
@@ -355,12 +390,15 @@ export class UpgradeGraph {
   private draw() {
     const { x: px, y: py, s } = this.pan;
     this.view.style.transform = `translate(${px}px, ${py}px) scale(${s})`;
+    this.view.style.setProperty("--ug-s", String(s));
+    this.el.classList.toggle("ug-hide-labels", s < 0.40);
     for (const b of this.bodies.values()) {
       const w = b.dying >= 0 ? Math.min(1, b.dying / WITHER) : 0;
       b.el.style.transform = `translate(${b.x}px, ${b.y}px) translate(-50%, -50%)${w ? ` rotate(${b.spin * w}deg) scale(${1 - 0.75 * w})` : ""}`;
     }
     this.paintBranches();
     this.paintMotes();
+    this.updateTooltip();
   }
 
   /** The motes over the branches: every live node a swirl, every branch a
@@ -438,12 +476,13 @@ export class UpgradeGraph {
       if (!a || !b || a.dying >= 0 || b.dying >= 0) continue;
       const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2 - 14;
       const bothOwned = a.n.state === "owned" && b.n.state === "owned";
-      layers[bothOwned ? 3 : 1].push({
+      layers[bothOwned ? 3 : 0].push({
         a: at(a.x, a.y),
         c: at(mx, my),
         b: at(b.x, b.y),
-        tone: bothOwned ? TONES.owned : TONES.next,
+        tone: bothOwned ? TONES.owned : TONES.locked,
         dash: bothOwned ? 2 : 4,
+        alpha: bothOwned ? 0.7 : 0.4,
       });
     }
     this.art.draw(layers.flat());
@@ -551,7 +590,16 @@ export class UpgradeGraph {
     }
     if (prev) this.pinch.set(e.pointerId, { x: e.clientX, y: e.clientY });
     const g = this.drag;
-    if (!g || g.pointer !== e.pointerId) return;
+    if (!g) {
+      const node = (e.target as Element).closest<HTMLElement>(".ug-node");
+      const hid = node?.dataset.node ?? "";
+      if (hid !== this.hoveredId) {
+        this.hoveredId = hid;
+        this.updateTooltip();
+      }
+      return;
+    }
+    if (g.pointer !== e.pointerId) return;
     if (!g.moved && Math.hypot(e.clientX - g.x0, e.clientY - g.y0) > 5) g.moved = true;
     if (!g.moved) return;
     if (g.pan) {
@@ -581,6 +629,33 @@ export class UpgradeGraph {
     if (e.type === "pointerup" && !g.moved && g.id) this.opts.onPick(g.id);
     if (this.opts.reduceMotion()) this.snap();
   };
+
+  private leave = () => {
+    if (this.hoveredId) {
+      this.hoveredId = "";
+      this.updateTooltip();
+    }
+  };
+
+  private updateTooltip() {
+    const id = this.hoveredId || (this.pan.s < 0.40 ? this.picked : "");
+    const b = id ? this.bodies.get(id) : undefined;
+    const text = b && b.dying < 0 ? (b.n.label ?? b.n.tag ?? "") : "";
+    if (!text) {
+      this.tooltip.hidden = true;
+      return;
+    }
+    this.tooltip.textContent = text;
+    this.tooltip.hidden = false;
+    const cw = this.el.clientWidth || 300;
+    const ch = this.el.clientHeight || 300;
+    const sx = this.pan.x + b!.x * this.pan.s;
+    const sy = this.pan.y + (b!.y - 26) * this.pan.s;
+    const tx = Math.max(60, Math.min(cw - 60, sx));
+    const ty = Math.max(24, Math.min(ch - 12, sy));
+    this.tooltip.style.left = `${tx}px`;
+    this.tooltip.style.top = `${ty}px`;
+  }
 
   private wheel = (e: WheelEvent) => {
     e.preventDefault();

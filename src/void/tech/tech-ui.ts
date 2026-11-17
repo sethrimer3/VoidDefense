@@ -23,7 +23,7 @@ class HoloGridBackdrop {
     this.pulse = 1;
   }
 
-  frame(now: number, reduced: boolean): void {
+  frame(now: number, reduced: boolean, center?: { x: number; y: number; r: number }): void {
     const w = this.host.clientWidth;
     const h = this.host.clientHeight;
     if (w <= 0 || h <= 0) return;
@@ -35,17 +35,19 @@ class HoloGridBackdrop {
     if (!c) return;
     c.clearRect(0, 0, w, h);
 
-    const cx = w * 0.5;
-    const cy = h * 0.5;
-    const maxR = Math.min(w, h) * 0.46;
+    const cx = center ? center.x : w * 0.5;
+    const cy = center ? center.y : h * 0.5;
+    const maxR = center
+      ? Math.min(Math.max(w, h) * 0.62, Math.max(100, center.r * 1.12))
+      : Math.min(w, h) * 0.44;
     const t = reduced ? 0 : now * 0.00035;
     this.pulse = Math.max(0, this.pulse - 0.03);
 
-    // Subtle polar telemetry rings
+    // Subtle secondary polar telemetry rings
     c.save();
     for (let i = 1; i <= 4; i++) {
       const r = (maxR * i) / 4;
-      c.strokeStyle = i === 4 ? "rgba(0, 229, 255, 0.14)" : "rgba(56, 82, 118, 0.22)";
+      c.strokeStyle = i === 4 ? "rgba(0, 229, 255, 0.07)" : "rgba(56, 82, 118, 0.11)";
       c.lineWidth = 1;
       c.beginPath();
       c.arc(cx, cy, r, 0, Math.PI * 2);
@@ -53,16 +55,16 @@ class HoloGridBackdrop {
     }
 
     // Rotating dashed outer arc
-    c.strokeStyle = `rgba(255, 148, 0, ${0.18 + this.pulse * 0.35})`;
-    c.lineWidth = 1.5;
-    c.setLineDash([10, 14]);
+    c.strokeStyle = `rgba(255, 148, 0, ${0.08 + this.pulse * 0.2})`;
+    c.lineWidth = 1;
+    c.setLineDash([8, 16]);
     c.beginPath();
     c.arc(cx, cy, maxR * 0.88, t, t + Math.PI * 1.4);
     c.stroke();
     c.setLineDash([]);
 
     // Orthogonal crosshair axes
-    c.strokeStyle = "rgba(0, 229, 255, 0.08)";
+    c.strokeStyle = "rgba(0, 229, 255, 0.045)";
     c.lineWidth = 1;
     c.beginPath();
     c.moveTo(cx - maxR, cy);
