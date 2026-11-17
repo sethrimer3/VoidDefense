@@ -1970,8 +1970,8 @@
 
 @media (max-width: 600px) {
   .void-board-stage {
-    align-items: flex-start;
-    padding-top: 4.9rem;
+    padding-top: 5.1rem;
+    padding-bottom: 8rem;
   }
   .void-dock-label {
     display: none;
@@ -2157,6 +2157,10 @@
   .void-board-stage {
     align-items: center;
     padding-top: 0;
+    padding-bottom: 0;
+  }
+  .void-hud-bar-wrap {
+    width: 100%;
   }
   .void-hud-top {
     position: absolute;
