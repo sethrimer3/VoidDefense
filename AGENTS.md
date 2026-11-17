@@ -42,7 +42,7 @@ The detailed module-by-module reference lives in `docs/architecture/`. Read only
 
 | File | Covers |
 |------|--------|
-| `docs/architecture/void-defense.md` | Void Defense (`src/void/`): metropolitan `VoidWorld`, perimeter-budget `VoidField`, structural collapse & matter deposition (`VoidPhysics`), 9 towers & 5 strikes (`VoidCombatManager`), `VoidSim`, global tech DAG (`VoidTechWallet`), Resistance Operations, `voiddefense.v1` saves |
+| `docs/architecture/void-defense.md` | Void Defense (`src/void/`): metropolitan `VoidWorld`, perimeter-budget `VoidField`, structural collapse & matter deposition (`VoidPhysics`), 16 towers & 6 strikes (`VoidCombatManager`), `VoidSim`, 63-node global tech DAG (`VoidTechWallet`), Resistance Operations, `voiddefense.v1` saves |
 | `docs/architecture/rendering.md` | Renderer passes, crisp zoom, 1:1 cell pixel rendering, organic noise-based contours (`portal-noise.ts`, `contour.ts`), ledge cross-sections, living interior wisps, magic circles, render performance |
 | `docs/architecture/shell-ui.md` | Startup, sole-game bootstrap (`boot.ts`), HUD and dialogs, settings, localization, sound, profile, saves (`voiddefense.v1`) |
 | `docs/architecture/commands.md` | Per-feature browser checks (`tests/*.mjs`), focused Node tests, benchmarks and tools |

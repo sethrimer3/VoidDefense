@@ -68,10 +68,10 @@ Tracks the ordered phases, acceptance gates, and measured browser benchmarks fro
 
 ## Browser QA & Performance Benchmark Results (`tests/void-defense.mjs`)
 
-- **Viewports Verified**: Desktop (`1280×800`), Mobile Portrait (`390×844`), and Mobile Landscape (`844×390`) — all 33 tech nodes, 8 sector thumbnails, Operations canvas, and Settings tab verified with screenshots saved to `test-results/`.
-- **Standard Sector (`tutorialBreach`, `192×256`, 686 buildings, 40 agents, 226 debris particles, 558 frontier edges)**:
-  - Simulation step: `p50 = 0.5 ms`, `p95 = 1.0 ms`
-  - Canvas render: `p50 = 2.5 ms`, `p95 = 39.4 ms`
-- **Large Sector (`organismEscalation`, `256×384`, 1,318 buildings, 40 agents, 629 debris particles, 1,170 frontier edges)**:
-  - Simulation step: `p50 = 1.9 ms`, `p95 = 2.2 ms`
-  - Canvas render: `p50 = 8.7 ms`, `p95 = 53.9 ms`
+- **Viewports Verified**: Desktop (`1280×800`), Mobile Portrait (`390×844`), and Mobile Landscape (`844×390`) — all 63 tech nodes, Resistance Map, Resistance Ops, and Settings verified with screenshots saved to `test-results/`.
+- **Standard Sector (`tutorialBreach`, `384×512`, 610 buildings, 40 agents, 737 debris particles, 600 frontier edges)**:
+  - Simulation step: `p50 = 2.0 ms`, `p95 = 3.4 ms`
+  - Canvas render: `p50 = 4.3 ms`, `p95 = 6.4 ms`
+- **Large Sector (`organismEscalation`, `512×768`, 1,053 buildings, 40 agents, 740 debris particles, 938 frontier edges)**:
+  - Simulation step: `p50 = 3.5 ms`, `p95 = 7.2 ms`
+  - Canvas render: `p50 = 6.1 ms`, `p95 = 10.6 ms`
