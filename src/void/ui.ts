@@ -2,7 +2,6 @@
  * Pointers, Profile Mode Picker, and Tab Navigation for Void Defense. */
 
 import { cleanName, defaultFlag, escapeText, flagSvg, randomPlayerName } from "../profile/model.ts";
-import { play } from "../sound.ts";
 import { VoidSoundEngine } from "./audio.ts";
 import type {
   PlayStyleMode,
@@ -351,7 +350,7 @@ export class VoidApp {
 
     this.root.querySelectorAll<HTMLButtonElement>("[data-void-tab]").forEach((btn) => {
       btn.onclick = () => {
-        play("stone");
+        this.soundEngine.playSfx("uiToggle");
         this.navigate(btn.dataset.voidTab as VoidTab);
       };
     });
@@ -359,7 +358,7 @@ export class VoidApp {
     const gearBtn = this.root.querySelector<HTMLButtonElement>("[data-open-settings]");
     if (gearBtn) {
       gearBtn.onclick = () => {
-        play("knock");
+        this.soundEngine.playSfx("uiToggle");
         this.openSettingsDialog();
       };
     }
@@ -618,7 +617,7 @@ export class VoidApp {
 
     if (this.activeTool.kind === "setReticle") {
       if (this.sim.setTowerFocus(this.activeTool.towerUid, fx, fy)) {
-        play("knock");
+        this.soundEngine.playSfx("uiClick");
       }
       this.activeTool = { kind: "none" };
       this.hoverPreview = null;
@@ -629,7 +628,7 @@ export class VoidApp {
     if (this.activeTool.kind === "drawBlueprint") {
       if (this.activeTool.points.length >= 2) {
         this.sim.combat.addWallBlueprint(this.sim.world, [...this.activeTool.points], false);
-        play("knock");
+        this.soundEngine.playSfx("uiClick");
       }
       this.activeTool = { kind: "none" };
       this.hoverPreview = null;
@@ -1205,19 +1204,19 @@ export class VoidApp {
     contBtn.hidden = !this.save.profile;
 
     contBtn.onclick = () => {
-      play("knock");
+      this.soundEngine.playSfx("uiClick");
       this.titleOpen = false;
       titleEl.hidden = true;
       this.maybeStartCoach();
     };
     newBtn.onclick = () => {
-      play("knock");
+      this.soundEngine.playSfx("uiClick");
       this.titleOpen = false;
       titleEl.hidden = true;
       this.openProfileDialog(!this.save.profile);
     };
     setBtn.onclick = () => {
-      play("knock");
+      this.soundEngine.playSfx("uiToggle");
       this.openSettingsDialog();
     };
   }

@@ -17,6 +17,7 @@ import { stream } from "../random.ts";
 
 export type VoidSfxCue =
   | "uiClick"
+  | "uiToggle"
   | "towerPlace"
   | "towerSell"
   | "towerUpgrade"
@@ -31,6 +32,7 @@ export type VoidSfxCue =
 
 const SFX_COOLDOWN_MS: Record<VoidSfxCue, number> = {
   uiClick: 35,
+  uiToggle: 35,
   towerPlace: 50,
   towerSell: 50,
   towerUpgrade: 60,
@@ -294,6 +296,9 @@ export class VoidSoundEngine {
     if (!this.active) {
       this.initGraph();
     }
+    if (this.ctx && this.ctx.state === "suspended") {
+      void this.ctx.resume();
+    }
     if (!this.ctx || !this.sfxGain || this.ctx.state !== "running") return;
 
     this.lastSfxAt.set(cue, nowMs);
@@ -332,6 +337,9 @@ export class VoidSoundEngine {
     switch (cue) {
       case "uiClick":
         tone("triangle", 820, 540, 0.055, 0.09);
+        break;
+      case "uiToggle":
+        tone("sine", 620, 460, 0.045, 0.07);
         break;
       case "towerPlace":
         tone("sine", 140, 62, 0.14, 0.22);
