@@ -71,7 +71,7 @@ export const VOID_BALANCE = {
 export const SUPPLIES_ECONOMY = {
   startingUnderSiege: 180,
   startingBuildAndWatch: 320,
-  passiveTricklePerSec: 3,
+  passiveTricklePerSec: 2,
   incomeTickInterval: 60, // every 2.0s (60 ticks)
   maxDevelopmentTier: 2.0, // up to 200% development for extra income
   combatSellRefundRate: 0.75,
@@ -83,7 +83,8 @@ export const SUPPLIES_ECONOMY = {
  * at least `minParticipationSeconds` elapsed OR `minWorkResisted` Void work absorbed
  * AND at least 1 structure/strike action or meaningful defense interaction. */
 export const SCORING_RULES = {
-  sparksThresholds: [0.0001, 0.5, 0.95] as const, // 1 Spark: >0%, 2 Sparks: >=50%, 3 Sparks: >=95%
+  minVictoryPreservedRatio: 0.35, // below 35% preserved is City Lost (0 Sparks)
+  sparksThresholds: [0.35, 0.55, 0.9] as const, // 1 Spark: >=35%, 2 Sparks: >=55%, 3 Sparks: >=90%
   minParticipationSeconds: 20,
   minWorkResisted: 350,
   essencePerWorkResisted: 0.015,

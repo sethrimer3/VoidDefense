@@ -51,8 +51,8 @@ export const TOWER_SPECS: Record<TowerTypeId, TowerSpec> = {
     w: pixels(3),
     h: pixels(3),
     maxHp: 180,
-    range: pixels(34),
-    cooldownSeconds: 1.8,
+    range: pixels(38),
+    cooldownSeconds: 1.4,
     color: "#f28d35",
   },
   repairDepot: {

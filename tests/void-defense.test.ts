@@ -561,3 +561,61 @@ test("13. Save coachDone, audio volume settings, and in-run tower upgrade sink",
   assert.equal(sim.upgradePrice(tower.uid), 0, "Max level 3 has no further upgrade cost");
   assert.equal(sim.upgradeTower(tower.uid), false);
 });
+
+test("14. Sector 01 balance: idle loses, coach run wins >=1 Spark, greedy spend < 3000 unspent", () => {
+  const s1 = SCENARIOS.find((s) => s.id === "tutorialBreach")!;
+
+  // 14a. Idle run (0 towers placed) must end as City Lost with 0 Sparks
+  const idle = new VoidSim(s1, "underSiege", emptyTechWallet());
+  idle.startBattle();
+  for (let i = 0; i < 30 * 180 && idle.phase === "battle"; i++) idle.stepOneTick();
+  assert.equal(idle.phase, "lost");
+  assert.equal(idle.outcome?.status, "lost");
+  assert.equal(idle.outcome?.sparksAwarded, 0);
+  assert.ok((idle.outcome?.preservedRatio ?? 1) < 0.35, "Idle run must fall below 35% preserved");
+
+  // 14b. Scripted coach run (1 Matter Cannon, 1 Repair Depot, 1 Solar Anchor) earns >= 1 Spark
+  const coach = new VoidSim(s1, "underSiege", emptyTechWallet());
+  coach.startBattle();
+  assert.ok(coach.placeTower("matterCannon", Math.floor(s1.worldW * 0.5), Math.floor(s1.worldH * 0.44)));
+  assert.ok(coach.placeTower("repairDepot", Math.floor(s1.worldW * 0.44), Math.floor(s1.worldH * 0.46)));
+  assert.ok(coach.castStrike("landfall", Math.floor(s1.worldW * 0.5), Math.floor(s1.worldH * 0.33)));
+  for (let i = 0; i < 30 * 180 && coach.phase === "battle"; i++) coach.stepOneTick();
+  assert.equal(coach.phase, "won");
+  assert.ok((coach.outcome?.sparksAwarded ?? 0) >= 1, "Coach run must earn at least 1 Spark");
+
+  // 14c. Greedy-spend run ends with under 3,000 unspent Supplies
+  const greedy = new VoidSim(s1, "underSiege", emptyTechWallet());
+  greedy.startBattle();
+  const spots: [number, number][] = [
+    [0.5, 0.44],
+    [0.42, 0.44],
+    [0.58, 0.44],
+    [0.35, 0.4],
+    [0.65, 0.4],
+    [0.5, 0.5],
+    [0.4, 0.5],
+    [0.6, 0.5],
+    [0.3, 0.34],
+    [0.7, 0.34],
+  ];
+  let spotIdx = 0;
+  for (let i = 0; i < 30 * 180 && greedy.phase === "battle"; i++) {
+    if (i % 30 === 0) {
+      if (spotIdx < spots.length && greedy.supplies >= 60) {
+        const [fx, fy] = spots[spotIdx];
+        const kind = spotIdx % 3 === 1 ? "repairDepot" : "matterCannon";
+        if (greedy.placeTower(kind, Math.floor(s1.worldW * fx), Math.floor(s1.worldH * fy))) {
+          spotIdx++;
+        }
+      }
+      for (const t of greedy.combat.towers) {
+        const up = greedy.upgradePrice(t.uid);
+        if (up > 0 && greedy.supplies >= up) greedy.upgradeTower(t.uid);
+      }
+    }
+    greedy.stepOneTick();
+  }
+  assert.equal(greedy.phase, "won");
+  assert.ok(greedy.supplies < 3000, `Expected < 3000 unspent Supplies, got ${greedy.supplies}`);
+});

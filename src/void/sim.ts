@@ -2,7 +2,7 @@
  * Coordinates `VoidWorld`, `VoidPhysics`, `VoidField`, `VoidCombatManager`,
  * Supplies economy, and mode rules (`underSiege` vs `buildAndWatch`). */
 
-import { SUPPLIES_ECONOMY, TICK_DT } from "./config.ts";
+import { SCORING_RULES, SUPPLIES_ECONOMY, TICK_DT } from "./config.ts";
 import { getScenario } from "./maps.ts";
 import type {
   PlacedTower,
@@ -227,7 +227,7 @@ export class VoidSim {
 
     // 1. Periodic Supplies income from surviving & developed civilian buildings (Under Siege mode only)
     if (this.mode === "underSiege" && this.tick % SUPPLIES_ECONOMY.incomeTickInterval === 0) {
-      const inc = computeCityIncomePerCycle(this.world, this.tech);
+      const inc = computeCityIncomePerCycle(this.world, this.tech, this.elapsedSeconds);
       this.supplies += inc;
       this.sfxEvents.lastIncomeAmount = inc;
     }
@@ -322,7 +322,12 @@ export class VoidSim {
     if (statusReason === "cityConsumedDefeat") {
       this.finishRun("lost", statusReason);
     } else if (statusReason === "reservoirDepletedVictory" || statusReason === "voidEradicatedVictory") {
-      this.finishRun("won", statusReason);
+      const { preservedRatio } = this.world.computePreservedBaseline();
+      if (this.scenario.id !== "endless" && preservedRatio < SCORING_RULES.minVictoryPreservedRatio) {
+        this.finishRun("lost", "cityConsumedDefeat");
+      } else {
+        this.finishRun("won", statusReason);
+      }
     }
   }
 
