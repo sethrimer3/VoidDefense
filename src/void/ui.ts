@@ -4,6 +4,7 @@
 import { cleanName, defaultFlag, escapeText, flagSvg, randomPlayerName } from "../profile/model.ts";
 import { getLanguage, LANGUAGES, setLanguage, t, t as tr, translateWithin } from "../i18n/index.ts";
 import { VoidSoundEngine } from "./audio.ts";
+import { VoidMusicEngine } from "./music.ts";
 import type {
   PlayStyleMode,
   RunOutcome,
@@ -151,6 +152,7 @@ export class VoidApp {
   private opsView!: ResistanceOperationsView;
   private mapView: ResistanceMapView | null = null;
   private soundEngine = new VoidSoundEngine();
+  private musicEngine = new VoidMusicEngine();
 
   private selectedTowerUid: number | null = null;
   private selectedBuildingId: number | null = null;
@@ -200,6 +202,10 @@ export class VoidApp {
       this.save.settings.masterVolume / 100,
       this.save.settings.sfxVolume / 100,
       this.save.settings.ambienceVolume / 100,
+    );
+    this.musicEngine.setVolumes(
+      this.save.settings.masterVolume / 100,
+      this.save.settings.musicVolume / 100,
     );
   }
 
@@ -1422,6 +1428,7 @@ export class VoidApp {
           <label class="void-slider-row"><span>${t("void.settings.master")}</span><input type="range" min="0" max="100" step="5" value="${this.save.settings.masterVolume}" data-set-vol-master /></label>
           <label class="void-slider-row"><span>${t("void.settings.sfx")}</span><input type="range" min="0" max="100" step="5" value="${this.save.settings.sfxVolume}" data-set-vol-sfx /></label>
           <label class="void-slider-row"><span>${t("void.settings.ambience")}</span><input type="range" min="0" max="100" step="5" value="${this.save.settings.ambienceVolume}" data-set-vol-amb /></label>
+          <label class="void-slider-row"><span>${t("void.settings.music")}</span><input type="range" min="0" max="100" step="5" value="${this.save.settings.musicVolume}" data-set-vol-music /></label>
           <label><input type="checkbox" data-set-mag ${this.save.settings.magnifier ? "checked" : ""} /> ${t("void.settings.magnifier")}</label>
           <label><input type="checkbox" data-set-motion ${this.save.settings.reduceMotion ? "checked" : ""} /> ${t("void.settings.motion")}</label>
           <label><input type="checkbox" data-set-pfont ${this.save.settings.pixelFont ? "checked" : ""} /> ${t("void.settings.pixelFont")}</label>
@@ -1470,6 +1477,11 @@ export class VoidApp {
     };
     dlg.querySelector<HTMLInputElement>("[data-set-vol-amb]")!.oninput = (e) => {
       this.save.settings.ambienceVolume = Number((e.target as HTMLInputElement).value);
+      this.syncAudioVolumes();
+      this.persist();
+    };
+    dlg.querySelector<HTMLInputElement>("[data-set-vol-music]")!.oninput = (e) => {
+      this.save.settings.musicVolume = Number((e.target as HTMLInputElement).value);
       this.syncAudioVolumes();
       this.persist();
     };
@@ -1584,6 +1596,7 @@ export class VoidApp {
         this.lastSoundInBattle = false;
         this.soundEngine.update(100, 0, false);
       }
+      this.musicEngine.update("title", 0, nowMs);
       return;
     }
 
@@ -1597,6 +1610,7 @@ export class VoidApp {
       const hudTick = Math.floor(this.sim.tick / 15) !== Math.floor(prevTick / 15);
       if (!hadOutcome && this.sim.outcome) {
         this.soundEngine.playSfx(this.sim.outcome.status === "won" ? "victory" : "defeat");
+        this.musicEngine.triggerOutcome(this.sim.outcome.status);
         this.renderer.triggerOutcomeFlash(this.sim.outcome.status === "won");
         this.persist();
         this.refreshHUD();
@@ -1634,20 +1648,23 @@ export class VoidApp {
       );
 
       const inBattle = this.sim.phase === "battle" && !this.sim.outcome && !this.sim.paused;
+      const contacts = this.sim.voidField.totalContactEdges();
       if (hudTick || inBattle !== this.lastSoundInBattle) {
         this.lastSoundInBattle = inBattle;
         this.soundEngine.update(
           this.lastPreservedPercent,
-          this.sim.voidField.totalContactEdges(),
+          contacts,
           inBattle,
           this.sim.physics.activeFallingChunkCount(),
         );
       }
+      this.musicEngine.update(this.sim.outcome ? "outcome" : inBattle ? "battle" : "title", contacts, nowMs);
     } else {
       if (this.lastSoundInBattle) {
         this.lastSoundInBattle = false;
         this.soundEngine.update(100, 0, false);
       }
+      this.musicEngine.update("title", 0, nowMs);
       if (!document.hidden && this.tab === "network") {
         this.techView.frame(nowMs);
       } else if (!document.hidden && this.tab === "operations") {

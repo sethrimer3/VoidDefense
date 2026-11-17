@@ -82,6 +82,7 @@ export const SETTINGS = {
   masterVolume: { kind: "range", default: 80, min: 0, max: 100, step: 5 },
   sfxVolume: { kind: "range", default: 85, min: 0, max: 100, step: 5 },
   ambienceVolume: { kind: "range", default: 65, min: 0, max: 100, step: 5 },
+  musicVolume: { kind: "range", default: 50, min: 0, max: 100, step: 5 },
   /** Retained visual preference for procedural cloth, glazing and sampling.
    * The checkbox no longer enables any PNG sprite replacements. */
   pixelArt: { kind: "toggle", default: true, page: { id: "pixel-art", label: "Pixel Art" } },

@@ -32,6 +32,7 @@ Constructed via clean DOM template strings in `src/void/ui.ts` and styled in `sr
 
 - **Sound Catalogs (`src/sound-files.ts`):** Lists pre-recorded audio beds and one-shots stored in `public/assets/sounds/` with seamless loop crossfades.
 - **Void Audio Engine (`src/void/audio.ts`):** Procedural Web Audio synthesizer generating atmospheric cosmic drone soundscapes, Brownian noise buffers seeded deterministically via `stream("effects")` from `src/random.ts`, and rate-limited, voice-capped sci-fi SFX cues (`uiClick`, `uiToggle`, `towerPlace`, `towerSell`, `towerUpgrade`, `cannonFire`, `shellImpact`, `collapse`, `voidConsume`, `unitDeath`, `strikeCast`, `victory`, `defeat`) with Master/SFX/Ambience volume scaling.
+- **Void Music Engine (`src/void/music.ts`):** Procedural low-CPU Web Audio ambient score that crossfades between a calm title/inter-run pad, a contact-driven battle tension layer, and victory/defeat resolves, controlled by `settings.musicVolume` (default `50`).
 
 ## Player Profile & Call-Sign
 

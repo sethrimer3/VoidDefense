@@ -536,15 +536,18 @@ test("12. Fine pixels erode independently while preserving the fixed-point energ
 
 test("13. Save coachDone, audio volume settings, and in-run tower upgrade sink", () => {
   const save = defaultVoidSave();
+  assert.equal(save.settings.musicVolume, 50);
   save.coachDone = true;
   save.settings.masterVolume = 60;
   save.settings.sfxVolume = 75;
   save.settings.ambienceVolume = 40;
+  save.settings.musicVolume = 35;
   const restored = decodeVoidSave(JSON.stringify(save));
   assert.equal(restored.coachDone, true);
   assert.equal(restored.settings.masterVolume, 60);
   assert.equal(restored.settings.sfxVolume, 75);
   assert.equal(restored.settings.ambienceVolume, 40);
+  assert.equal(restored.settings.musicVolume, 35);
 
   const sim = new VoidSim("tutorialBreach", "underSiege", emptyTechWallet());
   sim.supplies = 500;

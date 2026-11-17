@@ -96,6 +96,7 @@ export const VOID_TEXT = [
   ["void.settings.master", "Master Volume", "Volumen Maestro", "Volume Principal", "Gesamtlautstärke", "Volume Principal", "Volume Principale", "マスター音量", "마스터 볼륨", "主音量"],
   ["void.settings.sfx", "SFX Volume", "Volumen SFX", "Volume SFX", "SFX-Lautstärke", "Volume SFX", "Volume SFX", "効果音音量", "효과음 볼륨", "音效音量"],
   ["void.settings.ambience", "Ambience Volume", "Volumen Ambiente", "Volume Ambiance", "Umgebungslautstärke", "Volume Ambiente", "Volume Ambiente", "環境音音量", "배경음 볼륨", "环境音量"],
+  ["void.settings.music", "Music Volume", "Volumen Música", "Volume Musique", "Musiklautstärke", "Volume Música", "Volume Musica", "音楽音量", "음악 볼륨", "音乐音量"],
   ["void.settings.magnifier", "Precision Placement Magnifier", "Lupa de Colocación", "Loupe de Placement", "Platzierungslupe", "Lupa de Posicionamento", "Lente di Precisione", "精密配置ルーペ", "정밀 배치 돋보기", "精密放置放大镜"],
   ["void.settings.motion", "Reduce Motion & Ambient Flicker", "Reducir Movimiento", "Réduire les Animations", "Bewegung Reduzieren", "Reduzir Movimento", "Riduci Movimento", "モーション低減", "모션 줄이기", "减弱动态效果"],
   ["void.settings.pixelFont", "Custom Pixel Font (Alembic)", "Fuente Píxel (Alembic)", "Police Pixel (Alembic)", "Pixelschrift (Alembic)", "Fonte Pixel (Alembic)", "Font Pixel (Alembic)", "ピクセルフォント", "픽셀 글꼴 (Alembic)", "像素字体 (Alembic)"],
