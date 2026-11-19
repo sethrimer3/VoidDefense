@@ -30,14 +30,16 @@ function loop(now: number): void {
 
 export function startVoidGame(): void {
   fitViewport();
-  soundEnabledBy(() => !save.settings.soundOff);
   const root = document.querySelector<HTMLDivElement>("#app")!;
   cancelAnimationFrame(rafId);
   app = new VoidApp(root, save, store);
+  soundEnabledBy(() => !save.settings.soundOff && !app?.isMutedByFocus());
 
-  document.addEventListener("visibilitychange", () => app?.resetClockOnVisibility());
-  window.addEventListener("pagehide", () => app?.resetClockOnVisibility());
-  window.addEventListener("pageshow", () => app?.resetClockOnVisibility());
+  document.addEventListener("visibilitychange", () => app?.handleFocusChange());
+  window.addEventListener("blur", () => app?.handleFocusChange(false));
+  window.addEventListener("focus", () => app?.handleFocusChange(true));
+  window.addEventListener("pagehide", () => app?.handleFocusChange(false));
+  window.addEventListener("pageshow", () => app?.handleFocusChange());
 
   rafId = requestAnimationFrame(loop);
 }

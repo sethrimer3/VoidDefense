@@ -91,7 +91,11 @@ export const VOID_TEXT = [
 
   // Settings & Profile dialogs
   ["void.settings.title", "Command Settings", "Ajustes de Comando", "Paramètres", "Befehlseinstellungen", "Configurações", "Impostazioni", "コマンド設定", "명령 설정", "指挥设置"],
+  ["void.settings.gameplay", "Gameplay", "Jugabilidad", "Jouabilité", "Spiel", "Jogabilidade", "Gioco", "ゲームプレイ", "게임플레이", "游戏玩法"],
+  ["void.settings.audio", "Audio", "Audio", "Audio", "Audio", "Som", "Audio", "オーディオ", "오디오", "音频"],
+  ["void.settings.display", "Display", "Pantalla", "Affichage", "Anzeige", "Exibição", "Schermo", "表示", "화면", "显示"],
   ["void.settings.language", "Language", "Idioma", "Langue", "Sprache", "Idioma", "Lingua", "言語", "언어", "语言"],
+  ["void.settings.pauseOnBlur", "Pause & Mute When Unfocused", "Pausar y Silenciar sin Foco", "Pause et Muet Hors Focus", "Pause & Stumm ohne Fokus", "Pausar e Silenciar sem Foco", "Pausa e Muto Fuori Fuoco", "非アクティブ時に一時停止・消音", "비활성 시 일시정지 및 음소거", "失去焦点时暂停并静音"],
   ["void.settings.sound", "Audio & Sound Effects", "Audio y Efectos", "Audio et Effets", "Audio & Effekte", "Som e Efeitos", "Audio ed Effetti", "オーディオと効果音", "오디오 및 효과음", "音频与音效"],
   ["void.settings.master", "Master Volume", "Volumen Maestro", "Volume Principal", "Gesamtlautstärke", "Volume Principal", "Volume Principale", "マスター音量", "마스터 볼륨", "主音量"],
   ["void.settings.sfx", "SFX Volume", "Volumen SFX", "Volume SFX", "SFX-Lautstärke", "Volume SFX", "Volume SFX", "効果音音量", "효과음 볼륨", "音效音量"],

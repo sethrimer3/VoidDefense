@@ -37,7 +37,7 @@ export class VoidMusicEngine {
   }
 
   update(phase: MusicPhase, contactEdges: number, nowMs = performance.now()): void {
-    if (!soundOn() || document.hidden || this.volMaster <= 0 || this.volMusic <= 0) {
+    if (!soundOn() || this.volMaster <= 0 || this.volMusic <= 0) {
       if (this.ctx && this.masterGain) {
         this.masterGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.15);
       }
@@ -76,7 +76,7 @@ export class VoidMusicEngine {
   }
 
   triggerOutcome(status: "won" | "lost"): void {
-    if (!soundOn() || document.hidden || this.volMaster <= 0 || this.volMusic <= 0) return;
+    if (!soundOn() || this.volMaster <= 0 || this.volMusic <= 0) return;
     if (this.lastOutcome === status) return;
     this.lastOutcome = status;
     if (!this.active) this.initGraph();

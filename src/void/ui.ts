@@ -3,6 +3,7 @@
 
 import { cleanName, defaultFlag, escapeText, flagSvg, randomPlayerName } from "../profile/model.ts";
 import { getLanguage, LANGUAGES, setLanguage, t, t as tr, translateWithin } from "../i18n/index.ts";
+import { soundOn, syncAudioFocus } from "../sound.ts";
 import { VoidSoundEngine } from "./audio.ts";
 import { VoidMusicEngine } from "./music.ts";
 import type {
@@ -153,6 +154,10 @@ export class VoidApp {
   private mapView: ResistanceMapView | null = null;
   private soundEngine = new VoidSoundEngine();
   private musicEngine = new VoidMusicEngine();
+  private windowFocused =
+    typeof document !== "undefined" && typeof document.hasFocus === "function"
+      ? document.hasFocus()
+      : true;
 
   private selectedTowerUid: number | null = null;
   private selectedBuildingId: number | null = null;
@@ -1418,32 +1423,46 @@ export class VoidApp {
           <span class="void-emblem" aria-hidden="true"></span>
           <h2>${t("void.settings.title")}</h2>
         </div>
-        <div class="void-settings-row">
-          <label class="void-select-row"><span>${t("void.settings.language")}</span>
-            <select data-set-lang>
-              ${LANGUAGES.map((l) => `<option value="${l.code}" ${this.save.settings.language === l.code ? "selected" : ""}>${l.name}</option>`).join("")}
-            </select>
-          </label>
-          <label><input type="checkbox" data-set-sound ${!this.save.settings.soundOff ? "checked" : ""} /> ${t("void.settings.sound")}</label>
-          <label class="void-slider-row"><span>${t("void.settings.master")}</span><input type="range" min="0" max="100" step="5" value="${this.save.settings.masterVolume}" data-set-vol-master /></label>
-          <label class="void-slider-row"><span>${t("void.settings.sfx")}</span><input type="range" min="0" max="100" step="5" value="${this.save.settings.sfxVolume}" data-set-vol-sfx /></label>
-          <label class="void-slider-row"><span>${t("void.settings.ambience")}</span><input type="range" min="0" max="100" step="5" value="${this.save.settings.ambienceVolume}" data-set-vol-amb /></label>
-          <label class="void-slider-row"><span>${t("void.settings.music")}</span><input type="range" min="0" max="100" step="5" value="${this.save.settings.musicVolume}" data-set-vol-music /></label>
-          <label><input type="checkbox" data-set-mag ${this.save.settings.magnifier ? "checked" : ""} /> ${t("void.settings.magnifier")}</label>
-          <label><input type="checkbox" data-set-motion ${this.save.settings.reduceMotion ? "checked" : ""} /> ${t("void.settings.motion")}</label>
-          <label><input type="checkbox" data-set-pfont ${this.save.settings.pixelFont ? "checked" : ""} /> ${t("void.settings.pixelFont")}</label>
-          <label class="void-select-row"><span>${t("void.settings.bheight")}</span>
-            <select data-set-bheight>
-              <option value="full" ${this.save.settings.buildingHeight === "full" ? "selected" : ""}>Full (1 px / 2 floors)</option>
-              <option value="low" ${this.save.settings.buildingHeight === "low" ? "selected" : ""}>Low (Half Height)</option>
-              <option value="flat" ${this.save.settings.buildingHeight === "flat" ? "selected" : ""}>Flat (Top-Down)</option>
-            </select>
-          </label>
-          ${
-            showDev
-              ? `<label><input type="checkbox" data-set-dev ${this.save.settings.devMode ? "checked" : ""} /> Developer Mode (Unlock All &amp; Unlimited Supplies)</label>`
-              : ""
-          }
+        <div class="void-settings-panel">
+          <h3>${t("void.settings.gameplay")}</h3>
+          <div class="void-settings-row">
+            <label><input type="checkbox" data-set-pause-blur ${this.save.settings.pauseOnBlur ? "checked" : ""} /> ${t("void.settings.pauseOnBlur")}</label>
+            <label><input type="checkbox" data-set-mag ${this.save.settings.magnifier ? "checked" : ""} /> ${t("void.settings.magnifier")}</label>
+          </div>
+        </div>
+        <div class="void-settings-panel">
+          <h3>${t("void.settings.audio")}</h3>
+          <div class="void-settings-row">
+            <label><input type="checkbox" data-set-sound ${!this.save.settings.soundOff ? "checked" : ""} /> ${t("void.settings.sound")}</label>
+            <label class="void-slider-row"><span>${t("void.settings.master")}</span><input type="range" min="0" max="100" step="5" value="${this.save.settings.masterVolume}" data-set-vol-master /></label>
+            <label class="void-slider-row"><span>${t("void.settings.sfx")}</span><input type="range" min="0" max="100" step="5" value="${this.save.settings.sfxVolume}" data-set-vol-sfx /></label>
+            <label class="void-slider-row"><span>${t("void.settings.ambience")}</span><input type="range" min="0" max="100" step="5" value="${this.save.settings.ambienceVolume}" data-set-vol-amb /></label>
+            <label class="void-slider-row"><span>${t("void.settings.music")}</span><input type="range" min="0" max="100" step="5" value="${this.save.settings.musicVolume}" data-set-vol-music /></label>
+          </div>
+        </div>
+        <div class="void-settings-panel">
+          <h3>${t("void.settings.display")}</h3>
+          <div class="void-settings-row">
+            <label class="void-select-row"><span>${t("void.settings.language")}</span>
+              <select data-set-lang>
+                ${LANGUAGES.map((l) => `<option value="${l.code}" ${this.save.settings.language === l.code ? "selected" : ""}>${l.name}</option>`).join("")}
+              </select>
+            </label>
+            <label><input type="checkbox" data-set-motion ${this.save.settings.reduceMotion ? "checked" : ""} /> ${t("void.settings.motion")}</label>
+            <label><input type="checkbox" data-set-pfont ${this.save.settings.pixelFont ? "checked" : ""} /> ${t("void.settings.pixelFont")}</label>
+            <label class="void-select-row"><span>${t("void.settings.bheight")}</span>
+              <select data-set-bheight>
+                <option value="full" ${this.save.settings.buildingHeight === "full" ? "selected" : ""}>Full (1 px / 2 floors)</option>
+                <option value="low" ${this.save.settings.buildingHeight === "low" ? "selected" : ""}>Low (Half Height)</option>
+                <option value="flat" ${this.save.settings.buildingHeight === "flat" ? "selected" : ""}>Flat (Top-Down)</option>
+              </select>
+            </label>
+            ${
+              showDev
+                ? `<label><input type="checkbox" data-set-dev ${this.save.settings.devMode ? "checked" : ""} /> Developer Mode (Unlock All &amp; Unlimited Supplies)</label>`
+                : ""
+            }
+          </div>
         </div>
         <div class="void-dialog-actions">
           <button type="button" class="primary-btn" data-set-close>${t("void.settings.done")}</button>
@@ -1463,6 +1482,11 @@ export class VoidApp {
 
     dlg.querySelector<HTMLInputElement>("[data-set-sound]")!.onchange = (e) => {
       this.save.settings.soundOff = !(e.target as HTMLInputElement).checked;
+      syncAudioFocus(!soundOn());
+      this.persist();
+    };
+    dlg.querySelector<HTMLInputElement>("[data-set-pause-blur]")!.onchange = (e) => {
+      this.save.settings.pauseOnBlur = (e.target as HTMLInputElement).checked;
       this.persist();
     };
     dlg.querySelector<HTMLInputElement>("[data-set-vol-master]")!.oninput = (e) => {
@@ -1675,9 +1699,51 @@ export class VoidApp {
     }
   }
 
+  /** Whether the tab is hidden or the browser window has lost focus. */
+  isUnfocused(): boolean {
+    const hidden = typeof document !== "undefined" && document.hidden;
+    return hidden || !this.windowFocused;
+  }
+
+  /** Whether audio should currently be muted due to losing tab/window focus. */
+  isMutedByFocus(): boolean {
+    return this.save.settings.pauseOnBlur && this.isUnfocused();
+  }
+
+  /** Pauses active battle and mutes audio on tab/window focus loss when enabled, and resets the frame clock. */
+  handleFocusChange(windowFocused?: boolean): void {
+    if (typeof windowFocused === "boolean") {
+      this.windowFocused = windowFocused;
+    } else if (typeof document !== "undefined" && typeof document.hasFocus === "function") {
+      this.windowFocused = document.hasFocus();
+    }
+    const unfocused = this.isUnfocused();
+    this.lastFrameMs = 0;
+
+    if (unfocused && this.save.settings.pauseOnBlur) {
+      let hudDirty = false;
+      if (!this.titleOpen && this.sim.phase === "battle" && !this.sim.outcome && !this.sim.paused) {
+        this.sim.paused = true;
+        hudDirty = true;
+      }
+      this.lastSoundInBattle = false;
+      this.soundEngine.update(100, 0, false);
+      this.musicEngine.update("title", 0);
+      syncAudioFocus(true);
+      if (hudDirty) this.refreshHUD();
+      this.persist();
+    } else {
+      syncAudioFocus(!soundOn());
+      if (unfocused) {
+        this.persist();
+      } else {
+        this.syncAudioVolumes();
+      }
+    }
+  }
+
   /** Resets frame accumulator on visibility change / pagehide so zero offline progress ever occurs. */
   resetClockOnVisibility(): void {
-    this.lastFrameMs = 0;
-    this.persist();
+    this.handleFocusChange();
   }
 }

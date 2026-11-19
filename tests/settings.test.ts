@@ -72,3 +72,10 @@ test("dragged items ride above the finger by default only on touch screens", () 
     (globalThis as any).matchMedia = was;
   }
 });
+
+test("pauseOnBlur defaults to true and round-trips through decodeSettings", () => {
+  assert.equal(defaultSettings().pauseOnBlur, true);
+  assert.equal(decoded({}).pauseOnBlur, true);
+  assert.equal(decoded({ pauseOnBlur: false }).pauseOnBlur, false);
+  assert.equal(decoded({ pauseOnBlur: true }).pauseOnBlur, true);
+});

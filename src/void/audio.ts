@@ -82,7 +82,7 @@ export class VoidSoundEngine {
 
   /** Starts or updates the continuous synthesized cosmic void soundscape. */
   update(cityPreservedPct: number, contactEdges: number, inBattle: boolean, fallingChunks = 0): void {
-    if (!soundOn() || document.hidden || !inBattle) {
+    if (!soundOn() || !inBattle) {
       this.fadeQuiet();
       return;
     }
@@ -287,7 +287,7 @@ export class VoidSoundEngine {
 
   /** Plays a rate-limited, voice-capped procedural sci-fi sound effect. */
   playSfx(cue: VoidSfxCue, intensity = 1): void {
-    if (!soundOn() || document.hidden) return;
+    if (!soundOn()) return;
     const nowMs = performance.now();
     const prev = this.lastSfxAt.get(cue) ?? 0;
     if (nowMs - prev < SFX_COOLDOWN_MS[cue]) return;

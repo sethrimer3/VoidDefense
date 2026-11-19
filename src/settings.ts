@@ -61,6 +61,8 @@ export const SETTINGS = {
   /** While dragging on the Defend board (placing, aiming), a box above the
    * finger shows the board zoomed in round where the item would go. */
   magnifier: { kind: "toggle", default: false, page: { id: "magnifier", label: "Magnifying glass while placing" } },
+  /** Pause active battle and mute audio when the browser tab or window loses focus. */
+  pauseOnBlur: { kind: "toggle", default: true, page: { id: "pause-on-blur", label: "Pause & mute when unfocused" } },
   /** In battle, the rally flag takes a triple tap rather than a double, for
    * players who plant it by accident. */
   tripleTapFlag: { kind: "toggle", default: false, page: { id: "triple-tap-flag", label: "Triple tap to place the rally flag" } },

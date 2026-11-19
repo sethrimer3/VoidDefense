@@ -25,6 +25,18 @@ export function soundEnabledBy(isOn: () => boolean) {
 /** Whether sound is on now. */
 export const soundOn = () => enabled();
 
+/** Mutes/suspends or resumes the shared Web Audio context on focus changes. */
+export function syncAudioFocus(muted: boolean): void {
+  if (!ctx || !out) return;
+  if (muted) {
+    out.gain.setTargetAtTime(0, ctx.currentTime, 0.02);
+    if (ctx.state === "running") void ctx.suspend();
+  } else {
+    if (ctx.state === "suspended" && enabled()) void ctx.resume();
+    out.gain.setTargetAtTime(0.55, ctx.currentTime, 0.02);
+  }
+}
+
 /** The shared audio graph once the player has pressed something and sound is on; null until then. */
 export function audioGraph(): { ctx: AudioContext; out: GainNode; hall: GainNode } | null {
   if (!pressed || !enabled()) return null;
