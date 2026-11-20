@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { VOID_CONTEST_COSTS } from "../src/void/config.ts";
+import { VOID_CONTEST_COSTS, contestHoldTicksForDifficulty } from "../src/void/config.ts";
 import { floorsToElevation } from "../src/void/elevation.ts";
-import { getScenario } from "../src/void/maps.ts";
+import { SCENARIOS, getScenario } from "../src/void/maps.ts";
 import { CellMaterial, LandCover } from "../src/void/model.ts";
 import { VoidPhysics } from "../src/void/physics.ts";
 import { VoidSim } from "../src/void/sim.ts";
@@ -132,16 +132,56 @@ test("Contested Void: Void removal leaves empty space (never land/buildings) cos
   assert.equal(field.spendVoidPowerOnCell(world, physics, idx, 1), false);
   assert.equal(world.material[idx], CellMaterial.EMPTY);
 
-  // Advance 0.2s (6 ticks at 30 Hz) so contest holdback fades out
-  for (let t = 0; t < 6; t++) {
+  // Advance 1.0s (30 ticks at 30 Hz for voidDifficulty=1) so contest holdback fades out
+  assert.equal(field.contestHoldTicks, 30);
+  for (let t = 0; t < 29; t++) {
     field.step(world, physics, scenario, t + 1, 1 / 30, {
       wallResistanceMultiplier: 1,
       perimeterResonanceBonus: 0,
     });
   }
-  assert.equal(field.contestedCells.has(idx), false, "contest holdback expires after 0.2s");
+  assert.equal(field.contestedCells.has(idx), true, "still contested before 1s elapses at difficulty 1");
+  field.step(world, physics, scenario, 30, 1 / 30, {
+    wallResistanceMultiplier: 1,
+    perimeterResonanceBonus: 0,
+  });
+  assert.equal(field.contestedCells.has(idx), false, "contest holdback expires after 1s at difficulty 1");
   assert.equal(field.spendVoidPowerOnCell(world, physics, idx, 1), true);
   assert.equal(world.material[idx], CellMaterial.VOID);
+});
+
+test("Contested Void: difficulty levels 1-10 scale contest holdback as 1s / voidDifficulty", () => {
+  for (const s of SCENARIOS) {
+    assert.ok((s.voidDifficulty ?? 0) >= 1 && (s.voidDifficulty ?? 0) <= 10, `${s.id} has difficulty 1..10`);
+  }
+  assert.equal(getScenario("tutorialBreach").voidDifficulty, 1);
+  assert.equal(getScenario("endless").voidDifficulty, 10);
+  assert.equal(contestHoldTicksForDifficulty(1), 30);
+  assert.equal(contestHoldTicksForDifficulty(2), 15);
+  assert.equal(contestHoldTicksForDifficulty(5), 6);
+  assert.equal(contestHoldTicksForDifficulty(10), 3);
+
+  const bossScenario = {
+    ...getScenario("endless"),
+    worldW: 16,
+    worldH: 16,
+    portals: [{ xFrac: 0.5, yFrac: 0.5, radius: 1, activateAtSeconds: 0 }],
+  };
+  const bossWorld = new VoidWorld(bossScenario);
+  const bossPhysics = new VoidPhysics();
+  bossWorld.material.fill(CellMaterial.STREET);
+  const idx = bossWorld.grid.index(4, 4);
+  bossPhysics.consumeCellIntoVoid(bossWorld, idx, false);
+  const bossField = new VoidField(bossWorld, bossScenario);
+  assert.equal(bossField.contestHoldTicks, 3);
+  assert.equal(bossField.removeVoidPixel(bossWorld, idx), true);
+  for (let t = 0; t < 3; t++) {
+    bossField.step(bossWorld, bossPhysics, bossScenario, t + 1, 1 / 30, {
+      wallResistanceMultiplier: 1,
+      perimeterResonanceBonus: 0,
+    });
+  }
+  assert.equal(bossField.contestedCells.has(idx), false, "difficulty 10 fades in 3 ticks (0.1s)");
 });
 
 test("Contested Void: rocketeers deploy from rocketTeam and remove an area of Void pixels", () => {

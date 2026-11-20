@@ -43,10 +43,21 @@ export const VOID_CONTEST_COSTS = {
   BUILDING_COST_PER_PIXEL: 2,
   /** Integer micro-work per 1 unit of Void power (keeps 30 Hz fixed-point budget exact). */
   MICRO_WORK_PER_VOID_POWER: 262,
-  /** Seconds and integer 30 Hz ticks a contested/removed space holds the Void back. */
-  CONTEST_HOLD_SECONDS: 0.2,
-  CONTEST_HOLD_TICKS: 6,
+  /** Base seconds and integer 30 Hz ticks a contested/removed space holds the Void back (1s / voidDifficulty). */
+  CONTEST_HOLD_SECONDS: 1,
+  CONTEST_HOLD_TICKS: TICK_HZ,
+  MIN_VOID_DIFFICULTY: 1,
+  MAX_VOID_DIFFICULTY: 10,
 } as const;
+
+/** Returns the integer 30 Hz contest holdback duration (1 second / difficulty, for levels 1..10). */
+export function contestHoldTicksForDifficulty(voidDifficulty = 1): number {
+  const clamped = Math.max(
+    VOID_CONTEST_COSTS.MIN_VOID_DIFFICULTY,
+    Math.min(VOID_CONTEST_COSTS.MAX_VOID_DIFFICULTY, Math.round(voidDifficulty)),
+  );
+  return Math.max(1, Math.round(TICK_HZ / clamped));
+}
 
 /** Material resistance (micro-work required to erode 1 HP of cell integrity).
  * Unreinforced civilian streets and buildings erode rapidly enough that an unopposed

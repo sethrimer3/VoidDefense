@@ -20,6 +20,7 @@ export const SCENARIOS: readonly ScenarioConfig[] = [
     startingSuppliesWatch: 360,
     portals: [{ xFrac: 0.5, yFrac: 0.28, radius: pixels(13), activateAtSeconds: 0 }],
     countryside: { ruralCells: pixels(30), suburbCells: pixels(16) },
+    voidDifficulty: 1,
   },
   {
     id: "edgeAdvance",
@@ -38,6 +39,7 @@ export const SCENARIOS: readonly ScenarioConfig[] = [
       { xFrac: 0.72, yFrac: 0.1, radius: pixels(11), activateAtSeconds: 0 },
     ],
     countryside: { ruralCells: pixels(34), suburbCells: pixels(18) },
+    voidDifficulty: 2,
   },
   {
     id: "centralRupture",
@@ -53,6 +55,7 @@ export const SCENARIOS: readonly ScenarioConfig[] = [
     startingSuppliesWatch: 380,
     portals: [{ xFrac: 0.5, yFrac: 0.5, radius: pixels(14), activateAtSeconds: 0 }],
     countryside: { ruralCells: pixels(24), suburbCells: pixels(14) },
+    voidDifficulty: 3,
   },
   {
     id: "twinBreaches",
@@ -71,6 +74,7 @@ export const SCENARIOS: readonly ScenarioConfig[] = [
       { xFrac: 0.72, yFrac: 0.68, radius: pixels(11), activateAtSeconds: 0 },
     ],
     countryside: { ruralCells: pixels(28), suburbCells: pixels(14) },
+    voidDifficulty: 4,
   },
   {
     id: "delayedCollapse",
@@ -89,6 +93,7 @@ export const SCENARIOS: readonly ScenarioConfig[] = [
       { xFrac: 0.68, yFrac: 0.72, radius: pixels(12), activateAtSeconds: 25 },
     ],
     countryside: { ruralCells: pixels(28), suburbCells: pixels(14) },
+    voidDifficulty: 6,
   },
   {
     id: "archipelagoCity",
@@ -107,6 +112,7 @@ export const SCENARIOS: readonly ScenarioConfig[] = [
       { xFrac: 0.5, yFrac: 0.7, radius: pixels(12), activateAtSeconds: 20 },
     ],
     countryside: { ruralCells: pixels(34), suburbCells: pixels(18) },
+    voidDifficulty: 7,
   },
   {
     id: "organismEscalation",
@@ -126,6 +132,7 @@ export const SCENARIOS: readonly ScenarioConfig[] = [
       { xFrac: 0.5, yFrac: 0.65, radius: pixels(13), activateAtSeconds: 30 },
     ],
     countryside: { ruralCells: pixels(36), suburbCells: pixels(18) },
+    voidDifficulty: 9,
   },
   {
     id: "endless",
@@ -145,6 +152,7 @@ export const SCENARIOS: readonly ScenarioConfig[] = [
       { xFrac: 0.75, yFrac: 0.65, radius: pixels(11), activateAtSeconds: 65 },
     ],
     countryside: { ruralCells: pixels(30), suburbCells: pixels(14) },
+    voidDifficulty: 10,
     endless: true,
   },
 ];

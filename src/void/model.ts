@@ -473,6 +473,8 @@ export type ScenarioConfig = {
    * radius: `ruralCells` of farmland, forest and country roads, then `suburbCells` of
    * leafy low-rise blocks before the dense city. Defaults apply when omitted. */
   countryside?: { ruralCells: number; suburbCells: number };
+  /** Void difficulty level (1..10, 10 = final boss / Endless); contested Void lasts 1s / voidDifficulty. */
+  voidDifficulty?: number;
   endless?: boolean;
 };
 

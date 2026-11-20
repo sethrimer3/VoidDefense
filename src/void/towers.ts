@@ -1921,7 +1921,7 @@ export class VoidCombatManager {
             y0: a.y,
             x1: beamTargetX,
             y1: beamTargetY,
-            ttl: isRocketeer ? 0.18 : 0.14,
+            ttl: isRocketeer ? 0.09 : 0.06,
             color: isMech ? "#ffaa33" : isRocketeer ? "#ff4f38" : "#ff6b2b",
             energy: true,
           });

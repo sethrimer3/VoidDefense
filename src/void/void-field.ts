@@ -37,6 +37,7 @@ import {
   TICK_HZ,
   VOID_BALANCE,
   VOID_CONTEST_COSTS,
+  contestHoldTicksForDifficulty,
   pixels,
 } from "./config.ts";
 import { floorsToElevation } from "./elevation.ts";
@@ -89,6 +90,9 @@ export class VoidField {
   readonly lanternRefCount: Uint16Array;
   /** 1 if cell was Void/UNCLAIMED when first covered by a Lantern Bearer (temporary footing). */
   readonly lanternCreatedTemp: Uint8Array;
+  /** Void difficulty level (1..10) and integer 30 Hz contest holdback duration (`1s / voidDifficulty`). */
+  readonly voidDifficulty: number;
+  readonly contestHoldTicks: number;
   /** Temporary suppression timer (from Containment Pulse strike). */
   suppressedSeconds = 0;
 
@@ -98,6 +102,11 @@ export class VoidField {
     this.minAblationEnergyFloor = Number.isFinite(scenario.initialVoidEnergy)
       ? scenario.initialVoidEnergy * VOID_BALANCE.minReservoirFloorFraction
       : Number.POSITIVE_INFINITY;
+    this.voidDifficulty = Math.max(
+      VOID_CONTEST_COSTS.MIN_VOID_DIFFICULTY,
+      Math.min(VOID_CONTEST_COSTS.MAX_VOID_DIFFICULTY, Math.round(scenario.voidDifficulty ?? 1)),
+    );
+    this.contestHoldTicks = contestHoldTicksForDifficulty(this.voidDifficulty);
     this.cellMicroWork = new Uint32Array(world.grid.count);
     this.frontierContactCount = new Uint8Array(world.grid.count);
     this.lanternRefCount = new Uint16Array(world.grid.count);
@@ -472,9 +481,9 @@ export class VoidField {
     return false;
   }
 
-  /** Marks cell `cellIdx` as contested so the Void holds back for `durationTicks` (default 6 ticks = 0.2s)
+  /** Marks cell `cellIdx` as contested so the Void holds back for `durationTicks` (default `1s / voidDifficulty`)
    * (turning it neon orange and fading back to Void color as it uncontests). */
-  markContested(cellIdx: number, durationTicks = VOID_CONTEST_COSTS.CONTEST_HOLD_TICKS): void {
+  markContested(cellIdx: number, durationTicks = this.contestHoldTicks): void {
     if (durationTicks <= 0) return;
     const prev = this.contestedCells.get(cellIdx) ?? 0;
     if (durationTicks > prev) {
