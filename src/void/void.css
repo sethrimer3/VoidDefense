@@ -2297,3 +2297,235 @@
     font-size: 0.68rem;
   }
 }
+
+/* ── Floating Tower / Building Side Panel (modeled after TowerDefense BuildingPanel) ── */
+.void-building-panel {
+  --vbp-w: 204px;
+  position: absolute;
+  z-index: 20;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
+  width: var(--vbp-w);
+  max-height: calc(100% - 16px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  box-sizing: border-box;
+  padding: 10px 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: rgba(11, 15, 22, 0.94);
+  border: 1px solid #3c4d69;
+  border-top: 2px solid var(--void-neon-orange);
+  border-radius: 3px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.92), 0 0 12px rgba(255, 119, 0, 0.2);
+  backdrop-filter: blur(6px);
+  color: #e4edf8;
+}
+.void-building-panel[data-side="left"] {
+  right: auto;
+  left: 8px;
+}
+.void-building-panel .vbp-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+}
+.void-building-panel .vbp-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.84rem;
+  line-height: 1.15;
+  color: var(--void-neon-orange-bright);
+  overflow-wrap: anywhere;
+}
+.void-building-panel .vbp-close {
+  width: 24px;
+  height: 24px;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  font-size: 16px;
+  line-height: 1;
+  flex: none;
+}
+.void-building-panel .vbp-portrait {
+  position: relative;
+  align-self: center;
+  width: 84px;
+  height: 84px;
+  display: grid;
+  place-items: center;
+  background: radial-gradient(circle at 50% 60%, rgba(255, 119, 0, 0.14), transparent 72%), #080b10;
+  border: 1px solid #3c4d69;
+  border-radius: 2px;
+  box-shadow: inset 0 0 12px rgba(0, 0, 0, 0.85);
+  padding: 4px;
+}
+.void-building-panel .vbp-portrait canvas {
+  width: 72px;
+  height: 72px;
+  image-rendering: pixelated;
+}
+.void-building-panel .vbp-badge {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  font-size: 0.68rem;
+  color: #ffb84d;
+  background: rgba(8, 11, 16, 0.92);
+  border: 1px solid #3c4d69;
+  padding: 1px 5px;
+  border-radius: 2px;
+}
+.void-building-panel .vbp-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 0.75rem;
+  color: #b4c4d9;
+  border-top: 1px solid #1e2838;
+  border-bottom: 1px solid #1e2838;
+  padding: 4px 2px;
+}
+.void-building-panel .vbp-stats b {
+  color: #f0f5fc;
+}
+.void-building-panel .vbp-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.void-building-panel .vbp-actions button {
+  min-height: 32px;
+  padding: 4px 8px;
+  font-size: 0.76rem;
+  text-align: center;
+}
+.void-building-panel .vbp-max {
+  text-align: center;
+  font-size: 0.74rem;
+  color: #ffb84d;
+  padding: 4px 0;
+  border: 1px solid #2b374b;
+  border-radius: 2px;
+  background: #080b10;
+}
+.void-building-panel.placing .vbp-focus,
+.void-building-panel .vbp-focus[aria-pressed="true"] {
+  border-color: var(--void-neon-orange);
+  box-shadow: 0 0 8px rgba(255, 119, 0, 0.45);
+}
+@keyframes vbp-in-right {
+  from { transform: translate(24px, -50%); opacity: 0; }
+  to { transform: translateY(-50%); opacity: 1; }
+}
+@keyframes vbp-in-left {
+  from { transform: translate(-24px, -50%); opacity: 0; }
+  to { transform: translateY(-50%); opacity: 1; }
+}
+.void-building-panel.opening {
+  animation: vbp-in-right 140ms ease-out;
+}
+.void-building-panel.opening[data-side="left"] {
+  animation-name: vbp-in-left;
+}
+:root.reduce-motion .void-building-panel.opening {
+  animation: none;
+}
+
+/* ── Square Ring Menu Around Selected Tower (modeled after TowerDefense PlacedBuildingMenu) ── */
+.void-building-menu {
+  --vbm-bar: 48px;
+  position: absolute;
+  z-index: 20;
+  display: grid;
+  grid-template-columns: var(--vbm-bar) 1fr var(--vbm-bar);
+  grid-template-rows: var(--vbm-bar) 1fr var(--vbm-bar);
+  pointer-events: none;
+  animation: vbm-open 140ms ease-out;
+  transform-origin: center;
+}
+@keyframes vbm-open {
+  from { transform: scale(0.6); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+:root.reduce-motion .void-building-menu {
+  animation: none;
+}
+.void-building-menu .vbm-bar {
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 0;
+  min-height: 0;
+}
+.void-building-menu .vbm-bar > * {
+  pointer-events: auto;
+}
+.void-building-menu .vbm-top { grid-column: 1 / -1; grid-row: 1; position: relative; }
+.void-building-menu .vbm-bottom { grid-column: 1 / -1; grid-row: 3; position: relative; }
+.void-building-menu .vbm-left { grid-column: 1; grid-row: 2; flex-direction: column; }
+.void-building-menu .vbm-right { grid-column: 3; grid-row: 2; flex-direction: column; }
+.void-building-menu .vbm-hole { grid-column: 2; grid-row: 2; }
+.void-building-menu .vbm-btn {
+  min-width: 34px;
+  min-height: 30px;
+  padding: 2px 6px;
+  font-size: 0.72rem;
+  line-height: 1;
+}
+.void-building-menu .vbm-tag {
+  font-size: 0.68rem;
+  color: #ffb84d;
+  background: rgba(11, 15, 22, 0.92);
+  border: 1px solid #3c4d69;
+  padding: 2px 5px;
+  border-radius: 2px;
+  white-space: nowrap;
+}
+.void-building-menu .vbm-upgrade {
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+.void-building-menu .vbm-cost {
+  position: absolute;
+  bottom: calc(100% + 2px);
+  font-size: 0.68rem;
+  color: #ffd768;
+  text-shadow: 1px 0 #000, -1px 0 #000, 0 1px #000, 0 -1px #000;
+  pointer-events: none;
+}
+.void-building-menu .vbm-upgrade.short .vbm-cost {
+  color: #ff6a55;
+}
+.void-building-menu.placing > .vbm-bar {
+  visibility: hidden;
+}
+.void-building-menu.placing .vbm-aim {
+  visibility: visible;
+  pointer-events: auto;
+}
+.void-building-menu.placing .vbm-aim button,
+.void-building-menu .vbm-aim button[aria-pressed="true"] {
+  border-color: var(--void-neon-orange);
+  box-shadow: 0 0 8px rgba(255, 119, 0, 0.55);
+}
+
+@media (max-width: 559px) {
+  .void-building-panel {
+    --vbp-w: 156px;
+    padding: 8px 7px 10px;
+    gap: 6px;
+  }
+  .void-building-panel .vbp-name { font-size: 0.76rem; }
+  .void-building-panel .vbp-portrait { width: 64px; height: 64px; }
+  .void-building-panel .vbp-portrait canvas { width: 56px; height: 56px; }
+  .void-building-panel .vbp-actions button { min-height: 28px; font-size: 0.7rem; }
+  .void-building-menu { --vbm-bar: 42px; }
+}

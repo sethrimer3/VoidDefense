@@ -102,6 +102,7 @@ export const VOID_TEXT = [
   ["void.settings.ambience", "Ambience Volume", "Volumen Ambiente", "Volume Ambiance", "Umgebungslautstärke", "Volume Ambiente", "Volume Ambiente", "環境音音量", "배경음 볼륨", "环境音量"],
   ["void.settings.music", "Music Volume", "Volumen Música", "Volume Musique", "Musiklautstärke", "Volume Música", "Volume Musica", "音楽音量", "음악 볼륨", "音乐音量"],
   ["void.settings.magnifier", "Precision Placement Magnifier", "Lupa de Colocación", "Loupe de Placement", "Platzierungslupe", "Lupa de Posicionamento", "Lente di Precisione", "精密配置ルーペ", "정밀 배치 돋보기", "精密放置放大镜"],
+  ["void.settings.ringMenu", "Tower Controls Around Tower", "Controles Alrededor de la Torre", "Contrôles Autour de la Tour", "Turmsteuerung um den Turm", "Controles ao Redor da Torre", "Controlli Intorno alla Torre", "タワー周囲メニュー", "타워 주변 컨트롤", "防御塔环绕菜单"],
   ["void.settings.motion", "Reduce Motion & Ambient Flicker", "Reducir Movimiento", "Réduire les Animations", "Bewegung Reduzieren", "Reduzir Movimento", "Riduci Movimento", "モーション低減", "모션 줄이기", "减弱动态效果"],
   ["void.settings.pixelFont", "Custom Pixel Font (Alembic)", "Fuente Píxel (Alembic)", "Police Pixel (Alembic)", "Pixelschrift (Alembic)", "Fonte Pixel (Alembic)", "Font Pixel (Alembic)", "ピクセルフォント", "픽셀 글꼴 (Alembic)", "像素字体 (Alembic)"],
   ["void.settings.bheight", "Building Height", "Altura de Edificios", "Hauteur des Bâtiments", "Gebäudehöhe", "Altura dos Prédios", "Altezza Edifici", "建物の高さ", "건물 높이", "建筑高度"],

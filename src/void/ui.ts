@@ -23,6 +23,7 @@ import { VoidSim } from "./sim.ts";
 import { VoidTechTreeView } from "./tech/tech-ui.ts";
 import { availableCurrencies, totalEarnedSparks } from "./tech/wallet.ts";
 import { STRIKE_SPECS, TOWER_SPECS } from "./towers.ts";
+import { TowerMenuController, type TowerMenuTarget } from "./tower-menu.ts";
 
 export type VoidTab = "battle" | "network" | "operations" | "map";
 
@@ -152,6 +153,7 @@ export class VoidApp {
   private techView!: VoidTechTreeView;
   private opsView!: ResistanceOperationsView;
   private mapView: ResistanceMapView | null = null;
+  private towerMenu!: TowerMenuController;
   private soundEngine = new VoidSoundEngine();
   private musicEngine = new VoidMusicEngine();
   private windowFocused =
@@ -343,6 +345,53 @@ export class VoidApp {
     this.renderer.buildingHeight = this.save.settings.buildingHeight;
     this.bindBoardPointers(canvas);
 
+    this.towerMenu = new TowerMenuController({
+      board: () => this.root.querySelector<HTMLElement>(".void-board-stage")!,
+      renderer: () => this.renderer,
+      ringMenu: () => this.save.settings.ringMenu,
+      reduceMotion: () => this.save.settings.reduceMotion,
+      paintTowerIcon: (c, type) => paintCardIcon(c, type),
+      upgrade: (uid) => {
+        const tw = this.sim.combat.towers.find((x) => x.uid === uid);
+        if (tw && this.sim.upgradeTower(uid)) {
+          this.soundEngine.playSfx("towerUpgrade");
+          this.renderer.triggerPlacementPulse(tw.x + tw.w * 0.5, tw.y + tw.h * 0.5);
+          this.refreshHUD();
+        }
+      },
+      rotate: (uid) => {
+        this.sim.combat.rotatePrism(uid);
+        this.soundEngine.playSfx("uiClick");
+        this.refreshHUD();
+      },
+      focus: (uid, placing) => {
+        this.activeTool = placing ? { kind: "setReticle", towerUid: uid } : { kind: "none" };
+        this.soundEngine.playSfx("uiClick");
+      },
+      sell: (uid) => {
+        if (this.sim.sellTower(uid)) {
+          this.soundEngine.playSfx("towerSell");
+          this.selectedTowerUid = null;
+          this.activeTool = { kind: "none" };
+          this.refreshHUD();
+        }
+      },
+      closed: () => {
+        this.selectedTowerUid = null;
+        this.selectedBuildingId = null;
+        this.activeTool = { kind: "none" };
+        this.refreshHUD();
+      },
+    });
+
+    document.addEventListener("pointerdown", (e) => {
+      if (!this.towerMenu.element) return;
+      const target = e.target as Node;
+      if (!this.towerMenu.element.contains(target) && target !== canvas) {
+        this.towerMenu.dismiss();
+      }
+    });
+
     this.techView = new VoidTechTreeView(
       this.root.querySelector<HTMLElement>("#void-page-network")!,
       () => this.save.wallet,
@@ -380,6 +429,10 @@ export class VoidApp {
     window.addEventListener("keydown", (e) => {
       if (this.tab !== "battle") return;
       if (e.key === "Escape") {
+        if (this.towerMenu.element) {
+          this.towerMenu.escape();
+          return;
+        }
         this.activeTool = { kind: "none" };
         this.hoverPreview = null;
         this.selectedTowerUid = null;
@@ -657,7 +710,7 @@ export class VoidApp {
       e.clientY,
     );
     if (picked?.kind === "tower") {
-      this.selectedTowerUid = picked.uid;
+      this.selectedTowerUid = this.selectedTowerUid === picked.uid ? null : picked.uid;
       this.selectedBuildingId = null;
       this.refreshHUD();
       return;
@@ -667,14 +720,14 @@ export class VoidApp {
       if (this.sim.world.grid.inBounds(cx, cy)) {
         const groundUid = this.sim.world.towerAt[this.sim.world.grid.index(cx, cy)];
         if (groundUid >= 0) {
-          this.selectedTowerUid = groundUid;
+          this.selectedTowerUid = this.selectedTowerUid === groundUid ? null : groundUid;
           this.selectedBuildingId = null;
           this.refreshHUD();
           return;
         }
       }
       this.selectedTowerUid = null;
-      this.selectedBuildingId = picked.id;
+      this.selectedBuildingId = this.selectedBuildingId === picked.id ? null : picked.id;
       this.refreshHUD();
       return;
     }
@@ -691,7 +744,7 @@ export class VoidApp {
           }
         }
       }
-      this.selectedTowerUid = uid >= 0 ? uid : null;
+      this.selectedTowerUid = uid >= 0 && this.selectedTowerUid !== uid ? uid : null;
       this.selectedBuildingId = null;
       this.refreshHUD();
     }
@@ -958,18 +1011,15 @@ export class VoidApp {
   }
 
   private setInspectorContent(html: string | null, bind?: (root: HTMLElement) => void): void {
-    const insp = this.root.querySelector<HTMLElement>("[data-tower-inspector]")!;
+    const insp = this.root.querySelector<HTMLElement>("[data-tower-inspector]");
     const sideInsp = this.root.querySelector<HTMLElement>("[data-side-inspector]");
     const sideEmpty = this.root.querySelector<HTMLElement>("[data-side-insp-empty]");
+    if (insp) insp.hidden = true;
     if (!html) {
-      insp.hidden = true;
       if (sideInsp) sideInsp.hidden = true;
       if (sideEmpty) sideEmpty.hidden = false;
       return;
     }
-    insp.hidden = false;
-    insp.innerHTML = html;
-    if (bind) bind(insp);
     if (sideInsp) {
       sideInsp.hidden = false;
       sideInsp.innerHTML = html;
@@ -980,6 +1030,7 @@ export class VoidApp {
 
   private renderTowerInspector(): void {
     if (this.sim.outcome) {
+      this.towerMenu.dismiss(false);
       this.setInspectorContent(null);
       return;
     }
@@ -997,9 +1048,18 @@ export class VoidApp {
         }
         if (intact > 0) {
           const pct = Math.round((intact / Math.max(1, b.cells.length)) * 100);
+          const name = `${b.isSkyscraper ? "Skyscraper" : "Structure"} #${b.id}`;
+          const target: TowerMenuTarget = {
+            kind: "building",
+            building: b,
+            name,
+            height: b.height,
+            integrityPct: pct,
+          };
+          this.towerMenu.show(target, false);
           const html = `
             <div class="void-insp-head">
-              <strong>${b.isSkyscraper ? "Skyscraper" : "Structure"} #${b.id}</strong>
+              <strong>${name}</strong>
               <span class="void-insp-tag">${b.height}F</span>
               <button type="button" data-insp-close class="void-insp-close" aria-label="Close inspector">×</button>
             </div>
@@ -1016,6 +1076,7 @@ export class VoidApp {
           return;
         }
       }
+      this.towerMenu.dismiss(false);
       this.setInspectorContent(null);
       return;
     }
@@ -1027,6 +1088,7 @@ export class VoidApp {
     const canModify = this.sim.canModifyTowers();
     let extraInfo = "";
     let rotateBtn = "";
+    let hasRotate = false;
     if (t.type === "voidSiphon") {
       const s = this.sim.combat.siphonStates.get(t.uid);
       if (s) {
@@ -1039,10 +1101,28 @@ export class VoidApp {
         const deg = Math.round((p.angleRad * 180) / Math.PI) % 360;
         extraInfo = `<span>Plane: <b>${deg}°</b></span>`;
         rotateBtn = `<button type="button" data-insp-rotate class="secondary-btn">Rotate +45°</button>`;
+        hasRotate = true;
       }
     } else if (t.type === "chronoCannon") {
       extraInfo = `<span>Rewind: <b>${t.cooldown <= 0 ? "Ready" : `${t.cooldown.toFixed(1)}s`}</b></span>`;
     }
+    const placing = this.activeTool.kind === "setReticle" && this.activeTool.towerUid === t.uid;
+    const target: TowerMenuTarget = {
+      kind: "tower",
+      tower: t,
+      name: spec.name,
+      level: lvl,
+      hp: t.hp,
+      maxHp: t.maxHp,
+      upgCost,
+      canUpgrade,
+      refund,
+      canModify,
+      extraStats: extraInfo,
+      hasRotate,
+      focusSet: !!t.focus,
+    };
+    this.towerMenu.show(target, placing);
     const html = `
       <div class="void-insp-head">
         <strong>${spec.name}</strong>
@@ -1081,6 +1161,7 @@ export class VoidApp {
       }
       el.querySelector<HTMLButtonElement>("[data-insp-reticle]")!.onclick = () => {
         this.activeTool = { kind: "setReticle", towerUid: t.uid };
+        this.towerMenu.setPlacing(true);
         this.soundEngine.playSfx("uiClick");
       };
       el.querySelector<HTMLButtonElement>("[data-insp-sell]")!.onclick = () => {
@@ -1428,6 +1509,7 @@ export class VoidApp {
           <div class="void-settings-row">
             <label><input type="checkbox" data-set-pause-blur ${this.save.settings.pauseOnBlur ? "checked" : ""} /> ${t("void.settings.pauseOnBlur")}</label>
             <label><input type="checkbox" data-set-mag ${this.save.settings.magnifier ? "checked" : ""} /> ${t("void.settings.magnifier")}</label>
+            <label><input type="checkbox" data-set-ring-menu ${this.save.settings.ringMenu ? "checked" : ""} /> ${t("void.settings.ringMenu")}</label>
           </div>
         </div>
         <div class="void-settings-panel">
@@ -1512,6 +1594,11 @@ export class VoidApp {
     dlg.querySelector<HTMLInputElement>("[data-set-mag]")!.onchange = (e) => {
       this.save.settings.magnifier = (e.target as HTMLInputElement).checked;
       this.persist();
+    };
+    dlg.querySelector<HTMLInputElement>("[data-set-ring-menu]")!.onchange = (e) => {
+      this.save.settings.ringMenu = (e.target as HTMLInputElement).checked;
+      this.persist();
+      this.renderTowerInspector();
     };
     dlg.querySelector<HTMLInputElement>("[data-set-motion]")!.onchange = (e) => {
       this.save.settings.reduceMotion = (e.target as HTMLInputElement).checked;
@@ -1670,6 +1757,7 @@ export class VoidApp {
         this.loupePointer,
         this.save.settings.magnifier,
       );
+      this.towerMenu.position();
 
       const inBattle = this.sim.phase === "battle" && !this.sim.outcome && !this.sim.paused;
       const contacts = this.sim.voidField.totalContactEdges();

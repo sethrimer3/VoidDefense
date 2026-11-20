@@ -57,6 +57,8 @@ export const SETTINGS = {
    * picked building's range, the menu shrinks gently zoomed out, or it keeps
    * one size on screen (`MenuSizing` in `ui/building-menu.ts`). */
   menuSizing: { kind: "choice", default: "frame", choices: [["frame", "Camera frames the range"], ["grow", "Menu shrinks gently as you zoom out"], ["fixed", "Menu keeps one size"]], page: { id: "menu-sizing", label: "Building menu size" } },
+  /** Show the square ring menu around the selected tower instead of the sliding side panel. */
+  ringMenu: { kind: "toggle", default: false, page: { id: "ring-menu", label: "Tower controls around the tower" } },
   raiseDrag: { kind: "toggle", default: false, page: { id: "raise-drag", label: "Carry dragged items above the finger" } },
   /** While dragging on the Defend board (placing, aiming), a box above the
    * finger shows the board zoomed in round where the item would go. */
