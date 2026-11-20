@@ -14,6 +14,7 @@ import { CellMaterial, LandCover } from "../src/void/model.ts";
 import {
   computeDebrisGlowAlpha,
   computeDebrisHeat,
+  computeWhirlpoolKinematics,
   moltenColorAtHeat,
   moltenGlowColorAtHeat,
 } from "../src/void/physics.ts";
@@ -389,4 +390,78 @@ test("6. Sucked-in Void debris retains original color at detachment, heats into 
   assert.ok(rGold >= 250 && gGold > gOrange + 70 && bGold > bOrange, `Expected incandescent gold at heat 0.88, got (${rGold},${gGold},${bGold})`);
   // White-hot near event horizon core
   assert.ok(rHot === 255 && gHot > 235 && bHot > 195, `Expected white-hot core incandescence at heat 1.0, got (${rHot},${gHot},${bHot})`);
+});
+
+test("7. Whirlpool spin, spaghettification acceleration, intact-to-pixel disintegration, and exact inner-circle disappearance", () => {
+  const sim = new VoidSim("tutorialBreach", "underSiege", emptyTechWallet());
+  const { world, physics } = sim;
+  physics.debris.length = 0;
+
+  // 1. Spaghettification speedup: particles accelerate strongly as distance approaches coreRadius
+  const startDist = 42;
+  const coreR = 6;
+  const kFar = computeWhirlpoolKinematics(42, startDist, coreR, true);
+  const kMid = computeWhirlpoolKinematics(22, startDist, coreR, false);
+  const kNear = computeWhirlpoolKinematics(7, startDist, coreR, false);
+
+  assert.ok(
+    kNear.radialSpeed > kMid.radialSpeed && kMid.radialSpeed > kFar.radialSpeed,
+    "Inward radial speed must accelerate as particle nears the black hole",
+  );
+  assert.ok(
+    kNear.tangentialSpeed > kMid.tangentialSpeed && kMid.tangentialSpeed > kFar.tangentialSpeed,
+    "Whirlpool tangential spin speed must accelerate as particle nears the black hole",
+  );
+  assert.ok(
+    kNear.totalSpeed > kFar.totalSpeed * 5,
+    `Expected >= 5x spaghettification speedup near event horizon (${kNear.totalSpeed} vs ${kFar.totalSpeed})`,
+  );
+
+  // 2. Consume a building cell: starts as an intact multi-pixel block (intact = true, size >= 2),
+  //    then disintegrates into individual 1x1 pixels closer to the black hole, and vanishes upon
+  //    touching the inner circle (coreRadius)
+  const bld = world.buildings.find((b) => b.cells.length > 0 && world.material[b.cells[0]] !== CellMaterial.VOID)!;
+  physics.consumeCellIntoVoid(world, bld.cells[0], true);
+  assert.equal(physics.debris.length, 1);
+  const frag = physics.debris[0];
+  assert.equal(frag.intact, true, "Consumed building piece must start as an intact block");
+  assert.ok(frag.size >= 2.0, `Expected intact building block size >= 2.0, got ${frag.size}`);
+
+  const pX = frag.portalX;
+  const pY = frag.portalY;
+  const cR = frag.coreRadius ?? 5;
+  const initialAngle = Math.atan2(frag.y - pY, frag.x - pX);
+  let totalAngleSwept = 0;
+  let prevAngle = initialAngle;
+  let prevDist = Math.hypot(frag.x - pX, frag.y - pY);
+  let sawDisintegration = false;
+  let lastDistBeforeVanish = prevDist;
+
+  for (let tick = 0; tick < 300 && physics.debris.length > 0; tick++) {
+    physics.stepStructuralSupport(world, 1 / 30);
+    if (!frag.intact && frag.size === 1.0 && physics.debris.length >= 3) {
+      sawDisintegration = true;
+    }
+    if (physics.debris.includes(frag)) {
+      const curDist = Math.hypot(frag.x - pX, frag.y - pY);
+      const curAngle = Math.atan2(frag.y - pY, frag.x - pX);
+      let dAng = curAngle - prevAngle;
+      while (dAng <= -Math.PI) dAng += Math.PI * 2;
+      while (dAng > Math.PI) dAng -= Math.PI * 2;
+      totalAngleSwept += Math.abs(dAng);
+      assert.ok(curDist < prevDist, `Radius of tracked particle must decrease monotonically (${curDist} < ${prevDist})`);
+      assert.ok(curDist > cR, `Active debris must not exist inside inner circle (${curDist} > ${cR})`);
+      prevDist = curDist;
+      prevAngle = curAngle;
+      lastDistBeforeVanish = curDist;
+    }
+  }
+
+  assert.equal(sawDisintegration, true, "Intact building block must disintegrate into individual 1x1 pixels closer to the black hole");
+  assert.equal(physics.debris.length, 0, "All disintegrated pixels must be swallowed by the black hole");
+  assert.ok(totalAngleSwept > 1.2, `Expected whirlpool spiral rotation > 1.2 rad, got ${totalAngleSwept}`);
+  assert.ok(
+    lastDistBeforeVanish <= cR + 3.5,
+    `Pixels must disappear right upon touching the inner circle coreR=${cR} (last dist=${lastDistBeforeVanish})`,
+  );
 });

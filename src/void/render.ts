@@ -612,35 +612,34 @@ export class VoidRenderer {
     const { w, h } = world.grid;
     if (px < 0 || px >= w || py < 0 || py >= h) return;
 
-    // Whole-pixel size reduction and molten heating as chunk plunges below ground level into the Void abyss
-    let cw = ch.w;
-    let chH = ch.h;
+    // Intact initially (`z >= -4`), then disintegrating into separating individual 1x1 pixels and heating
+    // into molten colors as the chunk plunges closer to the black hole
+    const cw = ch.w;
+    const chH = ch.h;
     let fill = ch.color;
     let edge = ch.edgeColor;
+    let spread = 0;
     if (ch.z < 0) {
       const depth = -ch.z;
-      const heatRaw = Math.min(1, Math.max(0, (depth - 2) / 18));
+      const heatRaw = Math.min(1, Math.max(0, (depth - 3) / 17));
       const heat = heatRaw * heatRaw * (3 - 2 * heatRaw);
       fill = moltenColorAtHeat(ch.color, heat);
       edge = heat > 0.05 ? moltenColorAtHeat(ch.edgeColor, Math.min(1, heat + 0.18)) : ch.edgeColor;
-      if (depth > 16) {
-        cw = 1;
-        chH = 1;
-      } else if (depth > 9) {
-        cw = Math.max(1, Math.min(2, cw));
-        chH = Math.max(1, Math.min(2, chH));
-      } else if (depth > 3) {
-        cw = Math.max(1, Math.min(4, cw));
-        chH = Math.max(1, Math.min(4, chH));
+      if (depth > 4) {
+        spread = Math.min(2, Math.floor((depth - 3) / 4));
       }
     }
 
+    const halfW = (cw - 1) * 0.5;
+    const halfH = (chH - 1) * 0.5;
     for (let dy = 0; dy < chH; dy++) {
-      const sy = py + dy;
-      if (sy < 0 || sy >= h) continue;
       for (let dx = 0; dx < cw; dx++) {
-        const sx = px + dx;
-        if (sx < 0 || sx >= w) continue;
+        // When spread > 0, individual pixels separate outward from the chunk's center
+        const ox = spread > 0 ? Math.round((dx - halfW) * (1 + spread * 0.85)) : dx;
+        const oy = spread > 0 ? Math.round((dy - halfH) * (1 + spread * 0.85)) : dy;
+        const sx = px + ox;
+        const sy = py + oy;
+        if (sx < 0 || sx >= w || sy < 0 || sy >= h) continue;
         if (underVoid) {
           // Beneath-ground chunks only render inside Void space and behind northern ledge front faces
           if (world.material[sy * w + sx] !== CellMaterial.VOID) continue;
@@ -1094,6 +1093,12 @@ export class VoidRenderer {
         const compositeIntensity = Math.min(1, intensity * (0.5 + fall * 0.5) + arm * 0.25 * fall);
         color = starNestColor(compositeIntensity, (x * 7 + y * 13) & 15);
       }
+      this.terrainU32[idx] = hexToAbgr(color);
+      return;
+    } else if (mat === CellMaterial.EMPTY) {
+      // Void-scarred empty space left behind by Void removal: dark obsidian void-abyss grit,
+      // visually distinct from active swirling Void and from ocean/river water.
+      color = r < 0.14 ? "#141022" : r < 0.45 ? "#0b0a14" : "#06070d";
       this.terrainU32[idx] = hexToAbgr(color);
       return;
     } else if (mat === CellMaterial.UNCLAIMED) {
@@ -2443,103 +2448,113 @@ export class VoidRenderer {
 
     lap("shots");
 
-    // 14. Torn-off land drifting into the anomaly: fragments retain their original terrain or building
-    //     color when detached, then smoothly heat up into molten ember, orange, gold, and white-hot
-    //     incandescence with a smooth transition from no glow to a slight glow near the Void's core.
+    // 14. Torn-off buildings, objects, and land swirling into the anomaly:
+    //     - Remain intact multi-pixel blocks initially in their original colors with zero glow.
+    //     - Disintegrate into individual 1x1 pixels closer to the black hole, accelerating via
+    //       spaghettification, heating into molten hues with a smooth slight glow, and disappearing
+    //       upon touching the Void's inner black circle (`coreR`).
     const swallowPortals = activePortals.map((p) => {
       const coreR = Math.max(3.6, p.radius * 0.42);
-      const r = coreR * 0.92;
-      return { x: p.x, y: p.y, r2: r * r, coreR };
+      return { x: p.x, y: p.y, r2: coreR * coreR, coreR };
     });
     const swallowCount = swallowPortals.length;
     let lastRawFill = "";
 
-    for (let i = 0; i < physics.debris.length; i++) {
-      const d = physics.debris[i];
-      let swallowed = false;
+    const isInsideInnerCircle = (px: number, py: number): boolean => {
       for (let j = 0; j < swallowCount; j++) {
         const sp = swallowPortals[j];
-        const dx = d.x - sp.x;
-        const dy = d.y - sp.y;
-        if (dx * dx + dy * dy < sp.r2) {
-          swallowed = true;
-          break;
-        }
+        const dx = px - sp.x;
+        const dy = py - sp.y;
+        if (dx * dx + dy * dy <= sp.r2) return true;
       }
-      if (swallowed) continue;
+      return false;
+    };
+
+    for (let i = 0; i < physics.debris.length; i++) {
+      const d = physics.debris[i];
+      if (isInsideInnerCircle(d.x, d.y)) continue;
 
       const distToPortal = dist(d.portalX - d.x, d.portalY - d.y);
+      const coreR = d.coreRadius ?? 5;
+      if (coreR > 0 && distToPortal <= coreR) continue;
+
       const lifeRatio = d.life / Math.max(0.01, d.maxLife);
       const heat = computeDebrisHeat(
         distToPortal,
         d.startDist ?? 24,
-        d.coreRadius ?? 5,
+        coreR > 0 ? coreR : 5,
         lifeRatio,
       );
       const bodyColor = moltenColorAtHeat(d.color, heat);
       const glowAlpha = this.reduceEffects ? 0 : computeDebrisGlowAlpha(heat);
 
-      const slab = d.size >= 1.0 && d.maxLife > 1.5;
-      if (slab) {
-        const sz = d.size * Math.max(0.35, 1 - lifeRatio * 0.6);
-        const half = sz * 0.5;
+      if (d.intact) {
+        // Intact building/object block in the outer whirlpool before tidal disintegration
+        const bw = Math.max(2, Math.round(d.size));
+        const bh = Math.max(2, Math.round(d.size));
+        const bx = Math.round(d.x - bw * 0.5);
+        const by = Math.round(d.y - bh * 0.5);
         if (glowAlpha > 0.005) {
-          c.fillStyle = moltenGlowColorAtHeat(heat);
-          const pad = 0.16 + heat * 0.24;
-          c.fillRect(d.x - half - pad, d.y - half - pad, sz + pad * 2, sz + pad * 2);
+          const glowCol = moltenGlowColorAtHeat(heat);
+          rawScene.fillStyle = glowCol;
+          rawScene.fillRect(bx - 1, by - 1, bw + 2, bh + 2);
         }
-        c.fillStyle = bodyColor;
-        c.fillRect(d.x - half, d.y - half, sz, sz);
-        const shadowAlpha = 0.5 * (1 - heat * 0.75);
-        if (shadowAlpha > 0.05) {
-          c.fillStyle = `rgba(0, 0, 0, ${shadowAlpha.toFixed(2)})`;
-          c.fillRect(d.x - half, d.y + half - 0.24, sz, 0.24);
-          c.fillRect(d.x + half - 0.24, d.y - half, 0.24, sz);
+        rawScene.fillStyle = bodyColor;
+        rawScene.fillRect(bx, by, bw, bh);
+        if (d.accentColor) {
+          rawScene.fillStyle = moltenColorAtHeat(d.accentColor, heat);
+          rawScene.fillRect(bx, by, 1, 1);
+          if (bw >= 3) rawScene.fillRect(bx + 2, by, 1, 1);
         }
+        // Crisp 1-px dark underside edge giving the intact chunk 3D thickness
+        rawScene.fillStyle = "rgba(0, 0, 0, 0.48)";
+        rawScene.fillRect(bx, by + bh - 1, bw, 1);
         lastRawFill = "";
       } else {
-        // Smooth glow buildup only when heated near the Void core (strictly 0 glow when detached)
+        // Disintegrated individual 1x1 pixel accelerating into the inner whirlpool (spaghettification)
+        const x1 = Math.floor(d.x);
+        const y1 = Math.floor(d.y);
         if (glowAlpha > 0.005) {
           const glowCol = moltenGlowColorAtHeat(heat);
           if (lastRawFill !== glowCol) {
             rawScene.fillStyle = glowCol;
             lastRawFill = glowCol;
           }
-          let x0 = Math.round(d.px);
-          let y0 = Math.round(d.py);
-          const x1 = Math.round(d.x);
-          const y1 = Math.round(d.y);
-          const dxAbs = x1 >= x0 ? x1 - x0 : x0 - x1;
-          const dyAbs = y1 >= y0 ? y1 - y0 : y0 - y1;
-          if (dxAbs <= 1 && dyAbs <= 1) {
-            rawScene.fillRect(x0, y0, 1, 1);
-          } else {
-            const dy = -dyAbs;
-            const sx = x0 < x1 ? 1 : -1;
-            const sy = y0 < y1 ? 1 : -1;
-            let err = dxAbs + dy;
-            for (;;) {
-              rawScene.fillRect(x0, y0, 1, 1);
-              if (x0 === x1 && y0 === y1) break;
-              const e2 = 2 * err;
-              if (e2 >= dy) { err += dy; x0 += sx; }
-              if (e2 <= dxAbs) { err += dxAbs; y0 += sy; }
-            }
-          }
-          if (heat > 0.45) {
-            // Slight 1-px molten halo around the heated pixel near the core
-            const gx = Math.floor(d.x);
-            const gy = Math.floor(d.y);
-            rawScene.fillRect(gx - 1, gy, 3, 1);
-            rawScene.fillRect(gx, gy - 1, 1, 3);
+          if (heat > 0.42) {
+            // Slight 1-px molten halo around the heated pixel near the inner circle
+            if (!isInsideInnerCircle(x1 - 1, y1)) rawScene.fillRect(x1 - 1, y1, 1, 1);
+            if (!isInsideInnerCircle(x1 + 1, y1)) rawScene.fillRect(x1 + 1, y1, 1, 1);
+            if (!isInsideInnerCircle(x1, y1 - 1)) rawScene.fillRect(x1, y1 - 1, 1, 1);
+            if (!isInsideInnerCircle(x1, y1 + 1)) rawScene.fillRect(x1, y1 + 1, 1, 1);
           }
         }
         if (lastRawFill !== bodyColor) {
           rawScene.fillStyle = bodyColor;
           lastRawFill = bodyColor;
         }
-        const sz = Math.max(1, Math.round(d.size * 0.8));
-        rawScene.fillRect(Math.floor(d.x - d.size * 0.4), Math.floor(d.y - d.size * 0.4), sz, sz);
+        // Spaghettification: as the individual pixel speeds up close to the black hole, draw its
+        // stretched 1-px trajectory segment (clipped outside the black hole's inner circle)
+        let x0 = Math.floor(d.px);
+        let y0 = Math.floor(d.py);
+        const dxAbs = x1 >= x0 ? x1 - x0 : x0 - x1;
+        const dyAbs = y1 >= y0 ? y1 - y0 : y0 - y1;
+        if (!this.reduceEffects && (dxAbs > 1 || dyAbs > 1)) {
+          const dy = -dyAbs;
+          const sx = x0 < x1 ? 1 : -1;
+          const sy = y0 < y1 ? 1 : -1;
+          let err = dxAbs + dy;
+          for (;;) {
+            if (!isInsideInnerCircle(x0 + 0.5, y0 + 0.5)) {
+              rawScene.fillRect(x0, y0, 1, 1);
+            }
+            if (x0 === x1 && y0 === y1) break;
+            const e2 = 2 * err;
+            if (e2 >= dy) { err += dy; x0 += sx; }
+            if (e2 <= dxAbs) { err += dxAbs; y0 += sy; }
+          }
+        } else {
+          rawScene.fillRect(x1, y1, 1, 1);
+        }
       }
     }
 

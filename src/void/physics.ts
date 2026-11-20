@@ -112,23 +112,49 @@ export function computeDebrisHeat(
   distToPortal: number,
   startDist: number,
   coreRadius = 5,
-  lifeRatio = 0,
+  _lifeRatio = 0,
 ): number {
   const core = Math.max(2.5, coreRadius);
   const sDist = Math.max(core + 4, startDist);
-  const heatStart = Math.max(core + 3.5, Math.min(sDist * 0.82, core * 4.5));
-  let spatialT = 0;
-  if (distToPortal < heatStart) {
-    spatialT = Math.min(
-      1,
-      Math.max(0, (heatStart - distToPortal) / Math.max(0.5, heatStart - core * 1.05)),
-    );
-  }
-  const lifeT = lifeRatio > 0.24 ? Math.min(1, (lifeRatio - 0.24) / 0.76) : 0;
-  const raw = Math.max(spatialT, lifeT * 0.85);
-  if (raw <= 0) return 0;
+  const heatStart = Math.max(core + 3.5, Math.min(sDist * 0.78, core * 4.8));
+  if (distToPortal >= heatStart) return 0;
+  const raw = Math.min(
+    1,
+    Math.max(0, (heatStart - distToPortal) / Math.max(0.5, heatStart - core)),
+  );
   // Smooth cubic Hermite ramp
   return raw * raw * (3 - 2 * raw);
+}
+
+/** Computes whirlpool spiral and spaghettification kinematics at distance `distToPortal` from a Void
+ * portal with inner circle radius `coreRadius` and initial detachment distance `startDist`.
+ * - Both inward radial pull and tangential whirlpool spin accelerate strongly as `distToPortal -> coreRadius`.
+ * - Intact multi-pixel building/object chunks start with heavier inertia (`intact = true`) before disintegrating
+ *   into fast individual 1x1 pixels closer to the black hole. */
+export function computeWhirlpoolKinematics(
+  distToPortal: number,
+  startDist: number,
+  coreRadius = 5,
+  intact = false,
+): { radialSpeed: number; tangentialSpeed: number; totalSpeed: number; proximity: number } {
+  const core = Math.max(2.5, coreRadius);
+  const fullSpan = Math.max(4, Math.max(startDist, distToPortal) - core);
+  const tidalSpan = Math.max(12, Math.min(fullSpan, core * 5.5));
+  // Proximity u in [0, 1]: blends overall progress from startDist with tidal-zone proximity near the black hole
+  const uFull = Math.min(1, Math.max(0, 1 - (distToPortal - core) / fullSpan));
+  const uTidal = Math.min(1, Math.max(0, 1 - (distToPortal - core) / tidalSpan));
+  const proximity = Math.max(uFull * 0.65, uTidal);
+  const u2 = proximity * proximity;
+  const u3 = u2 * proximity;
+  const massScale = intact ? 0.72 : 1.0;
+
+  // Far-field catch-up pull so distant debris reaches the black hole's tidal whirlpool promptly,
+  // plus steep spaghettification acceleration (up to ~8x) as distToPortal -> coreRadius
+  const farCatchup = distToPortal > core + tidalSpan ? (distToPortal - (core + tidalSpan)) * 0.45 : 0;
+  const radialSpeed = (pixels(2.8) * (1 + 2.2 * proximity + 4.8 * u3) + farCatchup) * massScale;
+  const tangentialSpeed = pixels(4.5) * (1 + 2.6 * proximity + 5.2 * u3) * massScale;
+  const totalSpeed = Math.hypot(radialSpeed, tangentialSpeed);
+  return { radialSpeed, tangentialSpeed, totalSpeed, proximity };
 }
 
 /** Interpolates a sucked-in pixel's original color `baseHex` through a molten blackbody ramp as `heat` (`0..1`) increases:
@@ -369,15 +395,15 @@ export class VoidPhysics {
     slot.maxAge = 0.55;
   }
 
-  /** Resolves the true original color of cell `idx` before Void consumption so sucked-in pixels
-   * start with the exact color of the building, crop, forest, road, river, or wall they came from. */
-  private originalCellColor(
+  /** Resolves the true original primary and accent colors of cell `idx` before Void consumption so
+   * sucked-in buildings, objects, and terrain start intact in their true colors. */
+  private originalCellColors(
     world: VoidWorld,
     idx: number,
     prevMat: number,
     prevCover: number,
     bId: number,
-  ): string {
+  ): { color: string; accent: string } {
     const x = idx % world.grid.w;
     const y = (idx / world.grid.w) | 0;
     const v = (x * 7 + y * 13 + this.debris.length) & 7;
@@ -386,39 +412,49 @@ export class VoidPhysics {
       if (b) {
         const palettes = ARCH_PALETTES[b.archStyle] ?? ARCH_PALETTES.glassTower;
         const pal = palettes[b.variant % palettes.length];
-        return v === 0 ? pal.litEdge : v < 3 ? pal.crown : v < 6 ? pal.mid : pal.podium;
+        const color = v === 0 ? pal.litEdge : v < 3 ? pal.crown : v < 6 ? pal.mid : pal.podium;
+        const accent = (v & 1) === 0 ? pal.neonCore : pal.litEdge;
+        return { color, accent };
       }
     }
     if (prevMat === CellMaterial.UNCLAIMED) {
-      return prevCover === LandCover.RIVER ? (v < 2 ? "#4a9bd1" : "#2b6ca3") : "#153956";
+      const c = prevCover === LandCover.RIVER ? (v < 2 ? "#4a9bd1" : "#2b6ca3") : "#153956";
+      return { color: c, accent: "#58b0e6" };
     }
     if (prevMat === CellMaterial.WALL || prevMat === CellMaterial.BARRIER) {
-      return prevMat === CellMaterial.BARRIER ? "#48c9e0" : (x + y) % 4 === 0 ? "#788ca8" : "#5a6b82";
+      const c = prevMat === CellMaterial.BARRIER ? "#48c9e0" : (x + y) % 4 === 0 ? "#788ca8" : "#5a6b82";
+      return { color: c, accent: "#8fa4c2" };
     }
     if (prevMat === CellMaterial.RECLAIMED) {
-      return v < 3 ? "#9e7e4e" : "#7d623c";
+      return { color: v < 3 ? "#9e7e4e" : "#7d623c", accent: "#b08e5a" };
     }
     if (prevMat === CellMaterial.SALVAGE) {
-      return v < 2 ? "#995c38" : v < 5 ? "#5e4334" : "#3d353a";
+      return { color: v < 2 ? "#995c38" : v < 5 ? "#5e4334" : "#3d353a", accent: "#7a5844" };
     }
     if (prevMat === CellMaterial.STREET) {
       if (prevCover === LandCover.BRIDGE) {
-        return (x + y) % 3 === 0 ? "#523b28" : "#876948";
+        return { color: (x + y) % 3 === 0 ? "#523b28" : "#876948", accent: "#a38152" };
       }
       if (world.streetTier[idx] === 8) {
-        return v < 4 ? "#a38152" : "#8c6d45";
+        return { color: v < 4 ? "#a38152" : "#8c6d45", accent: "#b08a5a" };
       }
-      return world.streetTier[idx] === 4 ? "#252c3b" : "#1d2330";
+      return { color: world.streetTier[idx] === 4 ? "#252c3b" : "#1d2330", accent: "#3a414c" };
     }
     if (prevMat === CellMaterial.PARK || prevCover !== LandCover.NONE) {
       const slabs = SLAB_COLORS[prevCover];
       if (slabs && slabs.length > 0) {
-        return slabs[v % slabs.length];
+        return {
+          color: slabs[v % slabs.length],
+          accent: slabs[(v + 1) % slabs.length],
+        };
       }
-      return v < 4 ? "#3a6e3b" : "#294a33";
+      return { color: v < 4 ? "#3a6e3b" : "#294a33", accent: "#507d39" };
     }
     const urban = SLAB_URBAN[prevMat] ?? SLAB_URBAN[CellMaterial.STREET];
-    return urban[v % urban.length];
+    return {
+      color: urban[v % urban.length],
+      accent: urban[(v + 1) % urban.length],
+    };
   }
 
   /** Converts cell `idx` into Void and queues any affected building for structural support evaluation. */
@@ -485,8 +521,8 @@ export class VoidPhysics {
           const nx = (x | 0) + dx;
           const ny = (y | 0) + dy;
           if (world.grid.inBounds(nx, ny) && world.material[world.grid.index(nx, ny)] === CellMaterial.VOID) {
-            portalX = x + dx * 4;
-            portalY = y + dy * 4;
+            portalX = x + dx * 6;
+            portalY = y + dy * 6;
             bestCoreR = 2.5;
             break;
           }
@@ -495,36 +531,51 @@ export class VoidPhysics {
 
       const dx = portalX - x;
       const dy = portalY - y;
-      const d = Math.max(0.5, dist(dx, dy));
+      const d = Math.max(bestCoreR + 0.5, dist(dx, dy));
       const nx = dx / d;
       const ny = dy / d;
-      const isSlab = hash01(world.seed, 611, idx, this.debris.length) < 0.55;
-      const swirl = (hash01(world.seed, 612, idx, this.debris.length) - 0.5) * (isSlab ? 5.5 : 9.5);
-      const speed = pixels(isSlab ? 2.2 + hash01(world.seed, 613, idx) * 3.0 : 5.5 + hash01(world.seed, 613, idx) * 6.0);
-      // Every detached pixel starts with the true color of the terrain or building it came from;
-      // it heats into molten colors and builds a subtle glow only as it approaches the Void's core.
-      const color = this.originalCellColor(world, idx, prevMat, prevCover, bId);
+      // Buildings, walls, and objects tear off as intact multi-pixel blocks initially, then
+      // disintegrate into individual 1x1 pixels closer to the black hole.
+      const isStructure =
+        bId >= 0 ||
+        prevMat === CellMaterial.BUILDING ||
+        prevMat === CellMaterial.SKYSCRAPER ||
+        prevMat === CellMaterial.WALL ||
+        prevMat === CellMaterial.BARRIER ||
+        prevCover === LandCover.SILO ||
+        prevCover === LandCover.BRIDGE;
+      const startsIntact = isStructure || hash01(world.seed, 611, idx, this.debris.length) < 0.72;
+      const { color, accent } = this.originalCellColors(world, idx, prevMat, prevCover, bId);
+      const kin = computeWhirlpoolKinematics(d, d, bestCoreR, startsIntact);
+      const disintegrateAt = 0.28 + hash01(world.seed, 615, idx, this.debris.length) * 0.24;
 
       this.debris.push({
         x,
         y,
         px: x,
         py: y,
-        vx: nx * speed - ny * swirl,
-        vy: ny * speed + nx * swirl,
+        vx: nx * kin.radialSpeed - ny * kin.tangentialSpeed,
+        vy: ny * kin.radialSpeed + nx * kin.tangentialSpeed,
         portalX,
         portalY,
         color,
+        accentColor: accent,
         glowColor: "rgba(0, 0, 0, 0)",
-        size: isSlab
-          ? 1.0 + hash01(world.seed, 614, idx) * 0.55
-          : prevMat === CellMaterial.SKYSCRAPER
-            ? 1.15
-            : 0.85,
+        size: startsIntact
+          ? isStructure
+            ? prevMat === CellMaterial.SKYSCRAPER
+              ? 2.8
+              : 2.2
+            : 2.0
+          : 1.0,
         life: 0,
-        maxLife: isSlab ? Math.min(2.8, Math.max(0.9, d / 7)) : Math.min(1.45, Math.max(0.45, d / 14)),
+        // Generous safety cap so particles disappear strictly upon touching the inner circle (coreRadius),
+        // never after a short fixed travel time.
+        maxLife: 30,
         startDist: d,
         coreRadius: bestCoreR,
+        intact: startsIntact,
+        disintegrateAt,
       });
     }
   }
@@ -781,29 +832,94 @@ export class VoidPhysics {
       }
     }
 
-    // Advance drifting debris fragments along curved streamlines into their target portal
+    // Advance drifting debris along whirlpool spirals with spaghettification acceleration and tidal disintegration
     for (let i = this.debris.length - 1; i >= 0; i--) {
       const d = this.debris[i];
       d.px = d.x;
       d.py = d.y;
       d.life += dt;
 
-      const dx = d.portalX - d.x;
-      const dy = d.portalY - d.y;
-      const distToPortal = dist(dx, dy);
-      if (distToPortal > 0.6) {
-        const heavy = d.size >= 1.0 && d.maxLife > 1.5;
-        const pull = pixels(heavy ? 9 : 18) * dt;
-        const spin = (heavy ? 3.2 : 4.5) * dt;
-        d.vx += (dx / distToPortal) * pull - (dy / distToPortal) * spin;
-        d.vy += (dy / distToPortal) * pull + (dx / distToPortal) * spin;
+      const coreR = d.coreRadius ?? 0;
+      if (coreR <= 0) {
+        // Non-portal street impact spark
+        d.x += d.vx * dt;
+        d.y += d.vy * dt;
+        if (d.life >= d.maxLife) {
+          this.debris.splice(i, 1);
+        }
+        continue;
       }
-      d.x += d.vx * dt;
-      d.y += d.vy * dt;
 
-      if (d.life >= d.maxLife || distToPortal < 1.1) {
+      const rx = d.x - d.portalX;
+      const ry = d.y - d.portalY;
+      const distToPortal = dist(rx, ry);
+      if (distToPortal <= coreR || d.life >= d.maxLife) {
         this.debris.splice(i, 1);
+        continue;
       }
+
+      const startDist = Math.max(coreR + 4, d.startDist ?? distToPortal);
+      const kin = computeWhirlpoolKinematics(distToPortal, startDist, coreR, Boolean(d.intact));
+
+      // Tidal disintegration: intact multi-pixel building/object chunks remain intact initially,
+      // then shatter into individual 1x1 pixels closer to the black hole
+      if (d.intact && kin.proximity >= (d.disintegrateAt ?? 0.35)) {
+        const pieceCount = Math.min(3, Math.max(2, Math.round(d.size)));
+        d.intact = false;
+        d.size = 1.0;
+        const ux = rx / distToPortal;
+        const uy = ry / distToPortal;
+        const tx = -uy;
+        const ty = ux;
+        for (let k = 1; k <= pieceCount && this.debris.length < 950; k++) {
+          const radOff = (k - 1.5) * 0.65;
+          const tanOff = ((k & 1) === 0 ? 1 : -1) * 0.75;
+          const sx = d.x + ux * radOff + tx * tanOff;
+          const sy = d.y + uy * radOff + ty * tanOff;
+          const sDist = dist(sx - d.portalX, sy - d.portalY);
+          if (sDist <= coreR) continue;
+          this.debris.push({
+            x: sx,
+            y: sy,
+            px: sx,
+            py: sy,
+            vx: d.vx,
+            vy: d.vy,
+            portalX: d.portalX,
+            portalY: d.portalY,
+            color: k === 1 && d.accentColor ? d.accentColor : d.color,
+            glowColor: "rgba(0, 0, 0, 0)",
+            size: 1.0,
+            life: d.life,
+            maxLife: d.maxLife,
+            startDist: d.startDist,
+            coreRadius: coreR,
+            intact: false,
+          });
+        }
+      }
+
+      // Polar whirlpool & spaghettification step: strictly decreases radius toward coreR while spinning
+      const rNext = distToPortal - kin.radialSpeed * dt;
+      if (rNext <= coreR) {
+        // Disappears upon touching the Void's center mass / inner circle
+        this.debris.splice(i, 1);
+        continue;
+      }
+
+      const avgR = Math.max(coreR, 0.5 * (distToPortal + rNext));
+      const dTheta = (kin.tangentialSpeed * dt) / avgR;
+      const cosT = Math.cos(dTheta);
+      const sinT = Math.sin(dTheta);
+      const ux = rx / distToPortal;
+      const uy = ry / distToPortal;
+      const nx = d.portalX + rNext * (ux * cosT - uy * sinT);
+      const ny = d.portalY + rNext * (uy * cosT + ux * sinT);
+      const invDt = 1 / Math.max(0.001, dt);
+      d.vx = (nx - d.x) * invDt;
+      d.vy = (ny - d.y) * invDt;
+      d.x = nx;
+      d.y = ny;
     }
 
     // Advance expanding shockwaves
@@ -936,6 +1052,52 @@ export class VoidPhysics {
       if (onVoid && ch.z < VOID_ABYSS_Z) {
         if (ch.w * ch.h >= 4) {
           this.spawnVoidRipple(Math.round(ch.x), Math.round(ch.y - ch.z));
+        }
+        // Disintegrate fallen building/tower/agent chunk into individual 1x1 pixels that spiral into the portal core
+        if (world.portals.length > 0 && this.debris.length < 850) {
+          const sx0 = Math.round(ch.x);
+          const sy0 = Math.round(ch.y - ch.z);
+          let portalX = sx0;
+          let portalY = sy0;
+          let bestDist = Number.POSITIVE_INFINITY;
+          let bestCoreR = 5;
+          for (const p of world.portals) {
+            if (!p.active) continue;
+            const d = dist(sx0 - p.x, sy0 - p.y);
+            if (d < bestDist) {
+              bestDist = d;
+              portalX = p.x;
+              portalY = p.y;
+              bestCoreR = Math.max(3.6, p.radius * 0.42);
+            }
+          }
+          if (Number.isFinite(bestDist) && bestDist > bestCoreR + 0.5) {
+            const count = Math.min(4, Math.max(1, ch.w * ch.h));
+            for (let k = 0; k < count && this.debris.length < 850; k++) {
+              const px = sx0 + (k & 1) * 0.7;
+              const py = sy0 + (k >> 1) * 0.7;
+              const pDist = dist(px - portalX, py - portalY);
+              if (pDist <= bestCoreR) continue;
+              this.debris.push({
+                x: px,
+                y: py,
+                px,
+                py,
+                vx: 0,
+                vy: 0,
+                portalX,
+                portalY,
+                color: k === 0 ? ch.edgeColor : ch.color,
+                glowColor: "rgba(0, 0, 0, 0)",
+                size: 1.0,
+                life: 0,
+                maxLife: 30,
+                startDist: Math.max(pDist, bestCoreR + 6),
+                coreRadius: bestCoreR,
+                intact: false,
+              });
+            }
+          }
         }
         ch.active = false;
       } else if (ch.age > 3.5) {
