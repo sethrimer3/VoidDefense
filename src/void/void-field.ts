@@ -77,6 +77,8 @@ export class VoidField {
   private nextSealId = 1;
   /** Seamwalker-frozen Void cells (cellIdx -> remaining hold seconds). */
   readonly frozenVoidCells = new Map<number, number>();
+  /** Contested/removed cells temporarily holding back the Void (cellIdx -> remaining seconds). */
+  readonly contestedCells = new Map<number, number>();
   /** Countervoid Heart active orange influence cells. */
   readonly countervoidCells = new Set<number>();
   /** 1 if cell was converted from VOID/UNCLAIMED by Countervoid (vs pre-existing land). */
@@ -445,6 +447,7 @@ export class VoidField {
   ): boolean {
     if (idx < 0 || idx >= world.grid.count || voidPowerAmount <= 0) return false;
     if (world.material[idx] === CellMaterial.VOID) return false;
+    if (this.contestedCells.has(idx)) return false;
     const totalMicroCost = this.totalCellMicroCost(world, idx, 1);
     const addedMicro = Math.round(voidPowerAmount * VOID_CONTEST_COSTS.MICRO_WORK_PER_VOID_POWER);
     const nextMicro = this.cellMicroWork[idx] + addedMicro;
@@ -468,9 +471,19 @@ export class VoidField {
     return false;
   }
 
+  /** Marks cell `cellIdx` as contested so the Void holds back for `duration` seconds
+   * (turning it neon orange and fading back to Void color as it uncontests). */
+  markContested(cellIdx: number, duration = VOID_CONTEST_COSTS.CONTEST_HOLD_SECONDS): void {
+    if (duration <= 0) return;
+    const prev = this.contestedCells.get(cellIdx) ?? 0;
+    if (duration > prev) {
+      this.contestedCells.set(cellIdx, duration);
+    }
+  }
+
   /** Destroys a single `CellMaterial.VOID` pixel, turning it into `CellMaterial.EMPTY`.
    * Void removal never restores land or buildings; the empty space left behind costs
-   * only `EMPTY_COST` (1) void power for the Void to reclaim. */
+   * only `EMPTY_COST` (1) void power for the Void to reclaim after the contest holdback expires. */
   removeVoidPixel(world: VoidWorld, voidIdx: number, rebuild = true): boolean {
     if (voidIdx < 0 || voidIdx >= world.grid.count) return false;
     if (world.material[voidIdx] !== CellMaterial.VOID) return false;
@@ -482,10 +495,59 @@ export class VoidField {
     world.landCover[voidIdx] = LandCover.NONE;
     this.cellMicroWork[voidIdx] = 0;
     this.frozenVoidCells.delete(voidIdx);
+    this.markContested(voidIdx);
     this.voidCellCount = Math.max(0, this.voidCellCount - 1);
     world.grid.markRadiusDirty(voidIdx, CORRUPTION_REACH);
     if (rebuild) this.rebuildFrontier(world);
     return true;
+  }
+
+  /** Removes all `CellMaterial.VOID` pixels within `radius` world pixels of `centerIdx`
+   * (centered on an adjacent Void cell if `centerIdx` itself is non-Void). */
+  removeVoidArea(
+    world: VoidWorld,
+    centerIdx: number,
+    radius: number,
+    rebuild = true,
+  ): { removed: number; firstVoidIdx: number } {
+    if (radius < 0 || centerIdx < 0 || centerIdx >= world.grid.count) {
+      return { removed: 0, firstVoidIdx: -1 };
+    }
+    const { w } = world.grid;
+    let cx = centerIdx % w;
+    let cy = (centerIdx / w) | 0;
+    if (world.material[centerIdx] !== CellMaterial.VOID) {
+      for (const [dx, dy] of ORTHO) {
+        const vx = cx + dx;
+        const vy = cy + dy;
+        if (world.grid.inBounds(vx, vy) && world.material[vy * w + vx] === CellMaterial.VOID) {
+          cx = vx;
+          cy = vy;
+          break;
+        }
+      }
+    }
+    const rCeil = Math.ceil(radius);
+    const rSq = radius * radius;
+    let removed = 0;
+    let firstVoidIdx = -1;
+    for (let dy = -rCeil; dy <= rCeil; dy++) {
+      for (let dx = -rCeil; dx <= rCeil; dx++) {
+        if (dx * dx + dy * dy > rSq) continue;
+        const vx = cx + dx;
+        const vy = cy + dy;
+        if (!world.grid.inBounds(vx, vy)) continue;
+        const vIdx = vy * w + vx;
+        if (this.removeVoidPixel(world, vIdx, false)) {
+          if (firstVoidIdx < 0) firstVoidIdx = vIdx;
+          removed++;
+        }
+      }
+    }
+    if (removed > 0 && rebuild) {
+      this.rebuildFrontier(world);
+    }
+    return { removed, firstVoidIdx };
   }
 
   /** Removes up to `count` adjacent `CellMaterial.VOID` pixels bordering frontier cell `cellIdx`.
@@ -576,7 +638,17 @@ export class VoidField {
       return "reservoirDepletedVictory";
     }
 
-    // Advance Quarantine Bell seal timers
+    // Advance Quarantine Bell seal timers and contested holdback timers
+    if (this.contestedCells.size > 0) {
+      for (const [idx, rem] of this.contestedCells) {
+        const next = rem - dt;
+        if (next <= 0) {
+          this.contestedCells.delete(idx);
+        } else {
+          this.contestedCells.set(idx, next);
+        }
+      }
+    }
     if (this.quarantineSeals.length > 0) {
       let expiredAny = false;
       for (let i = this.quarantineSeals.length - 1; i >= 0; i--) {
@@ -657,6 +729,10 @@ export class VoidField {
 
     for (let i = 0; i < this.frontierCells.length; i++) {
       const cIdx = this.frontierCells[i];
+      if (this.contestedCells.has(cIdx)) {
+        weights[i] = 0;
+        continue;
+      }
       let wEdge = this.frontierContactCount[cIdx];
       const cellX = world.grid.xOf(cIdx);
       const cellY = world.grid.yOf(cIdx);
@@ -899,6 +975,7 @@ export class VoidField {
    *   with cheap terrain/infantry loops. */
   applyAntiVoidAblation(world: VoidWorld, targetCellIdx: number, rawDamage: number): void {
     if (targetCellIdx < 0 || targetCellIdx >= world.grid.count) return;
+    this.markContested(targetCellIdx);
     const ablatedMicro = Math.round(rawDamage * PIXEL_WORK_SCALE);
     if (this.cellMicroWork[targetCellIdx] > 0) {
       this.cellMicroWork[targetCellIdx] = Math.max(0, this.cellMicroWork[targetCellIdx] - ablatedMicro);
