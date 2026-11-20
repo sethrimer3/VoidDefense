@@ -116,7 +116,7 @@ export function computeDebrisHeat(
 ): number {
   const core = Math.max(2.5, coreRadius);
   const sDist = Math.max(core + 4, startDist);
-  const heatStart = Math.max(core + 3.5, Math.min(sDist * 0.78, core * 4.8));
+  const heatStart = Math.max(core + 3.0, Math.min(sDist * 0.72, core * 4.0));
   if (distToPortal >= heatStart) return 0;
   const raw = Math.min(
     1,
@@ -139,20 +139,20 @@ export function computeWhirlpoolKinematics(
 ): { radialSpeed: number; tangentialSpeed: number; totalSpeed: number; proximity: number } {
   const core = Math.max(2.5, coreRadius);
   const fullSpan = Math.max(4, Math.max(startDist, distToPortal) - core);
-  const tidalSpan = Math.max(12, Math.min(fullSpan, core * 5.5));
+  const tidalSpan = Math.max(10, Math.min(fullSpan, core * 4.2));
   // Proximity u in [0, 1]: blends overall progress from startDist with tidal-zone proximity near the black hole
   const uFull = Math.min(1, Math.max(0, 1 - (distToPortal - core) / fullSpan));
   const uTidal = Math.min(1, Math.max(0, 1 - (distToPortal - core) / tidalSpan));
   const proximity = Math.max(uFull * 0.65, uTidal);
   const u2 = proximity * proximity;
   const u3 = u2 * proximity;
-  const massScale = intact ? 0.72 : 1.0;
+  const massScale = intact ? 0.75 : 1.0;
 
   // Far-field catch-up pull so distant debris reaches the black hole's tidal whirlpool promptly,
   // plus steep spaghettification acceleration (up to ~8x) as distToPortal -> coreRadius
-  const farCatchup = distToPortal > core + tidalSpan ? (distToPortal - (core + tidalSpan)) * 0.45 : 0;
-  const radialSpeed = (pixels(2.8) * (1 + 2.2 * proximity + 4.8 * u3) + farCatchup) * massScale;
-  const tangentialSpeed = pixels(4.5) * (1 + 2.6 * proximity + 5.2 * u3) * massScale;
+  const farCatchup = distToPortal > core + tidalSpan ? (distToPortal - (core + tidalSpan)) * 0.5 : 0;
+  const radialSpeed = (pixels(3.2) * (1 + 2.4 * proximity + 5.0 * u3) + farCatchup) * massScale;
+  const tangentialSpeed = pixels(3.3) * (1 + 2.1 * proximity + 4.0 * u3) * massScale;
   const totalSpeed = Math.hypot(radialSpeed, tangentialSpeed);
   return { radialSpeed, tangentialSpeed, totalSpeed, proximity };
 }
@@ -438,7 +438,10 @@ export class VoidPhysics {
       if (world.streetTier[idx] === 8) {
         return { color: v < 4 ? "#a38152" : "#8c6d45", accent: "#b08a5a" };
       }
-      return { color: world.streetTier[idx] === 4 ? "#252c3b" : "#1d2330", accent: "#3a414c" };
+      // Broken asphalt pavement & roadbed concrete aggregate (readable against the dark Void)
+      const asphalt = v < 3 ? "#4a5464" : v < 6 ? "#586478" : "#3e4756";
+      const accent = v === 0 ? "#d4a64a" : "#7a869a";
+      return { color: asphalt, accent };
     }
     if (prevMat === CellMaterial.PARK || prevCover !== LandCover.NONE) {
       const slabs = SLAB_COLORS[prevCover];
@@ -496,18 +499,21 @@ export class VoidPhysics {
       }
     }
 
-    if (spawnDebris && prevMat !== CellMaterial.VOID && prevMat !== CellMaterial.EMPTY && this.debris.length < 750) {
-      const x = world.grid.xOf(idx) + 0.5;
-      const y = world.grid.yOf(idx) + 0.5;
+    if (spawnDebris && prevMat !== CellMaterial.VOID && prevMat !== CellMaterial.EMPTY) {
+      if (this.debris.length >= 750) {
+        this.debris.shift();
+      }
+      const rawX = world.grid.xOf(idx) + 0.5;
+      const rawY = world.grid.yOf(idx) + 0.5;
 
       // Locate nearest active Void portal (or fall back to nearest Void neighbor)
-      let portalX = x;
-      let portalY = y;
+      let portalX = rawX;
+      let portalY = rawY;
       let bestDist = Number.POSITIVE_INFINITY;
       let bestCoreR = 5;
       for (const p of world.portals) {
         if (!p.active) continue;
-        const d = dist(x - p.x, y - p.y);
+        const d = dist(rawX - p.x, rawY - p.y);
         if (d < bestDist) {
           bestDist = d;
           portalX = p.x;
@@ -518,24 +524,34 @@ export class VoidPhysics {
 
       if (!Number.isFinite(bestDist)) {
         for (const [dx, dy] of ORTHO) {
-          const nx = (x | 0) + dx;
-          const ny = (y | 0) + dy;
+          const nx = (rawX | 0) + dx;
+          const ny = (rawY | 0) + dy;
           if (world.grid.inBounds(nx, ny) && world.material[world.grid.index(nx, ny)] === CellMaterial.VOID) {
-            portalX = x + dx * 6;
-            portalY = y + dy * 6;
+            portalX = rawX + dx * 6;
+            portalY = rawY + dy * 6;
             bestCoreR = 2.5;
             break;
           }
         }
       }
 
-      const dx = portalX - x;
-      const dy = portalY - y;
-      const d = Math.max(bestCoreR + 0.5, dist(dx, dy));
-      const nx = dx / d;
-      const ny = dy / d;
-      // Buildings, walls, and objects tear off as intact multi-pixel blocks initially, then
-      // disintegrate into individual 1x1 pixels closer to the black hole.
+      const rawDx = portalX - rawX;
+      const rawDy = portalY - rawY;
+      const rawDist = Math.max(bestCoreR + 0.8, dist(rawDx, rawDy));
+      const nx = rawDx / rawDist;
+      const ny = rawDy / rawDist;
+
+      // Start slightly closer to the Void center (clearing the subterranean ledge lip)
+      const inwardShift = Math.max(
+        0,
+        Math.min(rawDist - bestCoreR - 1.2, Math.min(4.5, (rawDist - bestCoreR) * 0.22)),
+      );
+      const x = rawX + nx * inwardShift;
+      const y = rawY + ny * inwardShift;
+      const d = Math.max(bestCoreR + 0.5, rawDist - inwardShift);
+
+      // Buildings, walls, streets, and objects tear off as intact blocks/slabs or crumbling particles,
+      // then disintegrate into individual 1x1 pixels closer to the black hole.
       const isStructure =
         bId >= 0 ||
         prevMat === CellMaterial.BUILDING ||
@@ -544,10 +560,13 @@ export class VoidPhysics {
         prevMat === CellMaterial.BARRIER ||
         prevCover === LandCover.SILO ||
         prevCover === LandCover.BRIDGE;
-      const startsIntact = isStructure || hash01(world.seed, 611, idx, this.debris.length) < 0.72;
+      const isStreet = prevMat === CellMaterial.STREET;
+      const startsIntact =
+        isStructure ||
+        (isStreet ? hash01(world.seed, 611, idx, this.debris.length) < 0.55 : hash01(world.seed, 611, idx, this.debris.length) < 0.72);
       const { color, accent } = this.originalCellColors(world, idx, prevMat, prevCover, bId);
       const kin = computeWhirlpoolKinematics(d, d, bestCoreR, startsIntact);
-      const disintegrateAt = 0.28 + hash01(world.seed, 615, idx, this.debris.length) * 0.24;
+      const disintegrateAt = 0.36 + hash01(world.seed, 615, idx, this.debris.length) * 0.22;
 
       this.debris.push({
         x,
@@ -577,6 +596,32 @@ export class VoidPhysics {
         intact: startsIntact,
         disintegrateAt,
       });
+
+      // Streets also shed a crumbling 1x1 asphalt/roadbed particle as the pavement fractures into the Void
+      if (isStreet && startsIntact && d > bestCoreR + 2.0 && this.debris.length < 750) {
+        const px2 = x - ny * 0.65 + nx * 0.5;
+        const py2 = y + nx * 0.65 + ny * 0.5;
+        const d2 = Math.max(bestCoreR + 0.5, dist(portalX - px2, portalY - py2));
+        const kin2 = computeWhirlpoolKinematics(d2, d2, bestCoreR, false);
+        this.debris.push({
+          x: px2,
+          y: py2,
+          px: px2,
+          py: py2,
+          vx: nx * kin2.radialSpeed - ny * kin2.tangentialSpeed,
+          vy: ny * kin2.radialSpeed + nx * kin2.tangentialSpeed,
+          portalX,
+          portalY,
+          color: accent,
+          glowColor: "rgba(0, 0, 0, 0)",
+          size: 1.0,
+          life: 0,
+          maxLife: 30,
+          startDist: d2,
+          coreRadius: bestCoreR,
+          intact: false,
+        });
+      }
     }
   }
 

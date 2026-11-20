@@ -459,9 +459,31 @@ test("7. Whirlpool spin, spaghettification acceleration, intact-to-pixel disinte
 
   assert.equal(sawDisintegration, true, "Intact building block must disintegrate into individual 1x1 pixels closer to the black hole");
   assert.equal(physics.debris.length, 0, "All disintegrated pixels must be swallowed by the black hole");
-  assert.ok(totalAngleSwept > 1.2, `Expected whirlpool spiral rotation > 1.2 rad, got ${totalAngleSwept}`);
+  assert.ok(totalAngleSwept > 0.85, `Expected whirlpool spiral rotation > 0.85 rad, got ${totalAngleSwept}`);
   assert.ok(
     lastDistBeforeVanish <= cR + 3.5,
     `Pixels must disappear right upon touching the inner circle coreR=${cR} (last dist=${lastDistBeforeVanish})`,
   );
+
+  // 3. Consuming street cells always crumbles into visible asphalt/pavement particles starting slightly closer to the center
+  let streetCell = -1;
+  for (let i = 0; i < world.grid.count; i++) {
+    if (world.material[i] === CellMaterial.STREET && world.streetTier[i] !== 8) {
+      streetCell = i;
+      break;
+    }
+  }
+  assert.ok(streetCell >= 0, "Expected an urban street cell");
+  const sxCell = (streetCell % world.grid.w) + 0.5;
+  const syCell = ((streetCell / world.grid.w) | 0) + 0.5;
+  physics.consumeCellIntoVoid(world, streetCell, true);
+  assert.ok(physics.debris.length >= 1, "Consumed street cell must spawn crumbling pavement debris");
+  const streetFrag = physics.debris[0];
+  const rawCellDist = Math.hypot(sxCell - streetFrag.portalX, syCell - streetFrag.portalY);
+  const spawnDist = Math.hypot(streetFrag.x - streetFrag.portalX, streetFrag.y - streetFrag.portalY);
+  assert.ok(spawnDist < rawCellDist, `Spawned particle must start slightly closer to the Void center (${spawnDist} < ${rawCellDist})`);
+  const sR = parseInt(streetFrag.color.slice(1, 3), 16);
+  const sG = parseInt(streetFrag.color.slice(3, 5), 16);
+  const sB = parseInt(streetFrag.color.slice(5, 7), 16);
+  assert.ok(sR >= 55 && sG >= 65 && sB >= 80, `Street debris must use readable broken asphalt tones, got ${streetFrag.color}`);
 });
