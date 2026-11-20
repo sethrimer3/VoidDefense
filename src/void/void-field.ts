@@ -300,7 +300,11 @@ export class VoidField {
           budget--;
           needsRebuild = true;
           break;
-        } else if (world.material[nIdx] !== CellMaterial.VOID && world.material[nIdx] !== CellMaterial.UNCLAIMED) {
+        } else if (
+          world.material[nIdx] !== CellMaterial.VOID &&
+          world.material[nIdx] !== CellMaterial.UNCLAIMED &&
+          world.material[nIdx] !== CellMaterial.EMPTY
+        ) {
           // Radiate Countervoid conduit across solid land within heart range to reach the Void frontier
           nextAdd.push(nIdx);
         }
@@ -380,50 +384,141 @@ export class VoidField {
     return edges;
   }
 
-  /** Resistance micro-work required to remove 1 HP from cell `idx`. */
-  private microWorkPerHp(
+  /** Void power cost to consume cell `idx` into Void:
+   * - Empty space: `EMPTY_COST` (1)
+   * - Land: `LAND_COST_PER_PIXEL` (2)
+   * - Land + building: `LAND_COST_PER_PIXEL + buildingHeightPx * BUILDING_COST_PER_PIXEL` */
+  voidPowerCost(world: VoidWorld, idx: number): number {
+    const mat = world.material[idx];
+    if (mat === CellMaterial.VOID) return 0;
+    if (mat === CellMaterial.EMPTY) return VOID_CONTEST_COSTS.EMPTY_COST;
+    const floors = world.columnFloors[idx];
+    const buildingHeightPx = floors > 0 ? floorsToElevation(floors, "full") : 0;
+    return (
+      VOID_CONTEST_COSTS.LAND_COST_PER_PIXEL +
+      buildingHeightPx * VOID_CONTEST_COSTS.BUILDING_COST_PER_PIXEL
+    );
+  }
+
+  /** Integer micro-work required to consume cell `idx` into Void.
+   * Uses `voidPowerCost * MICRO_WORK_PER_VOID_POWER`, scaled for player fortifications
+   * (walls, barriers, reclaimed bedrock) and Gravity Anchors. */
+  private totalCellMicroCost(
     world: VoidWorld,
     idx: number,
     wallResistanceMult: number,
     gravityAnchorCells?: Uint8Array,
   ): number {
+    const powerCost = this.voidPowerCost(world, idx);
+    if (powerCost <= 0) return 0;
+    let microCost = powerCost * VOID_CONTEST_COSTS.MICRO_WORK_PER_VOID_POWER;
     const m = world.material[idx];
-    let base: number = MATERIAL_RESISTANCE.street;
-    switch (m) {
-      case CellMaterial.UNCLAIMED:
-        base = MATERIAL_RESISTANCE.unclaimed;
-        break;
-      case CellMaterial.STREET:
-        base = MATERIAL_RESISTANCE.street;
-        break;
-      case CellMaterial.PARK:
-        base = MATERIAL_RESISTANCE.park;
-        break;
-      case CellMaterial.RECLAIMED:
-        base = MATERIAL_RESISTANCE.reclaimed;
-        break;
-      case CellMaterial.SALVAGE:
-        base = MATERIAL_RESISTANCE.salvage;
-        break;
-      case CellMaterial.BUILDING:
-        base = MATERIAL_RESISTANCE.building;
-        break;
-      case CellMaterial.SKYSCRAPER:
-        base = MATERIAL_RESISTANCE.skyscraper;
-        break;
-      case CellMaterial.WALL:
-        base = Math.round(MATERIAL_RESISTANCE.wall * wallResistanceMult);
-        break;
-      case CellMaterial.BARRIER:
-        base = Math.round(MATERIAL_RESISTANCE.barrier * wallResistanceMult);
-        break;
+    if (m === CellMaterial.WALL) {
+      microCost = Math.round(
+        microCost * (MATERIAL_RESISTANCE.wall / MATERIAL_RESISTANCE.street) * wallResistanceMult,
+      );
+    } else if (m === CellMaterial.BARRIER) {
+      microCost = Math.round(
+        microCost * (MATERIAL_RESISTANCE.barrier / MATERIAL_RESISTANCE.street) * wallResistanceMult,
+      );
+    } else if (m === CellMaterial.RECLAIMED) {
+      microCost = Math.round(
+        microCost * (MATERIAL_RESISTANCE.reclaimed / MATERIAL_RESISTANCE.street),
+      );
     }
     if (gravityAnchorCells && gravityAnchorCells[idx]) {
-      base = Math.round(base * 1.45);
+      microCost = Math.round(microCost * 1.45);
     }
-    // Four pixels occupy one former cell. Scaling work precision by four
-    // gives each pixel exactly one quarter of the former erosion cost.
-    return Math.max(10, base);
+    return Math.max(1, microCost);
+  }
+
+  /** Spends `voidPowerAmount` of Void power on cell `idx` pixel by pixel.
+   * Partially paid pixels carry progress over in `cellMicroWork[idx]` deterministically
+   * until the full cost is paid, then convert into `CellMaterial.VOID`.
+   * Returns true if the cell was consumed into Void. */
+  spendVoidPowerOnCell(
+    world: VoidWorld,
+    physics: VoidPhysics,
+    idx: number,
+    voidPowerAmount: number,
+    rebuild = true,
+  ): boolean {
+    if (idx < 0 || idx >= world.grid.count || voidPowerAmount <= 0) return false;
+    if (world.material[idx] === CellMaterial.VOID) return false;
+    const totalMicroCost = this.totalCellMicroCost(world, idx, 1);
+    const addedMicro = Math.round(voidPowerAmount * VOID_CONTEST_COSTS.MICRO_WORK_PER_VOID_POWER);
+    const nextMicro = this.cellMicroWork[idx] + addedMicro;
+
+    if (nextMicro >= totalMicroCost && this.lanternRefCount[idx] === 0) {
+      this.cellMicroWork[idx] = 0;
+      physics.consumeCellIntoVoid(world, idx, true);
+      if (rebuild) this.rebuildFrontier(world);
+      return true;
+    }
+
+    this.cellMicroWork[idx] = Math.min(nextMicro, Math.max(0, totalMicroCost - 1));
+    if (world.maxHp[idx] > 0) {
+      const remainingMicro = Math.max(0, totalMicroCost - this.cellMicroWork[idx]);
+      const nextHp = Math.max(1, Math.ceil((world.maxHp[idx] * remainingMicro) / totalMicroCost));
+      if (nextHp < world.hp[idx]) {
+        world.hp[idx] = nextHp;
+        world.grid.markIndexDirty(idx);
+      }
+    }
+    return false;
+  }
+
+  /** Destroys a single `CellMaterial.VOID` pixel, turning it into `CellMaterial.EMPTY`.
+   * Void removal never restores land or buildings; the empty space left behind costs
+   * only `EMPTY_COST` (1) void power for the Void to reclaim. */
+  removeVoidPixel(world: VoidWorld, voidIdx: number, rebuild = true): boolean {
+    if (voidIdx < 0 || voidIdx >= world.grid.count) return false;
+    if (world.material[voidIdx] !== CellMaterial.VOID) return false;
+    world.material[voidIdx] = CellMaterial.EMPTY;
+    world.hp[voidIdx] = 0;
+    world.maxHp[voidIdx] = 0;
+    world.buildingAt[voidIdx] = -1;
+    world.columnFloors[voidIdx] = 0;
+    world.landCover[voidIdx] = LandCover.NONE;
+    this.cellMicroWork[voidIdx] = 0;
+    this.frozenVoidCells.delete(voidIdx);
+    this.voidCellCount = Math.max(0, this.voidCellCount - 1);
+    world.grid.markRadiusDirty(voidIdx, CORRUPTION_REACH);
+    if (rebuild) this.rebuildFrontier(world);
+    return true;
+  }
+
+  /** Removes up to `count` adjacent `CellMaterial.VOID` pixels bordering frontier cell `cellIdx`.
+   * Returns `{ removed, firstVoidIdx }`. */
+  removeVoidPixelsNear(
+    world: VoidWorld,
+    cellIdx: number,
+    count: number,
+    rebuild = true,
+  ): { removed: number; firstVoidIdx: number } {
+    if (count <= 0 || cellIdx < 0 || cellIdx >= world.grid.count) {
+      return { removed: 0, firstVoidIdx: -1 };
+    }
+    const { w } = world.grid;
+    const cx = cellIdx % w;
+    const cy = (cellIdx / w) | 0;
+    let removed = 0;
+    let firstVoidIdx = -1;
+    for (const [dx, dy] of ORTHO) {
+      if (removed >= count) break;
+      const vx = cx + dx;
+      const vy = cy + dy;
+      if (!world.grid.inBounds(vx, vy)) continue;
+      const vIdx = vy * w + vx;
+      if (this.removeVoidPixel(world, vIdx, false)) {
+        if (firstVoidIdx < 0) firstVoidIdx = vIdx;
+        removed++;
+      }
+    }
+    if (removed > 0 && rebuild) {
+      this.rebuildFrontier(world);
+    }
+    return { removed, firstVoidIdx };
   }
 
   /** Advances Void expansion, delayed portals, and Void Node spawns for one fixed tick. */
@@ -746,33 +841,42 @@ export class VoidField {
 
       if (effectiveMicro <= 0) continue;
 
-      const totalCellMicro = this.cellMicroWork[cIdx] + effectiveMicro;
-      const costPerHp = this.microWorkPerHp(
+      const totalMicroCost = this.totalCellMicroCost(
         world,
         cIdx,
         opts.wallResistanceMultiplier,
         opts.gravityAnchorMask,
       );
+      if (totalMicroCost <= 0) continue;
 
-      if (totalCellMicro >= costPerHp) {
-        const hpLoss = Math.floor(totalCellMicro / costPerHp);
-        this.cellMicroWork[cIdx] = totalCellMicro % costPerHp;
-        const curHp = world.hp[cIdx];
-        if (hpLoss >= curHp && this.lanternRefCount[cIdx] === 0) {
+      const nextMicro = this.cellMicroWork[cIdx] + effectiveMicro;
+      if (nextMicro >= totalMicroCost) {
+        if (this.lanternRefCount[cIdx] === 0) {
           this.cellMicroWork[cIdx] = 0;
           physics.consumeCellIntoVoid(world, cIdx, true);
         } else {
-          const maxHp = Math.max(1, world.maxHp[cIdx]);
-          const nextHp = Math.max(this.lanternRefCount[cIdx] > 0 ? 1 : 0, curHp - hpLoss);
-          world.hp[cIdx] = nextHp;
-          const prevStage = curHp / maxHp < 0.4 ? 2 : curHp / maxHp < 0.75 ? 1 : 0;
-          const nextStage = nextHp / maxHp < 0.4 ? 2 : nextHp / maxHp < 0.75 ? 1 : 0;
-          if (prevStage !== nextStage) {
-            world.grid.markIndexDirty(cIdx);
-          }
+          this.cellMicroWork[cIdx] = totalMicroCost - 1;
+          world.hp[cIdx] = Math.max(1, world.hp[cIdx]);
         }
       } else {
-        this.cellMicroWork[cIdx] = totalCellMicro;
+        this.cellMicroWork[cIdx] = nextMicro;
+        const maxHp = world.maxHp[cIdx];
+        if (maxHp > 0) {
+          const curHp = world.hp[cIdx];
+          const remainingMicro = totalMicroCost - nextMicro;
+          const nextHp = Math.max(
+            this.lanternRefCount[cIdx] > 0 ? 1 : 1,
+            Math.ceil((maxHp * remainingMicro) / totalMicroCost),
+          );
+          if (nextHp < curHp) {
+            world.hp[cIdx] = nextHp;
+            const prevStage = curHp / maxHp < 0.4 ? 2 : curHp / maxHp < 0.75 ? 1 : 0;
+            const nextStage = nextHp / maxHp < 0.4 ? 2 : nextHp / maxHp < 0.75 ? 1 : 0;
+            if (prevStage !== nextStage) {
+              world.grid.markIndexDirty(cIdx);
+            }
+          }
+        }
       }
     }
 

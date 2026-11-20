@@ -39,6 +39,10 @@ export type TowerSpec = {
   range: number;
   cooldownSeconds: number;
   color: string;
+  /** Whether this weapon's attacks can destroy Void pixels (turning them into empty space). */
+  removesVoid?: boolean;
+  /** Number of Void pixels removed per qualifying hit. */
+  voidRemovalAmount?: number;
 };
 
 export const TOWER_SPECS: Record<TowerTypeId, TowerSpec> = {
@@ -80,6 +84,8 @@ export const TOWER_SPECS: Record<TowerTypeId, TowerSpec> = {
     range: pixels(32),
     cooldownSeconds: 2.5,
     color: "#ff6b2b",
+    removesVoid: true,
+    voidRemovalAmount: 1,
   },
   constructorHub: {
     id: "constructorHub",
@@ -158,6 +164,8 @@ export const TOWER_SPECS: Record<TowerTypeId, TowerSpec> = {
     range: pixels(38),
     cooldownSeconds: 4.0,
     color: "#ffa630",
+    removesVoid: true,
+    voidRemovalAmount: 1,
   },
   voidSiphon: {
     id: "voidSiphon",
@@ -626,7 +634,7 @@ export class VoidCombatManager {
       for (let px = x; px < x + spec.w; px++) {
         const idx = world.grid.index(px, py);
         const mat = world.material[idx];
-        if (mat === CellMaterial.VOID || mat === CellMaterial.UNCLAIMED) return false;
+        if (mat === CellMaterial.VOID || mat === CellMaterial.UNCLAIMED || mat === CellMaterial.EMPTY) return false;
         const occ = world.towerAt[idx];
         if (occ >= 0 && occ !== ignoreUid) return false;
       }
@@ -1533,7 +1541,7 @@ export class VoidCombatManager {
         if (!world.grid.inBounds(cx, cy)) continue;
         const idx = world.grid.index(cx, cy);
         const mat = world.material[idx];
-        if (mat === CellMaterial.VOID || mat === CellMaterial.UNCLAIMED) continue;
+        if (mat === CellMaterial.VOID || mat === CellMaterial.UNCLAIMED || mat === CellMaterial.EMPTY) continue;
         const hpDeficit = world.maxHp[idx] - world.hp[idx];
         let score = hpDeficit * 2;
         const bId = world.buildingAt[idx];
@@ -1777,17 +1785,8 @@ export class VoidCombatManager {
       const d = dist(targetX - a.x, targetY - a.y);
       if (d <= range && a.cooldown <= 0) {
         a.cooldown = isMech ? 0.45 : 0.55;
-        if (this.lasers.length < 180) {
-          this.lasers.push({
-            x0: a.x,
-            y0: a.y,
-            x1: targetX,
-            y1: targetY,
-            ttl: 0.14,
-            color: isMech ? "#ffaa33" : "#ff6b2b",
-            energy: true,
-          });
-        }
+        let beamTargetX = targetX;
+        let beamTargetY = targetY;
         if (hitOrganism) {
           hitOrganism.hp -= damage;
           if (hitOrganism.hp <= 0) {
@@ -1804,6 +1803,37 @@ export class VoidCombatManager {
           }
         } else if (frontierTarget) {
           voidField.applyAntiVoidAblation(world, frontierTarget.cellIdx, damage);
+          const weaponSpec = home
+            ? TOWER_SPECS[home.type]
+            : isMech
+              ? TOWER_SPECS.heavyMechBay
+              : a.kind === "rifleman"
+                ? TOWER_SPECS.infantryBarracks
+                : undefined;
+          const standingIdx = world.grid.index(Math.floor(a.x), Math.floor(a.y));
+          const standingInVoid = world.grid.inBounds(Math.floor(a.x), Math.floor(a.y)) && world.material[standingIdx] === CellMaterial.VOID;
+          if (!standingInVoid && weaponSpec?.removesVoid && (weaponSpec.voidRemovalAmount ?? 0) > 0) {
+            const res = voidField.removeVoidPixelsNear(
+              world,
+              frontierTarget.cellIdx,
+              weaponSpec.voidRemovalAmount!,
+            );
+            if (res.firstVoidIdx >= 0) {
+              beamTargetX = world.grid.xOf(res.firstVoidIdx) + 0.5;
+              beamTargetY = world.grid.yOf(res.firstVoidIdx) + 0.5;
+            }
+          }
+        }
+        if (this.lasers.length < 180) {
+          this.lasers.push({
+            x0: a.x,
+            y0: a.y,
+            x1: beamTargetX,
+            y1: beamTargetY,
+            ttl: 0.14,
+            color: isMech ? "#ffaa33" : "#ff6b2b",
+            energy: true,
+          });
         }
       } else if (d > range * 0.8) {
         a.x = Math.max(1, Math.min(world.grid.w - 2, a.x + ((targetX - a.x) / d) * speed * dt));
