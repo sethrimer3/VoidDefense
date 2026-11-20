@@ -612,27 +612,26 @@ export class VoidRenderer {
     const { w, h } = world.grid;
     if (px < 0 || px >= w || py < 0 || py >= h) return;
 
-    // Whole-pixel size reduction as chunk plunges below ground level into the abyss
+    // Whole-pixel size reduction and molten heating as chunk plunges below ground level into the Void abyss
     let cw = ch.w;
     let chH = ch.h;
     let fill = ch.color;
     let edge = ch.edgeColor;
     if (ch.z < 0) {
       const depth = -ch.z;
+      const heatRaw = Math.min(1, Math.max(0, (depth - 2) / 18));
+      const heat = heatRaw * heatRaw * (3 - 2 * heatRaw);
+      fill = moltenColorAtHeat(ch.color, heat);
+      edge = heat > 0.05 ? moltenColorAtHeat(ch.edgeColor, Math.min(1, heat + 0.18)) : ch.edgeColor;
       if (depth > 16) {
         cw = 1;
         chH = 1;
-        fill = "#2f176f";
-        edge = "#6e2bb4";
       } else if (depth > 9) {
         cw = Math.max(1, Math.min(2, cw));
         chH = Math.max(1, Math.min(2, chH));
-        fill = "#4a1f93";
-        edge = "#9a36cf";
       } else if (depth > 3) {
         cw = Math.max(1, Math.min(4, cw));
         chH = Math.max(1, Math.min(4, chH));
-        edge = "#df42d1";
       }
     }
 
@@ -2444,15 +2443,15 @@ export class VoidRenderer {
 
     lap("shots");
 
-    // 14. Torn-off land drifting into the anomaly: heavy slabs keep their terrain colour
-    //     (grass, crops, pavement, lit masonry) with a dark underside and violet rim; small
-    //     sparks fade as they cross the black-hole event horizon so the core stays dark.
+    // 14. Torn-off land drifting into the anomaly: fragments retain their original terrain or building
+    //     color when detached, then smoothly heat up into molten ember, orange, gold, and white-hot
+    //     incandescence with a smooth transition from no glow to a slight glow near the Void's core.
     const swallowPortals = activePortals.map((p) => {
-      const r = Math.max(3.6, p.radius * 0.42) * 0.92;
-      return { x: p.x, y: p.y, r2: r * r };
+      const coreR = Math.max(3.6, p.radius * 0.42);
+      const r = coreR * 0.92;
+      return { x: p.x, y: p.y, r2: r * r, coreR };
     });
     const swallowCount = swallowPortals.length;
-    let sparkAlphaActive = false;
     let lastRawFill = "";
 
     for (let i = 0; i < physics.debris.length; i++) {
@@ -2469,41 +2468,51 @@ export class VoidRenderer {
       }
       if (swallowed) continue;
 
+      const distToPortal = dist(d.portalX - d.x, d.portalY - d.y);
+      const lifeRatio = d.life / Math.max(0.01, d.maxLife);
+      const heat = computeDebrisHeat(
+        distToPortal,
+        d.startDist ?? 24,
+        d.coreRadius ?? 5,
+        lifeRatio,
+      );
+      const bodyColor = moltenColorAtHeat(d.color, heat);
+      const glowAlpha = this.reduceEffects ? 0 : computeDebrisGlowAlpha(heat);
+
       const slab = d.size >= 1.0 && d.maxLife > 1.5;
       if (slab) {
-        if (sparkAlphaActive) {
-          rawScene.globalAlpha = 1;
-          sparkAlphaActive = false;
-        }
-        const sz = d.size * Math.max(0.35, 1 - (d.life / d.maxLife) * 0.6);
+        const sz = d.size * Math.max(0.35, 1 - lifeRatio * 0.6);
         const half = sz * 0.5;
-        c.fillStyle = "rgba(150, 50, 230, 0.35)";
-        c.fillRect(d.x - half - 0.18, d.y - half - 0.18, sz + 0.36, sz + 0.36);
-        c.fillStyle = d.color;
+        if (glowAlpha > 0.005) {
+          c.fillStyle = moltenGlowColorAtHeat(heat);
+          const pad = 0.16 + heat * 0.24;
+          c.fillRect(d.x - half - pad, d.y - half - pad, sz + pad * 2, sz + pad * 2);
+        }
+        c.fillStyle = bodyColor;
         c.fillRect(d.x - half, d.y - half, sz, sz);
-        c.fillStyle = "rgba(0, 0, 0, 0.5)";
-        c.fillRect(d.x - half, d.y + half - 0.24, sz, 0.24);
-        c.fillRect(d.x + half - 0.24, d.y - half, 0.24, sz);
+        const shadowAlpha = 0.5 * (1 - heat * 0.75);
+        if (shadowAlpha > 0.05) {
+          c.fillStyle = `rgba(0, 0, 0, ${shadowAlpha.toFixed(2)})`;
+          c.fillRect(d.x - half, d.y + half - 0.24, sz, 0.24);
+          c.fillRect(d.x + half - 0.24, d.y - half, 0.24, sz);
+        }
         lastRawFill = "";
       } else {
-        if (!sparkAlphaActive) {
-          rawScene.globalAlpha = 0.55;
-          sparkAlphaActive = true;
-        }
-        if (!this.reduceEffects) {
+        // Smooth glow buildup only when heated near the Void core (strictly 0 glow when detached)
+        if (glowAlpha > 0.005) {
+          const glowCol = moltenGlowColorAtHeat(heat);
+          if (lastRawFill !== glowCol) {
+            rawScene.fillStyle = glowCol;
+            lastRawFill = glowCol;
+          }
           let x0 = Math.round(d.px);
           let y0 = Math.round(d.py);
           const x1 = Math.round(d.x);
           const y1 = Math.round(d.y);
-          if (lastRawFill !== d.glowColor) {
-            rawScene.fillStyle = d.glowColor;
-            lastRawFill = d.glowColor;
-          }
           const dxAbs = x1 >= x0 ? x1 - x0 : x0 - x1;
           const dyAbs = y1 >= y0 ? y1 - y0 : y0 - y1;
           if (dxAbs <= 1 && dyAbs <= 1) {
             rawScene.fillRect(x0, y0, 1, 1);
-            if (x0 !== x1 || y0 !== y1) rawScene.fillRect(x1, y1, 1, 1);
           } else {
             const dy = -dyAbs;
             const sx = x0 < x1 ? 1 : -1;
@@ -2517,17 +2526,21 @@ export class VoidRenderer {
               if (e2 <= dxAbs) { err += dxAbs; y0 += sy; }
             }
           }
+          if (heat > 0.45) {
+            // Slight 1-px molten halo around the heated pixel near the core
+            const gx = Math.floor(d.x);
+            const gy = Math.floor(d.y);
+            rawScene.fillRect(gx - 1, gy, 3, 1);
+            rawScene.fillRect(gx, gy - 1, 1, 3);
+          }
         }
-        if (lastRawFill !== d.color) {
-          rawScene.fillStyle = d.color;
-          lastRawFill = d.color;
+        if (lastRawFill !== bodyColor) {
+          rawScene.fillStyle = bodyColor;
+          lastRawFill = bodyColor;
         }
         const sz = Math.max(1, Math.round(d.size * 0.8));
         rawScene.fillRect(Math.floor(d.x - d.size * 0.4), Math.floor(d.y - d.size * 0.4), sz, sz);
       }
-    }
-    if (sparkAlphaActive) {
-      rawScene.globalAlpha = 1;
     }
 
     lap("debris");
@@ -2630,7 +2643,7 @@ export class VoidRenderer {
     output.drawImage(this.sceneLayer, 0, 0);
     output.setTransform(1, 0, 0, 1, 0, 0);
 
-    // 15a. Screen-space additive bloom halos (explosions, Void portals, frontier surges, shells, lasers, fires, towers, beacons)
+    // 15a. Screen-space additive bloom halos (explosions, Void portals, frontier surges, shells, lasers, fires, towers, beacons, molten core debris)
     this.lighting.drawBloom(
       output,
       this.cam.x + shakeX,
@@ -2639,6 +2652,7 @@ export class VoidRenderer {
       world,
       sceneLights,
       this.reduceEffects,
+      physics.debris,
     );
     lap("bloom");
 

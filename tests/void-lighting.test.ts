@@ -11,6 +11,12 @@ import {
   traceLightOcclusion,
 } from "../src/void/lighting.ts";
 import { CellMaterial, LandCover } from "../src/void/model.ts";
+import {
+  computeDebrisGlowAlpha,
+  computeDebrisHeat,
+  moltenColorAtHeat,
+  moltenGlowColorAtHeat,
+} from "../src/void/physics.ts";
 import { VoidSim } from "../src/void/sim.ts";
 import { emptyTechWallet } from "../src/void/tech/wallet.ts";
 
@@ -306,4 +312,81 @@ test("5. collectSceneLights gathers lights from explosions, portals, frontier, s
   assert.ok(lights.length >= 6, `Expected >= 6 scene lights, got ${lights.length}`);
   assert.ok(lights.length <= MAX_DYNAMIC_LIGHTS, `Lights must be capped at ${MAX_DYNAMIC_LIGHTS}`);
   assert.ok(lights.some((l) => l.bloom >= 0.6 && l.castsShadows), "Expected high-bloom shadow-casting explosion/portal light");
+});
+
+test("6. Sucked-in Void debris retains original color at detachment, heats into molten hues, and smoothly ramps from no glow to slight glow near the core", () => {
+  const sim = new VoidSim("tutorialBreach", "underSiege", emptyTechWallet());
+  const { world, physics } = sim;
+  const { w } = world.grid;
+
+  // 1. Consume a building cell and a grass countryside cell: both retain their original material/building color at birth
+  physics.debris.length = 0;
+  const bld = world.buildings.find((b) => b.cells.length > 0 && world.material[b.cells[0]] !== CellMaterial.VOID)!;
+  const bldCell = bld.cells[0];
+  physics.consumeCellIntoVoid(world, bldCell, true);
+  assert.equal(physics.debris.length, 1);
+  const bldDebris = physics.debris[0];
+  assert.equal(bldDebris.glowColor, "rgba(0, 0, 0, 0)", "Newly detached pixel must have zero initial glow");
+  assert.ok((bldDebris.startDist ?? 0) > 0, "Debris records its initial distance to the portal");
+
+  // Find a green grass cell and consume it
+  let grassCell = -1;
+  for (let i = 0; i < world.grid.count; i++) {
+    if (world.material[i] === CellMaterial.PARK && world.landCover[i] === LandCover.GRASS) {
+      grassCell = i;
+      break;
+    }
+  }
+  assert.ok(grassCell >= 0);
+  physics.consumeCellIntoVoid(world, grassCell, true);
+  const grassDebris = physics.debris[1];
+  // Original grass color has green channel > red and blue channels
+  const gR = parseInt(grassDebris.color.slice(1, 3), 16);
+  const gG = parseInt(grassDebris.color.slice(3, 5), 16);
+  const gB = parseInt(grassDebris.color.slice(5, 7), 16);
+  assert.ok(gG > gR && gG > gB, `Expected original green grass color, got ${grassDebris.color}`);
+
+  // 2. At detachment (dist = startDist, lifeRatio = 0): heat is 0, color is unchanged, glow is strictly 0
+  const startDist = 28;
+  const coreR = 5;
+  const h0 = computeDebrisHeat(startDist, startDist, coreR, 0);
+  assert.equal(h0, 0, "Heat at detachment must be 0");
+  assert.equal(moltenColorAtHeat(grassDebris.color, h0), grassDebris.color, "Original color preserved at heat 0");
+  assert.equal(computeDebrisGlowAlpha(h0), 0, "Glow alpha at detachment must be strictly 0");
+  assert.equal(moltenGlowColorAtHeat(h0), "rgba(0, 0, 0, 0)");
+
+  // 3. As distance to portal core shrinks from startDist down to coreR, heat and glow ramp up smoothly and monotonically
+  const distances = [26, 20, 15, 11, 8, 5.5];
+  let prevHeat = 0;
+  let prevGlow = 0;
+  for (const d of distances) {
+    const h = computeDebrisHeat(d, startDist, coreR, 0);
+    const g = computeDebrisGlowAlpha(h);
+    assert.ok(h >= prevHeat, `Heat must increase monotonically as pixel approaches core (${h} >= ${prevHeat} at d=${d})`);
+    assert.ok(g >= prevGlow, `Glow must increase monotonically as pixel approaches core (${g} >= ${prevGlow} at d=${d})`);
+    prevHeat = h;
+    prevGlow = g;
+  }
+  assert.ok(prevHeat > 0.9, `Near core rim (d=5.5), heat should approach 1.0 (got ${prevHeat})`);
+  assert.ok(prevGlow > 0.25 && prevGlow <= 0.35, `Near core rim, glow should be a slight warm glow ~0.34 (got ${prevGlow})`);
+
+  // 4. Verify molten color progression: original green -> ember red -> molten orange -> incandescent gold -> white-hot
+  const parseRgb = (hex: string) => [
+    parseInt(hex.slice(1, 3), 16),
+    parseInt(hex.slice(3, 5), 16),
+    parseInt(hex.slice(5, 7), 16),
+  ];
+  const [rEmber, gEmber, bEmber] = parseRgb(moltenColorAtHeat(grassDebris.color, 0.32));
+  const [rOrange, gOrange, bOrange] = parseRgb(moltenColorAtHeat(grassDebris.color, 0.64));
+  const [rGold, gGold, bGold] = parseRgb(moltenColorAtHeat(grassDebris.color, 0.88));
+  const [rHot, gHot, bHot] = parseRgb(moltenColorAtHeat(grassDebris.color, 1.0));
+
+  // Ember red: strong red, low green & blue
+  assert.ok(rEmber > 180 && gEmber < 50 && bEmber < 30, `Expected ember red at heat 0.32, got (${rEmber},${gEmber},${bEmber})`);
+  // Molten orange: brighter red and rising green
+  assert.ok(rOrange > rEmber && gOrange > gEmber + 50 && bOrange < 40, `Expected molten orange at heat 0.64, got (${rOrange},${gOrange},${bOrange})`);
+  // Incandescent gold: high red and green
+  assert.ok(rGold >= 250 && gGold > gOrange + 70 && bGold > bOrange, `Expected incandescent gold at heat 0.88, got (${rGold},${gGold},${bGold})`);
+  // White-hot near event horizon core
+  assert.ok(rHot === 255 && gHot > 235 && bHot > 195, `Expected white-hot core incandescence at heat 1.0, got (${rHot},${gHot},${bHot})`);
 });
