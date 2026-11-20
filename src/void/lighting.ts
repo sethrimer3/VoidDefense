@@ -489,7 +489,7 @@ export function collectSceneLights(
     const cx = t.x + t.w * 0.5;
     const cy = t.y + t.h * 0.5;
     const spec = TOWER_SPECS[t.type];
-    const justFired = spec.cooldown > 0 && t.cooldown > spec.cooldown * 0.72;
+    const justFired = spec.cooldownSeconds > 0 && t.cooldown > spec.cooldownSeconds * 0.72;
 
     if (t.type === "countervoidHeart") {
       const beat = reduceEffects ? 0.85 : 0.7 + 0.3 * Math.sin(sim.tick * 0.16);
@@ -1147,8 +1147,8 @@ export class LightingEngine {
             if (d2 >= L.radiusSq) continue;
 
             const dist2D = Math.sqrt(d2);
-            let atten = 1 - dist2D * L.invRadius;
-            atten *= atten;
+            const linAtten = 1 - dist2D * L.invRadius;
+            const atten = linAtten * linAtten;
 
             let vis = 1;
             if (L.castsShadows && dist2D > 1.5) {
@@ -1156,7 +1156,7 @@ export class LightingEngine {
               if (vis < 1 && L.shadowStrength > 0) {
                 shadowDarken = Math.min(
                   0.62,
-                  shadowDarken + (1 - vis) * atten * L.shadowStrength,
+                  shadowDarken + (1 - vis) * linAtten * L.shadowStrength,
                 );
               }
               if (vis <= 0.01) continue;

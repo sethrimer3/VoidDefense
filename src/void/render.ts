@@ -24,10 +24,12 @@ import {
   type BuildingHeightMode,
   BuildingSpriteCache,
   type CachedBuildingSprite,
+  cellTierElevation,
   elevationOf,
   MAX_ELEVATION_PX,
   TOWER_ELEVATION_PX,
 } from "./elevation.ts";
+import { collectSceneLights, LightingEngine } from "./lighting.ts";
 import { isOccludedByLedge, paintVoidLedge } from "./ledge.ts";
 import { valueNoise } from "./portal-noise.ts";
 import { computeOrganismContour, computeNodeContour, paintOrganismContour, paintNodeContour } from "./contour.ts";
@@ -176,6 +178,7 @@ export class VoidRenderer {
   private terrainU32 = new Uint32Array(0);
   private shadowMap = new Uint8Array(0);
   private prevBuildingAt = new Int32Array(0);
+  private prevColumnFloors = new Uint8Array(0);
   private buildingElevs = new Uint8Array(0);
   private livestockWorld: VoidWorld | null = null;
   private livestockList: { x: number; y: number; idx: number; isCow: boolean }[] = [];
@@ -210,6 +213,8 @@ export class VoidRenderer {
   buildingHeight: BuildingHeightMode = "full";
   /** Per-building elevated roof & south-facade sprite cache. */
   readonly spriteCache = new BuildingSpriteCache();
+  /** Tiled 2.5D bump-mapped surface lighting, dynamic building shadow casting, and bloom engine. */
+  readonly lighting = new LightingEngine();
   private lastDirtyChunks = new Uint8Array(0);
   private placementPulses: { x: number; y: number; ageMs: number }[] = [];
   private incomePopups: { x: number; y: number; text: string; ageMs: number }[] = [];
@@ -673,13 +678,8 @@ export class VoidRenderer {
       return;
     }
 
-    if (this.lastDirtyChunks.length !== dirtyChunks.length) {
-      this.lastDirtyChunks = new Uint8Array(dirtyChunks.length);
-    }
-    this.lastDirtyChunks.set(dirtyChunks);
-
-    // Incrementally update shadowMap when building footprints change in dirty chunks
-    const { buildingAt } = world;
+    // Incrementally update shadowMap when building footprints or columnFloors change in dirty chunks
+    const { buildingAt, columnFloors } = world;
     for (let cy = 0; cy < chunksH; cy++) {
       for (let cx = 0; cx < chunksW; cx++) {
         if (!dirtyChunks[cy * chunksW + cx]) continue;
@@ -692,14 +692,22 @@ export class VoidRenderer {
           for (let x = x0; x < x1; x++) {
             const idx = row + x;
             const cur = buildingAt[idx];
-            if (cur !== this.prevBuildingAt[idx]) {
+            const curFloors = columnFloors ? columnFloors[idx] : 0;
+            if (cur !== this.prevBuildingAt[idx] || curFloors !== this.prevColumnFloors[idx]) {
               this.prevBuildingAt[idx] = cur;
+              this.prevColumnFloors[idx] = curFloors;
               this.refreshShadowAround(world, x, y, dirtyChunks, chunksW);
             }
           }
         }
       }
     }
+
+    if (this.lastDirtyChunks.length !== dirtyChunks.length) {
+      this.lastDirtyChunks = new Uint8Array(dirtyChunks.length);
+    }
+    this.lastDirtyChunks.set(dirtyChunks);
+    this.lighting.syncChunks(world, this.buildingHeight, this.lastDirtyChunks);
 
     let minX = targetW;
     let minY = targetH;
@@ -740,6 +748,9 @@ export class VoidRenderer {
     }
     this.shadowMap = new Uint8Array(count);
     this.prevBuildingAt = new Int32Array(world.buildingAt);
+    this.prevColumnFloors = world.columnFloors
+      ? new Uint8Array(world.columnFloors)
+      : new Uint8Array(count);
     const { buildingAt, buildings, material } = world;
     for (let y = 0; y < h; y++) {
       const row = y * w;
@@ -778,13 +789,17 @@ export class VoidRenderer {
     updateAt(x, y);
     updateAt(x + 1, y);
     updateAt(x, y + 1);
-    for (let step = 1; step <= 9; step++) {
+    for (let step = 1; step <= 10; step++) {
       updateAt(x + step, y + step);
+      if (step >= 2) {
+        updateAt(x + step, y + step - 1);
+        updateAt(x + step - 1, y + step);
+      }
     }
   }
 
-  /** Computes elevation-based directional shadow darkness (0..0.68) cast onto `(x, y)` toward the SE
-   * up to `ceil(E * 0.6)` world pixels away. */
+  /** Computes elevation-based directional 2.5D volume shadow darkness (0..0.68) cast onto `(x, y)`
+   * toward the SE (umbra along `(-step, -step)` + soft penumbra flanks), respecting surviving `columnFloors`. */
   private computeShadowAt(
     world: VoidWorld,
     x: number,
@@ -792,37 +807,66 @@ export class VoidRenderer {
     selfHeight: number,
     selfElevOverride?: number,
   ): number {
-    const { w } = world.grid;
+    const { w, h } = world.grid;
     const mode = this.buildingHeight === "flat" ? "full" : this.buildingHeight;
     const selfElev = selfElevOverride !== undefined
       ? selfElevOverride
       : (selfHeight > 0 ? elevationOf({ height: selfHeight }, mode) : 0);
+    const { buildingAt, buildings, columnFloors } = world;
     let maxShade = 0;
-    // Maximum elevation is 15 px -> ceil(15 * 0.6) = 9 px reach
-    for (let step = 1; step <= 9; step++) {
+
+    const sampleCasterElev = (cx: number, cy: number): number => {
+      if (cx < 0 || cy < 0 || cx >= w || cy >= h) return 0;
+      const cIdx = cy * w + cx;
+      const bId = buildingAt[cIdx];
+      if (bId < 0) return 0;
+      const b = buildings[bId];
+      if (!b) return 0;
+      const floors = columnFloors ? columnFloors[cIdx] : b.height;
+      if (floors <= 0) return 0;
+      const fullElev = elevationOf({ height: floors, archStyle: b.archStyle }, mode);
+      return cellTierElevation(b, cx, cy, fullElev);
+    };
+
+    for (let step = 1; step <= 10; step++) {
       const nx = x - step;
       const ny = y - step;
-      if (nx >= 0 && ny >= 0) {
-        const bId = world.buildingAt[ny * w + nx];
-        if (bId >= 0) {
-          const bElev = this.buildingElevs[bId] ?? 0;
-          const deltaE = bElev - selfElev;
+      const bElev = sampleCasterElev(nx, ny);
+      if (bElev > selfElev) {
+        const deltaE = bElev - selfElev;
+        const reach = Math.ceil(deltaE * 0.65);
+        if (step <= reach) {
+          maxShade = Math.max(maxShade, 0.64 - (step - 1) * (0.42 / Math.max(1, reach)));
+        }
+      }
+      if (step >= 2) {
+        const pElev1 = sampleCasterElev(nx, ny + 1);
+        if (pElev1 > selfElev) {
+          const deltaE = pElev1 - selfElev;
           const reach = Math.ceil(deltaE * 0.6);
-          if (deltaE > 0 && step <= reach) {
-            maxShade = Math.max(maxShade, 0.62 - (step - 1) * (0.42 / Math.max(1, reach)));
+          if (step <= reach) {
+            maxShade = Math.max(maxShade, 0.36 - (step - 1) * (0.24 / Math.max(1, reach)));
+          }
+        }
+        const pElev2 = sampleCasterElev(nx + 1, ny);
+        if (pElev2 > selfElev) {
+          const deltaE = pElev2 - selfElev;
+          const reach = Math.ceil(deltaE * 0.6);
+          if (step <= reach) {
+            maxShade = Math.max(maxShade, 0.36 - (step - 1) * (0.24 / Math.max(1, reach)));
           }
         }
       }
       if (step === 1) {
         if (x > 0) {
-          const wbId = world.buildingAt[y * w + (x - 1)];
-          if (wbId >= 0 && (world.buildings[wbId]?.height ?? 0) > selfHeight + 2) {
+          const wbId = buildingAt[y * w + (x - 1)];
+          if (wbId >= 0 && (buildings[wbId]?.height ?? 0) > selfHeight + 2) {
             maxShade = Math.max(maxShade, 0.42);
           }
         }
         if (y > 0) {
-          const nbId = world.buildingAt[(y - 1) * w + x];
-          if (nbId >= 0 && (world.buildings[nbId]?.height ?? 0) > selfHeight + 2) {
+          const nbId = buildingAt[(y - 1) * w + x];
+          if (nbId >= 0 && (buildings[nbId]?.height ?? 0) > selfHeight + 2) {
             maxShade = Math.max(maxShade, 0.38);
           }
         }
@@ -1205,11 +1249,21 @@ export class VoidRenderer {
     c.setTransform(1, 0, 0, 1, 0, 0);
     c.imageSmoothingEnabled = false;
 
-    // 1. Draw cached metropolitan terrain layer
-    rawScene.drawImage(this.terrainLayer, 0, 0, world.grid.w, world.grid.h);
-
+    // 1. Draw cached metropolitan terrain layer + tiled 2.5D bump lighting & dynamic cast shadows
     const animTime = this.reduceEffects ? 0 : nowMs * 0.001;
     const pulse = this.reduceEffects ? 0.75 : 0.65 + 0.35 * Math.sin(animTime * 5.2);
+    const atlas = this.spriteCache.getBoardAtlas(world, this.buildingHeight, this.lastDirtyChunks);
+    const sceneLights = collectSceneLights(sim, animTime, this.reduceEffects, this.buildingHeight);
+    this.lighting.renderLighting(world, this.terrainU32, this.spriteCache, sceneLights);
+    lap("lighting");
+
+    rawScene.drawImage(this.terrainLayer, 0, 0, world.grid.w, world.grid.h);
+    const lBounds = this.lighting.dirtyBounds;
+    if (lBounds.hasTerrain && this.lighting.terrainCanvas && lBounds.x1 > lBounds.x0 && lBounds.y1 > lBounds.y0) {
+      const dw = lBounds.x1 - lBounds.x0;
+      const dh = lBounds.y1 - lBounds.y0;
+      rawScene.drawImage(this.lighting.terrainCanvas, lBounds.x0, lBounds.y0, dw, dh, lBounds.x0, lBounds.y0, dw, dh);
+    }
 
     lap("terrain");
 
@@ -2046,10 +2100,14 @@ export class VoidRenderer {
     for (let i = 0; i < combat.towers.length; i++) drawTower(combat.towers[i]);
     for (let i = 0; i < combat.agents.length; i++) drawAgent(combat.agents[i]);
 
-    // Composite the sorted building structure atlas in 1 drawImage call
-    const atlas = this.spriteCache.getBoardAtlas(world, this.buildingHeight, this.lastDirtyChunks);
+    // Composite the sorted building structure atlas + bump-mapped 2.5D lighting & dynamic shadows
     if (atlas) {
       rawScene.drawImage(atlas, 0, 0);
+    }
+    if (lBounds.hasBuilding && this.lighting.buildingCanvas && lBounds.x1 > lBounds.x0 && lBounds.y1 > lBounds.y0) {
+      const dw = lBounds.x1 - lBounds.x0;
+      const dh = lBounds.y1 - lBounds.y0;
+      rawScene.drawImage(this.lighting.buildingCanvas, lBounds.x0, lBounds.y0, dw, dh, lBounds.x0, lBounds.y0, dw, dh);
     }
 
     // Fire is authoritative; flames/smoke are bounded visual witnesses, including elevated farm roofs.
@@ -2564,6 +2622,18 @@ export class VoidRenderer {
     output.setTransform(scale, 0, 0, scale, this.cam.x + shakeX, this.cam.y + shakeY);
     output.drawImage(this.sceneLayer, 0, 0);
     output.setTransform(1, 0, 0, 1, 0, 0);
+
+    // 15a. Screen-space additive bloom halos (explosions, Void portals, frontier surges, shells, lasers, fires, towers, beacons)
+    this.lighting.drawBloom(
+      output,
+      this.cam.x + shakeX,
+      this.cam.y + shakeY,
+      scale,
+      world,
+      sceneLights,
+      this.reduceEffects,
+    );
+    lap("bloom");
 
     // 15b. Pooled whole-pixel placement pulses, income popups & outcome flash
     if (!this.reduceEffects) {
