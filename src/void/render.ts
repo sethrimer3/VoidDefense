@@ -58,7 +58,14 @@ import {
   type TowerTypeId,
   type VoidPortal,
 } from "./model.ts";
-import { FALL_GRAVITY_PX, VOID_ABYSS_Z } from "./physics.ts";
+import {
+  computeDebrisGlowAlpha,
+  computeDebrisHeat,
+  FALL_GRAVITY_PX,
+  moltenColorAtHeat,
+  moltenGlowColorAtHeat,
+  VOID_ABYSS_Z,
+} from "./physics.ts";
 import type { VoidSim } from "./sim.ts";
 import { STRIKE_SPECS, TOWER_SPECS } from "./towers.ts";
 import type { VoidWorld } from "./world.ts";

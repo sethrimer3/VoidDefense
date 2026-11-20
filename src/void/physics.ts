@@ -80,6 +80,113 @@ const SLAB_URBAN: Record<number, readonly string[]> = {
   [CellMaterial.UNCLAIMED]: ["#153956"],
 };
 
+const moltenHexParseCache = new Map<string, [number, number, number]>();
+
+function parseBaseHexRgb(hex: string): [number, number, number] {
+  let v = moltenHexParseCache.get(hex);
+  if (v) return v;
+  if (hex.startsWith("#") && hex.length >= 7) {
+    v = [
+      parseInt(hex.slice(1, 3), 16) & 0xff,
+      parseInt(hex.slice(3, 5), 16) & 0xff,
+      parseInt(hex.slice(5, 7), 16) & 0xff,
+    ];
+  } else {
+    v = [110, 120, 136];
+  }
+  moltenHexParseCache.set(hex, v);
+  return v;
+}
+
+function toHexByte(n: number): string {
+  const c = Math.max(0, Math.min(255, Math.round(n)));
+  return c < 16 ? `0${c.toString(16)}` : c.toString(16);
+}
+
+/** Computes normalized thermal heat (`0..1`) as a sucked-in pixel spirals from the frontier
+ * (`distToPortal = startDist`) toward the Void's center/core (`coreRadius`).
+ * - At detachment (`distToPortal >= startDist * 0.85`), heat is strictly `0` (original color preserved).
+ * - Approaching the event-horizon core (`distToPortal -> coreRadius`), heat smoothly rises to `1`. */
+export function computeDebrisHeat(
+  distToPortal: number,
+  startDist: number,
+  coreRadius = 5,
+  lifeRatio = 0,
+): number {
+  const core = Math.max(2.5, coreRadius);
+  const sDist = Math.max(core + 4, startDist);
+  const heatStart = Math.max(core + 3.5, Math.min(sDist * 0.82, core * 4.5));
+  let spatialT = 0;
+  if (distToPortal < heatStart) {
+    spatialT = Math.min(
+      1,
+      Math.max(0, (heatStart - distToPortal) / Math.max(0.5, heatStart - core * 1.05)),
+    );
+  }
+  const lifeT = lifeRatio > 0.24 ? Math.min(1, (lifeRatio - 0.24) / 0.76) : 0;
+  const raw = Math.max(spatialT, lifeT * 0.85);
+  if (raw <= 0) return 0;
+  // Smooth cubic Hermite ramp
+  return raw * raw * (3 - 2 * raw);
+}
+
+/** Interpolates a sucked-in pixel's original color `baseHex` through a molten blackbody ramp as `heat` (`0..1`) increases:
+ * - `heat === 0`: 100% original terrain/building color (`baseHex`)
+ * - `0.00 -> 0.32`: warms into deep glowing ember red (`#c42410`)
+ * - `0.32 -> 0.64`: heats into molten lava orange (`#f86c18`)
+ * - `0.64 -> 0.88`: heats into incandescent amber-gold (`#ffc842`)
+ * - `0.88 -> 1.00`: peaks at white-hot core incandescence (`#fff4ce`) right at the event horizon */
+export function moltenColorAtHeat(baseHex: string, heat: number): string {
+  if (heat <= 0.001) return baseHex;
+  const [r0, g0, b0] = parseBaseHexRgb(baseHex);
+  let r: number;
+  let g: number;
+  let b: number;
+
+  if (heat < 0.32) {
+    const t = heat / 0.32;
+    r = r0 + (196 - r0) * t;
+    g = g0 + (36 - g0) * t;
+    b = b0 + (16 - b0) * t;
+  } else if (heat < 0.64) {
+    const t = (heat - 0.32) / 0.32;
+    r = 196 + (248 - 196) * t;
+    g = 36 + (108 - 36) * t;
+    b = 16 + (24 - 16) * t;
+  } else if (heat < 0.88) {
+    const t = (heat - 0.64) / 0.24;
+    r = 248 + (255 - 248) * t;
+    g = 108 + (200 - 108) * t;
+    b = 24 + (66 - 24) * t;
+  } else {
+    const t = Math.min(1, (heat - 0.88) / 0.12);
+    r = 255;
+    g = 200 + (244 - 200) * t;
+    b = 66 + (206 - 66) * t;
+  }
+
+  return `#${toHexByte(r)}${toHexByte(g)}${toHexByte(b)}`;
+}
+
+/** Smoothly transitions from strictly no glow (`0` when `heat <= 0.12`) to a slight warm glow (`0.34`)
+ * as a pixel gets near the Void's center/core (`heat -> 1`). */
+export function computeDebrisGlowAlpha(heat: number): number {
+  if (heat <= 0.12) return 0;
+  const u = Math.min(1, (heat - 0.12) / 0.88);
+  const smooth = u * u * (3 - 2 * u);
+  return smooth * 0.34;
+}
+
+/** Returns the warm molten glow RGBA color for a heated pixel at `heat` (`0..1`). */
+export function moltenGlowColorAtHeat(heat: number, alphaScale = 1): string {
+  const alpha = computeDebrisGlowAlpha(heat) * alphaScale;
+  if (alpha <= 0.002) return "rgba(0, 0, 0, 0)";
+  const r = 255;
+  const g = Math.round(70 + heat * 135);
+  const b = Math.round(20 + Math.max(0, heat - 0.5) * 140);
+  return `rgba(${r}, ${g}, ${b}, ${alpha.toFixed(3)})`;
+}
+
 export class VoidPhysics {
   readonly debris: DebrisFragment[] = [];
   readonly shockwaves: ShockwaveEffect[] = [];
@@ -261,6 +368,58 @@ export class VoidPhysics {
     slot.maxAge = 0.55;
   }
 
+  /** Resolves the true original color of cell `idx` before Void consumption so sucked-in pixels
+   * start with the exact color of the building, crop, forest, road, river, or wall they came from. */
+  private originalCellColor(
+    world: VoidWorld,
+    idx: number,
+    prevMat: number,
+    prevCover: number,
+    bId: number,
+  ): string {
+    const x = idx % world.grid.w;
+    const y = (idx / world.grid.w) | 0;
+    const v = (x * 7 + y * 13 + this.debris.length) & 7;
+    if (bId >= 0) {
+      const b = world.buildings[bId];
+      if (b) {
+        const palettes = ARCH_PALETTES[b.archStyle] ?? ARCH_PALETTES.glassTower;
+        const pal = palettes[b.variant % palettes.length];
+        return v === 0 ? pal.litEdge : v < 3 ? pal.crown : v < 6 ? pal.mid : pal.podium;
+      }
+    }
+    if (prevMat === CellMaterial.UNCLAIMED) {
+      return prevCover === LandCover.RIVER ? (v < 2 ? "#4a9bd1" : "#2b6ca3") : "#153956";
+    }
+    if (prevMat === CellMaterial.WALL || prevMat === CellMaterial.BARRIER) {
+      return prevMat === CellMaterial.BARRIER ? "#48c9e0" : (x + y) % 4 === 0 ? "#788ca8" : "#5a6b82";
+    }
+    if (prevMat === CellMaterial.RECLAIMED) {
+      return v < 3 ? "#9e7e4e" : "#7d623c";
+    }
+    if (prevMat === CellMaterial.SALVAGE) {
+      return v < 2 ? "#995c38" : v < 5 ? "#5e4334" : "#3d353a";
+    }
+    if (prevMat === CellMaterial.STREET) {
+      if (prevCover === LandCover.BRIDGE) {
+        return (x + y) % 3 === 0 ? "#523b28" : "#876948";
+      }
+      if (world.streetTier[idx] === 8) {
+        return v < 4 ? "#a38152" : "#8c6d45";
+      }
+      return world.streetTier[idx] === 4 ? "#252c3b" : "#1d2330";
+    }
+    if (prevMat === CellMaterial.PARK || prevCover !== LandCover.NONE) {
+      const slabs = SLAB_COLORS[prevCover];
+      if (slabs && slabs.length > 0) {
+        return slabs[v % slabs.length];
+      }
+      return v < 4 ? "#3a6e3b" : "#294a33";
+    }
+    const urban = SLAB_URBAN[prevMat] ?? SLAB_URBAN[CellMaterial.STREET];
+    return urban[v % urban.length];
+  }
+
   /** Converts cell `idx` into Void and queues any affected building for structural support evaluation. */
   consumeCellIntoVoid(world: VoidWorld, idx: number, spawnDebris = true): void {
     const bId = world.buildingAt[idx];
@@ -308,6 +467,7 @@ export class VoidPhysics {
       let portalX = x;
       let portalY = y;
       let bestDist = Number.POSITIVE_INFINITY;
+      let bestCoreR = 5;
       for (const p of world.portals) {
         if (!p.active) continue;
         const d = dist(x - p.x, y - p.y);
@@ -315,6 +475,7 @@ export class VoidPhysics {
           bestDist = d;
           portalX = p.x;
           portalY = p.y;
+          bestCoreR = Math.max(3.6, p.radius * 0.42);
         }
       }
 
@@ -325,6 +486,7 @@ export class VoidPhysics {
           if (world.grid.inBounds(nx, ny) && world.material[world.grid.index(nx, ny)] === CellMaterial.VOID) {
             portalX = x + dx * 4;
             portalY = y + dy * 4;
+            bestCoreR = 2.5;
             break;
           }
         }
@@ -335,27 +497,12 @@ export class VoidPhysics {
       const d = Math.max(0.5, dist(dx, dy));
       const nx = dx / d;
       const ny = dy / d;
-      // Two kinds of fragment: slow heavy slabs of the torn land (keeping its colour) and
-      // fast prismatic sparks. Both swirl tangentially while being pulled inward.
       const isSlab = hash01(world.seed, 611, idx, this.debris.length) < 0.55;
       const swirl = (hash01(world.seed, 612, idx, this.debris.length) - 0.5) * (isSlab ? 5.5 : 9.5);
       const speed = pixels(isSlab ? 2.2 + hash01(world.seed, 613, idx) * 3.0 : 5.5 + hash01(world.seed, 613, idx) * 6.0);
-      let color: string;
-      let glow: string;
-      if (isSlab) {
-        const slabs = SLAB_COLORS[prevCover] ?? SLAB_URBAN[prevMat] ?? SLAB_URBAN[CellMaterial.STREET];
-        color = slabs[(idx + this.debris.length) % slabs.length];
-        glow = "rgba(190, 80, 255, 0.35)";
-      } else {
-        const palIdx =
-          prevMat === CellMaterial.SKYSCRAPER
-            ? (idx + this.debris.length) % 4
-            : prevMat === CellMaterial.BUILDING
-              ? (idx + this.debris.length) % 5
-              : (idx + this.debris.length) % DEBRIS_PALETTES.length;
-        color = DEBRIS_PALETTES[palIdx].color;
-        glow = DEBRIS_PALETTES[palIdx].glow;
-      }
+      // Every detached pixel starts with the true color of the terrain or building it came from;
+      // it heats into molten colors and builds a subtle glow only as it approaches the Void's core.
+      const color = this.originalCellColor(world, idx, prevMat, prevCover, bId);
 
       this.debris.push({
         x,
@@ -367,7 +514,7 @@ export class VoidPhysics {
         portalX,
         portalY,
         color,
-        glowColor: glow,
+        glowColor: "rgba(0, 0, 0, 0)",
         size: isSlab
           ? 1.0 + hash01(world.seed, 614, idx) * 0.55
           : prevMat === CellMaterial.SKYSCRAPER
@@ -375,6 +522,8 @@ export class VoidPhysics {
             : 0.85,
         life: 0,
         maxLife: isSlab ? Math.min(2.8, Math.max(0.9, d / 7)) : Math.min(1.45, Math.max(0.45, d / 14)),
+        startDist: d,
+        coreRadius: bestCoreR,
       });
     }
   }

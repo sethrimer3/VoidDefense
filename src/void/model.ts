@@ -174,11 +174,16 @@ export type DebrisFragment = {
   vy: number;
   portalX: number;
   portalY: number;
+  /** Original terrain or building color at the moment the pixel detached. */
   color: string;
   glowColor: string;
   size: number;
   life: number;
   maxLife: number;
+  /** Initial distance to the target portal when detached, used for smooth molten heating near the core. */
+  startDist?: number;
+  /** Event-horizon core radius of the target portal. */
+  coreRadius?: number;
 };
 
 /** Pooled 3D falling chunk (masonry, roof, tower, or unit) that falls under gravity (`vz -= g * dt`),
