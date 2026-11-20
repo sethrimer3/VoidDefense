@@ -125,10 +125,69 @@ test("Contested Void: Void removal leaves empty space (never land/buildings) cos
   assert.equal(world.landCover[idx], LandCover.NONE);
   assert.equal(field.voidCellCount, voidBefore - 1);
 
-  // Empty space costs only 1 void power to reclaim
+  // Empty space costs only 1 void power to reclaim once contest holdback expires
   assert.equal(field.voidPowerCost(world, idx), 1);
+  assert.ok(field.contestedCells.has(idx), "removed Void pixel is marked contested");
+  // While contested, Void holds back
+  assert.equal(field.spendVoidPowerOnCell(world, physics, idx, 1), false);
+  assert.equal(world.material[idx], CellMaterial.EMPTY);
+
+  // Advance 0.2s (6 ticks at 30 Hz) so contest holdback fades out
+  for (let t = 0; t < 6; t++) {
+    field.step(world, physics, scenario, t + 1, 1 / 30, {
+      wallResistanceMultiplier: 1,
+      perimeterResonanceBonus: 0,
+    });
+  }
+  assert.equal(field.contestedCells.has(idx), false, "contest holdback expires after 0.2s");
   assert.equal(field.spendVoidPowerOnCell(world, physics, idx, 1), true);
   assert.equal(world.material[idx], CellMaterial.VOID);
+});
+
+test("Contested Void: rocketeers deploy from rocketTeam and remove an area of Void pixels", () => {
+  assert.equal(TOWER_SPECS.rocketTeam.removesVoid, true);
+  assert.ok((TOWER_SPECS.rocketTeam.voidRemovalRadius ?? 0) > 0);
+
+  const wallet = emptyTechWallet();
+  wallet.ranks.rocketTeamUnlock = 1;
+  const sim = new VoidSim("tutorialBreach", "buildAndWatch", wallet, true);
+  const { world, voidField } = sim;
+
+  const fCell = voidField.frontierCells[0];
+  const fx = world.grid.xOf(fCell);
+  const fy = world.grid.yOf(fCell);
+
+  const bx = Math.max(4, Math.min(world.grid.w - 10, fx + 6));
+  const by = Math.max(4, Math.min(world.grid.h - 10, fy));
+  for (let y = by; y < by + 6; y++) {
+    for (let x = bx; x < bx + 6; x++) {
+      const idx = world.grid.index(x, y);
+      world.material[idx] = CellMaterial.STREET;
+      world.hp[idx] = 40;
+      world.maxHp[idx] = 40;
+      world.buildingAt[idx] = -1;
+      world.columnFloors[idx] = 0;
+    }
+  }
+
+  sim.supplies = 500;
+  const battery = sim.placeTower("rocketTeam", bx, by);
+  assert.ok(battery, "Rocket Battery placed");
+  const rocketeers = sim.combat.agents.filter((a) => a.homeUid === battery.uid && a.kind === "rocketeer");
+  assert.ok(rocketeers.length >= 2, `Expected rocketeers deployed, got ${rocketeers.length}`);
+  sim.setTowerFocus(battery.uid, fx, fy);
+
+  voidField.suppressedSeconds = 10;
+  sim.startBattle();
+  for (let t = 0; t < 180; t++) {
+    sim.stepOneTick();
+  }
+
+  let emptyCount = 0;
+  for (let i = 0; i < world.grid.count; i++) {
+    if (world.material[i] === CellMaterial.EMPTY) emptyCount++;
+  }
+  assert.ok(emptyCount >= 3, `Expected rocketeer area attacks to remove multiple Void pixels, got ${emptyCount}`);
 });
 
 test("Contested Void: laser guns declare removesVoid=true (1 px) and remove Void into empty space in live sim", () => {

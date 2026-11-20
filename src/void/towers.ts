@@ -43,6 +43,8 @@ export type TowerSpec = {
   removesVoid?: boolean;
   /** Number of Void pixels removed per qualifying hit. */
   voidRemovalAmount?: number;
+  /** Optional area-of-effect radius (in world pixels) for Void removal & splash damage. */
+  voidRemovalRadius?: number;
 };
 
 export const TOWER_SPECS: Record<TowerTypeId, TowerSpec> = {
@@ -151,6 +153,9 @@ export const TOWER_SPECS: Record<TowerTypeId, TowerSpec> = {
     range: pixels(46),
     cooldownSeconds: 2.6,
     color: "#ff4f38",
+    removesVoid: true,
+    voidRemovalAmount: 5,
+    voidRemovalRadius: 1.5,
   },
   heavyMechBay: {
     id: "heavyMechBay",
@@ -826,6 +831,27 @@ export class VoidCombatManager {
           });
         }
       }
+    } else if (tower.type === "rocketTeam") {
+      const count = 3 + Math.min(2, tech.extraSquadSize);
+      for (let i = 0; i < count; i++) {
+        this.agents.push({
+          id: this.nextAgentId++,
+          kind: "rocketeer",
+          layer: "ground",
+          homeUid: tower.uid,
+          x: cx + ((i % 3) - 1) * 1.4,
+          y: cy + Math.floor(i / 3) * 1.4,
+          vx: 0,
+          vy: 0,
+          hp: 45,
+          maxHp: 45,
+          carryingMatter: 0,
+          state: "patrol",
+          targetCell: -1,
+          targetNodeId: -1,
+          cooldown: (i * 0.25) % 0.85,
+        });
+      }
     } else if (tower.type === "lanternBearer") {
       const bearerHp = Math.round(65 * tech.lanternHpMultiplier);
       for (let i = 0; i < 2; i++) {
@@ -1443,7 +1469,7 @@ export class VoidCombatManager {
       } else if (a.kind === "seamwalker") {
         this.stepSeamwalker(world, voidField, a, tick, dt, tech);
       } else {
-        this.stepCombatAgent(world, voidField, a, tick, dt, tech);
+        this.stepCombatAgent(world, physics, voidField, a, tick, dt, tech);
       }
     }
   }
@@ -1711,6 +1737,7 @@ export class VoidCombatManager {
 
   private stepCombatAgent(
     world: VoidWorld,
+    physics: VoidPhysics,
     voidField: VoidField,
     a: Agent,
     tick: number,
@@ -1719,9 +1746,10 @@ export class VoidCombatManager {
   ): void {
     const isMech = a.kind === "heavyMech";
     const isJetpack = a.kind === "jetpack";
-    const speed = pixels(isMech ? 8.5 : isJetpack ? 14.5 : 11.5);
-    const range = pixels(isMech ? 16 : isJetpack ? 14 : 13) * tech.rifleRangeMultiplier;
-    const damage = (isMech ? 28 * tech.mechDamageMultiplier : isJetpack ? 16 : 11) * tech.rifleDamageMultiplier;
+    const isRocketeer = a.kind === "rocketeer";
+    const speed = pixels(isMech ? 8.5 : isJetpack ? 14.5 : isRocketeer ? 10.5 : 11.5);
+    const range = pixels(isMech ? 16 : isJetpack ? 14 : isRocketeer ? 14 : 13) * tech.rifleRangeMultiplier;
+    const damage = (isMech ? 28 * tech.mechDamageMultiplier : isJetpack ? 16 : isRocketeer ? 14 : 11) * tech.rifleDamageMultiplier;
 
     const home = this.towers.find((t) => t.uid === a.homeUid);
     const focusX = home?.focus?.x ?? (home ? home.x + TOWER_SPECS[home.type].w / 2 : a.x);
@@ -1784,22 +1812,69 @@ export class VoidCombatManager {
     if (targetX >= 0) {
       const d = dist(targetX - a.x, targetY - a.y);
       if (d <= range && a.cooldown <= 0) {
-        a.cooldown = isMech ? 0.45 : 0.55;
+        a.cooldown = isMech ? 0.45 : isRocketeer ? 0.85 : 0.55;
         let beamTargetX = targetX;
         let beamTargetY = targetY;
+        const splashRadius = isRocketeer ? pixels(2.5) : 0;
         if (hitOrganism) {
-          hitOrganism.hp -= damage;
-          if (hitOrganism.hp <= 0) {
-            const oIdx = this.organisms.indexOf(hitOrganism);
-            if (oIdx >= 0) this.organisms.splice(oIdx, 1);
-            voidField.totalWorkResisted += 45;
+          if (isRocketeer) {
+            for (let oi = this.organisms.length - 1; oi >= 0; oi--) {
+              const org = this.organisms[oi];
+              if (dist(org.x - targetX, org.y - targetY) <= splashRadius) {
+                org.hp -= damage;
+                if (org.hp <= 0) {
+                  this.organisms.splice(oi, 1);
+                  voidField.totalWorkResisted += 45;
+                }
+              }
+            }
+            for (let ni = voidField.nodes.length - 1; ni >= 0; ni--) {
+              const node = voidField.nodes[ni];
+              if (dist(node.x - targetX, node.y - targetY) <= splashRadius) {
+                node.hp -= damage;
+                if (node.hp <= 0) {
+                  voidField.nodes.splice(ni, 1);
+                  voidField.totalWorkResisted += 35;
+                }
+              }
+            }
+          } else {
+            hitOrganism.hp -= damage;
+            if (hitOrganism.hp <= 0) {
+              const oIdx = this.organisms.indexOf(hitOrganism);
+              if (oIdx >= 0) this.organisms.splice(oIdx, 1);
+              voidField.totalWorkResisted += 45;
+            }
           }
         } else if (hitNodeIdx >= 0) {
-          const node = voidField.nodes[hitNodeIdx];
-          node.hp -= damage;
-          if (node.hp <= 0) {
-            voidField.nodes.splice(hitNodeIdx, 1);
-            voidField.totalWorkResisted += 35;
+          if (isRocketeer) {
+            for (let ni = voidField.nodes.length - 1; ni >= 0; ni--) {
+              const node = voidField.nodes[ni];
+              if (dist(node.x - targetX, node.y - targetY) <= splashRadius) {
+                node.hp -= damage;
+                if (node.hp <= 0) {
+                  voidField.nodes.splice(ni, 1);
+                  voidField.totalWorkResisted += 35;
+                }
+              }
+            }
+            for (let oi = this.organisms.length - 1; oi >= 0; oi--) {
+              const org = this.organisms[oi];
+              if (dist(org.x - targetX, org.y - targetY) <= splashRadius) {
+                org.hp -= damage;
+                if (org.hp <= 0) {
+                  this.organisms.splice(oi, 1);
+                  voidField.totalWorkResisted += 45;
+                }
+              }
+            }
+          } else {
+            const node = voidField.nodes[hitNodeIdx];
+            node.hp -= damage;
+            if (node.hp <= 0) {
+              voidField.nodes.splice(hitNodeIdx, 1);
+              voidField.totalWorkResisted += 35;
+            }
           }
         } else if (frontierTarget) {
           voidField.applyAntiVoidAblation(world, frontierTarget.cellIdx, damage);
@@ -1807,22 +1882,38 @@ export class VoidCombatManager {
             ? TOWER_SPECS[home.type]
             : isMech
               ? TOWER_SPECS.heavyMechBay
-              : a.kind === "rifleman"
-                ? TOWER_SPECS.infantryBarracks
-                : undefined;
+              : isRocketeer
+                ? TOWER_SPECS.rocketTeam
+                : a.kind === "rifleman"
+                  ? TOWER_SPECS.infantryBarracks
+                  : undefined;
           const standingIdx = world.grid.index(Math.floor(a.x), Math.floor(a.y));
           const standingInVoid = world.grid.inBounds(Math.floor(a.x), Math.floor(a.y)) && world.material[standingIdx] === CellMaterial.VOID;
           if (!standingInVoid && weaponSpec?.removesVoid && (weaponSpec.voidRemovalAmount ?? 0) > 0) {
-            const res = voidField.removeVoidPixelsNear(
-              world,
-              frontierTarget.cellIdx,
-              weaponSpec.voidRemovalAmount!,
-            );
+            const res =
+              weaponSpec.voidRemovalRadius && weaponSpec.voidRemovalRadius > 0
+                ? voidField.removeVoidArea(world, frontierTarget.cellIdx, weaponSpec.voidRemovalRadius)
+                : voidField.removeVoidPixelsNear(
+                    world,
+                    frontierTarget.cellIdx,
+                    weaponSpec.voidRemovalAmount!,
+                  );
             if (res.firstVoidIdx >= 0) {
               beamTargetX = world.grid.xOf(res.firstVoidIdx) + 0.5;
               beamTargetY = world.grid.yOf(res.firstVoidIdx) + 0.5;
             }
           }
+        }
+        if (isRocketeer && physics.shockwaves.length < 48) {
+          physics.shockwaves.push({
+            x: beamTargetX,
+            y: beamTargetY,
+            maxRadius: pixels(2.2),
+            color: "#ff7a28",
+            secondaryColor: "#ffd166",
+            life: 0,
+            maxLife: 0.2,
+          });
         }
         if (this.lasers.length < 180) {
           this.lasers.push({
@@ -1830,8 +1921,8 @@ export class VoidCombatManager {
             y0: a.y,
             x1: beamTargetX,
             y1: beamTargetY,
-            ttl: 0.14,
-            color: isMech ? "#ffaa33" : "#ff6b2b",
+            ttl: isRocketeer ? 0.18 : 0.14,
+            color: isMech ? "#ffaa33" : isRocketeer ? "#ff4f38" : "#ff6b2b",
             energy: true,
           });
         }

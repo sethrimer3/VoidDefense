@@ -45,7 +45,7 @@ import {
 } from "./interior.ts";
 import { pixelPainter } from "./pixel-painter.ts";
 import { Loupe } from "./loupe.ts";
-import { CHUNK_SIZE, CORRUPTION_REACH, PIXEL_AREA, pixels } from "./config.ts";
+import { CHUNK_SIZE, CORRUPTION_REACH, PIXEL_AREA, VOID_CONTEST_COSTS, pixels } from "./config.ts";
 import { hash, hash01 } from "./grid.ts";
 import {
   CellMaterial,
@@ -1342,6 +1342,19 @@ export class VoidRenderer {
       }
     }
 
+    // Contested pixels: neon orange fading back to dark Void color over CONTEST_HOLD_TICKS
+    if (voidField.contestedCells.size > 0) {
+      const holdDur = Math.max(1, VOID_CONTEST_COSTS.CONTEST_HOLD_TICKS);
+      for (const [cIdx, rem] of voidField.contestedCells) {
+        const ratio = Math.max(0, Math.min(1, rem / holdDur));
+        const r = Math.round(10 + (255 - 10) * ratio);
+        const g = Math.round(6 + (128 - 6) * ratio);
+        const b = Math.round(18 + (24 - 18) * ratio);
+        rawScene.fillStyle = `rgb(${r},${g},${b})`;
+        rawScene.fillRect(world.grid.xOf(cIdx), world.grid.yOf(cIdx), 1, 1);
+      }
+    }
+
     if (!this.reduceEffects && voidField.frontierCells.length > 0) {
       // Short crackling purple Void tendrils at the active frontier
       const slot = Math.floor(animTime * 4);
@@ -2049,6 +2062,13 @@ export class VoidRenderer {
         rawScene.fillStyle = "#ff8b33";
         rawScene.fillRect(ax, ay, 1, 1);
         rawScene.fillStyle = "#ffe4b5";
+        rawScene.fillRect(ax, ay - 1, 1, 1);
+      } else if (a.kind === "rocketeer") {
+        rawScene.fillStyle = "rgba(10, 12, 16, 0.65)";
+        rawScene.fillRect(ax, ay + 1, 1, 1);
+        rawScene.fillStyle = "#ff4f38";
+        rawScene.fillRect(ax, ay, 1, 1);
+        rawScene.fillStyle = "#ffd15c";
         rawScene.fillRect(ax, ay - 1, 1, 1);
       } else if (a.kind === "engineer") {
         rawScene.fillStyle = "rgba(10, 12, 16, 0.65)";

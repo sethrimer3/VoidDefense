@@ -34,6 +34,7 @@ import {
   CORRUPTION_REACH,
   MATERIAL_RESISTANCE,
   PIXEL_WORK_SCALE,
+  TICK_HZ,
   VOID_BALANCE,
   VOID_CONTEST_COSTS,
   pixels,
@@ -77,7 +78,7 @@ export class VoidField {
   private nextSealId = 1;
   /** Seamwalker-frozen Void cells (cellIdx -> remaining hold seconds). */
   readonly frozenVoidCells = new Map<number, number>();
-  /** Contested/removed cells temporarily holding back the Void (cellIdx -> remaining seconds). */
+  /** Contested/removed cells temporarily holding back the Void (cellIdx -> remaining 30 Hz ticks). */
   readonly contestedCells = new Map<number, number>();
   /** Countervoid Heart active orange influence cells. */
   readonly countervoidCells = new Set<number>();
@@ -471,13 +472,13 @@ export class VoidField {
     return false;
   }
 
-  /** Marks cell `cellIdx` as contested so the Void holds back for `duration` seconds
+  /** Marks cell `cellIdx` as contested so the Void holds back for `durationTicks` (default 6 ticks = 0.2s)
    * (turning it neon orange and fading back to Void color as it uncontests). */
-  markContested(cellIdx: number, duration = VOID_CONTEST_COSTS.CONTEST_HOLD_SECONDS): void {
-    if (duration <= 0) return;
+  markContested(cellIdx: number, durationTicks = VOID_CONTEST_COSTS.CONTEST_HOLD_TICKS): void {
+    if (durationTicks <= 0) return;
     const prev = this.contestedCells.get(cellIdx) ?? 0;
-    if (duration > prev) {
-      this.contestedCells.set(cellIdx, duration);
+    if (durationTicks > prev) {
+      this.contestedCells.set(cellIdx, durationTicks);
     }
   }
 
@@ -600,6 +601,19 @@ export class VoidField {
       siphonIntakeCap?: number;
     },
   ): ZeroContactReason {
+    // 0. Advance contested holdback timers (integer 30 Hz ticks)
+    if (this.contestedCells.size > 0) {
+      const stepTicks = Math.max(1, Math.round(dt * TICK_HZ));
+      for (const [idx, rem] of this.contestedCells) {
+        const next = rem - stepTicks;
+        if (next <= 0) {
+          this.contestedCells.delete(idx);
+        } else {
+          this.contestedCells.set(idx, next);
+        }
+      }
+    }
+
     // 1. Check delayed portals activating on this tick
     let portalOpened = false;
     for (const p of world.portals) {
@@ -638,17 +652,7 @@ export class VoidField {
       return "reservoirDepletedVictory";
     }
 
-    // Advance Quarantine Bell seal timers and contested holdback timers
-    if (this.contestedCells.size > 0) {
-      for (const [idx, rem] of this.contestedCells) {
-        const next = rem - dt;
-        if (next <= 0) {
-          this.contestedCells.delete(idx);
-        } else {
-          this.contestedCells.set(idx, next);
-        }
-      }
-    }
+    // Advance Quarantine Bell seal timers
     if (this.quarantineSeals.length > 0) {
       let expiredAny = false;
       for (let i = this.quarantineSeals.length - 1; i >= 0; i--) {
