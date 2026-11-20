@@ -24,6 +24,7 @@ import { VoidTechTreeView } from "./tech/tech-ui.ts";
 import { availableCurrencies, totalEarnedSparks } from "./tech/wallet.ts";
 import { STRIKE_SPECS, TOWER_SPECS } from "./towers.ts";
 import { TowerMenuController, type TowerMenuTarget } from "./tower-menu.ts";
+import { installScrollArrows } from "../ui/scroll-arrows.ts";
 
 export type VoidTab = "battle" | "network" | "operations" | "map";
 
@@ -348,6 +349,7 @@ export class VoidApp {
     `;
 
     const canvas = this.root.querySelector<HTMLCanvasElement>("#void-board-canvas")!;
+    installScrollArrows(this.root);
     this.renderer = new VoidRenderer(canvas);
     this.renderer.reduceEffects = this.save.settings.reduceMotion;
     this.renderer.buildingHeight = this.save.settings.buildingHeight;
@@ -866,7 +868,7 @@ export class VoidApp {
                   lockedByMode ? "disabled" : ""
                 } title="${spec.name}: ${spec.description} (Drag onto board or click then click board)">
                   <canvas class="void-card-icon" width="20" height="20" data-card-icon="${type}"></canvas>
-                  <b>${spec.shortName}</b>
+                  <b>${spec.name}</b>
                   <small>${price} SUP</small>
                 </button>
               `;
@@ -895,7 +897,7 @@ export class VoidApp {
                   cd > 0 || this.sim.phase !== "battle" ? "disabled" : ""
                 } title="${spec.name} [Hotkey ${idx + 1}]: ${spec.description} (Drag onto board or click then click board)">
                   <canvas class="void-card-icon" width="20" height="20" data-card-icon="${s}"></canvas>
-                  <b>${spec.shortName}</b>
+                  <b>${spec.name}</b>
                   <small>${cd > 0 ? `${cd}s` : `${price} SUP`}</small>
                 </button>
               `;

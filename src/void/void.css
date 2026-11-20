@@ -2546,13 +2546,13 @@
   transition: width 0.25s ease, opacity 0.2s ease;
 }
 .void-board-stage.palette-open .void-pal-side {
-  width: 84px;
+  width: 96px;
   opacity: 1;
   pointer-events: auto;
 }
 .void-pal-drawer {
   box-sizing: border-box;
-  width: 84px;
+  width: 96px;
   max-height: 100%;
   display: flex;
   flex-direction: column;
@@ -2565,8 +2565,14 @@
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.85);
   overflow-y: auto;
   overscroll-behavior: contain;
-  scrollbar-width: thin;
-  scrollbar-color: #3a4454 transparent;
+  scrollbar-width: none;
+}
+.void-pal-drawer::-webkit-scrollbar,
+.void-building-panel::-webkit-scrollbar {
+  display: none;
+}
+.void-building-panel {
+  scrollbar-width: none;
 }
 .void-pal-drawer > * {
   flex: none;
@@ -2628,13 +2634,12 @@
   image-rendering: pixelated;
 }
 .void-pal-side .void-pal-btn b {
-  font-size: 0.64rem;
-  line-height: 1.1;
+  font-size: 0.62rem;
+  line-height: 1.15;
   text-align: center;
-  overflow: hidden;
-  text-overflow: ellipsis;
   max-width: 100%;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: break-word;
 }
 .void-pal-side .void-pal-btn small {
   font-size: 0.6rem;
@@ -2663,26 +2668,52 @@
   transition: left 0.25s ease;
 }
 .void-board-stage.palette-open .void-pal-toggle {
-  left: 94px;
+  left: 106px;
 }
 .void-board-stage.palette-open .void-building-panel[data-side="left"] {
-  left: 98px;
+  left: 110px;
 }
 .void-board-stage.palette-open .void-hud-top {
-  left: 98px;
+  left: 110px;
 }
 @media (max-width: 559px) {
   .void-board-stage.palette-open .void-pal-side,
   .void-pal-drawer {
-    width: 72px;
+    width: 82px;
   }
   .void-board-stage.palette-open .void-pal-toggle {
-    left: 82px;
+    left: 92px;
   }
   .void-board-stage.palette-open .void-building-panel[data-side="left"] {
-    left: 86px;
+    left: 96px;
   }
   .void-board-stage.palette-open .void-hud-top {
-    left: 86px;
+    left: 96px;
   }
 }
+
+/* ── Pixel Scroll Arrows (replacing scrollbars, modeled after TowerDefense) ── */
+:root {
+  --pixel-arrow: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 9 6' shape-rendering='crispEdges'><path fill='%23080b10' d='M1 0h7v1h1v1h-1v1h-1v1h-1v1h-1v1h-1v-1h-1v-1h-1v-1h-1v-1h1z'/><path fill='%23ff9d00' d='M1 1h7v1h-1v1h-1v1h-1v1h-1v-1h-1v-1h-1v-1h-1z'/><path fill='%23ffd780' d='M1 1h7v1h-7z' opacity='.55'/></svg>");
+}
+.scroll-arrow {
+  position: absolute;
+  z-index: 22;
+  width: 18px;
+  height: 12px;
+  background: var(--pixel-arrow) center / 100% 100% no-repeat;
+  image-rendering: pixelated;
+  filter: drop-shadow(0 0 3px #000);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+.scroll-arrow.show {
+  opacity: 1;
+  pointer-events: auto;
+  cursor: pointer;
+}
+.scroll-arrow-up { transform: translate(-50%, 0) rotate(180deg); }
+.scroll-arrow-down { transform: translate(-50%, -100%); }
+.scroll-arrow-left { transform: translate(-3px, -50%) rotate(90deg); }
+.scroll-arrow-right { transform: translate(calc(-100% + 3px), -50%) rotate(-90deg); }
