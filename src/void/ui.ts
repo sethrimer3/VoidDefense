@@ -174,6 +174,19 @@ export class VoidApp {
   private loupePointer: { clientX: number; clientY: number; cellX: number; cellY: number } | null = null;
   private pointers = new Map<number, { x: number; y: number }>();
   private panMoved = false;
+  private paletteCategory: "all" | "towers" | "strikes" = "all";
+  private paletteCategoriesOpen = false;
+  private paletteOpen = true;
+  private paletteDrag: {
+    kind: "tower" | "strike";
+    id: string;
+    pointerId: number;
+    startX: number;
+    startY: number;
+    dragged: boolean;
+    wasSelected: boolean;
+  } | null = null;
+  private lastPalettePointerTapAt = 0;
   private lastPreservedPercent = 100;
   private lastProfileKey = "";
   private lastCtrlKey = "";
@@ -252,7 +265,11 @@ export class VoidApp {
 
         <section id="void-page-battle" class="void-page active">
           <div class="void-battle-layout">
-            <div class="void-board-stage">
+            <div class="void-board-stage palette-open" data-board-stage>
+              <aside class="void-pal-side" data-pal-side aria-label="Deployment Palette">
+                <div class="void-pal-drawer" data-pal-drawer></div>
+              </aside>
+              <button type="button" class="void-pal-toggle" data-pal-toggle aria-expanded="true" aria-label="Toggle deployment palette" title="Toggle deployment palette">◀</button>
               <canvas id="void-board-canvas"></canvas>
 
               <!-- Clean HUD Overlays floating over battle canvas -->
@@ -274,15 +291,6 @@ export class VoidApp {
                 <div class="void-coach" data-coach-card hidden></div>
                 <div class="void-inspector" data-tower-inspector hidden></div>
                 <div class="void-outcome-banner" data-outcome-banner hidden></div>
-
-                <!-- Compact dock tray centered at bottom -->
-                <div class="void-hud-bottom" role="toolbar" aria-label="Tactical Action Bar">
-                  <div class="void-hud-tray">
-                    <div class="void-palette" data-tower-palette></div>
-                    <div class="void-hud-tray-divider" aria-hidden="true"></div>
-                    <div class="void-strikes" data-strike-palette></div>
-                  </div>
-                </div>
               </div>
             </div>
 
@@ -593,6 +601,79 @@ export class VoidApp {
       },
       { passive: false },
     );
+
+    const palToggle = this.root.querySelector<HTMLButtonElement>("[data-pal-toggle]");
+    if (palToggle) {
+      palToggle.onclick = () => {
+        this.paletteOpen = !this.paletteOpen;
+        this.root.querySelector("[data-board-stage]")?.classList.toggle("palette-open", this.paletteOpen);
+        palToggle.setAttribute("aria-expanded", String(this.paletteOpen));
+        palToggle.textContent = this.paletteOpen ? "◀" : "▶";
+        this.soundEngine.playSfx("uiToggle");
+      };
+    }
+
+    window.addEventListener("pointermove", (e) => {
+      const drag = this.paletteDrag;
+      if (!drag || drag.pointerId !== e.pointerId) return;
+      if (!drag.dragged && Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY) > 6) {
+        drag.dragged = true;
+        this.activeTool =
+          drag.kind === "tower"
+            ? { kind: "placeTower", type: drag.id as TowerTypeId }
+            : { kind: "castStrike", strike: drag.id as StrikeId };
+        this.renderPalette();
+      }
+      if (drag.dragged) {
+        this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        this.updateHover(e);
+      }
+    });
+
+    const finishPaletteDrag = (e: PointerEvent, cancelled: boolean) => {
+      const drag = this.paletteDrag;
+      if (!drag || drag.pointerId !== e.pointerId) return;
+      this.paletteDrag = null;
+      this.pointers.delete(e.pointerId);
+      this.loupePointer = null;
+
+      if (cancelled) {
+        if (drag.dragged) {
+          this.activeTool = { kind: "none" };
+          this.hoverPreview = null;
+          this.renderPalette();
+        }
+        return;
+      }
+
+      if (drag.dragged) {
+        const r = canvas.getBoundingClientRect();
+        const overCanvas =
+          e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+        if (overCanvas) {
+          this.commitBoardTapOrDrop(e);
+        } else {
+          this.activeTool = { kind: "none" };
+          this.hoverPreview = null;
+          this.renderPalette();
+        }
+      } else {
+        this.lastPalettePointerTapAt = performance.now();
+        if (drag.wasSelected) {
+          this.activeTool = { kind: "none" };
+        } else {
+          this.activeTool =
+            drag.kind === "tower"
+              ? { kind: "placeTower", type: drag.id as TowerTypeId }
+              : { kind: "castStrike", strike: drag.id as StrikeId };
+        }
+        this.hoverPreview = null;
+        this.renderPalette();
+      }
+    };
+
+    window.addEventListener("pointerup", (e) => finishPaletteDrag(e, false));
+    window.addEventListener("pointercancel", (e) => finishPaletteDrag(e, true));
   }
 
   private updateHover(e: PointerEvent): void {
@@ -751,58 +832,123 @@ export class VoidApp {
   }
 
   private renderPalette(): void {
-    const towerPal = this.root.querySelector<HTMLElement>("[data-tower-palette]")!;
-    const strikePal = this.root.querySelector<HTMLElement>("[data-strike-palette]")!;
-
+    const drawer = this.root.querySelector<HTMLElement>("[data-pal-drawer]")!;
     const unlockedTowers = [...this.sim.tech.unlockedTowers];
-    towerPal.innerHTML =
-      unlockedTowers
-        .map((type) => {
-          const spec = TOWER_SPECS[type];
-          const price = this.sim.towerPrice(type);
-          const active =
-            this.activeTool.kind === "placeTower" && this.activeTool.type === type;
-          const lockedByMode = !this.sim.canModifyTowers();
-          return `
-            <button type="button" class="void-pal-btn ${active ? "selected" : ""}" data-pick-tower="${type}" ${
-              lockedByMode ? "disabled" : ""
-            } title="${spec.name}: ${spec.description}">
-              <canvas class="void-card-icon" width="20" height="20" data-card-icon="${type}"></canvas>
-              <b>${spec.shortName}</b>
-              <small>${price} SUP</small>
-            </button>
-          `;
-        })
-        .join("") +
-      `<button type="button" class="void-pal-btn ${
-        this.activeTool.kind === "drawBlueprint" ? "selected" : ""
-      }" data-pick-blueprint title="Draw a polyline wall blueprint for your 1x2 Engineers to construct">
-        <canvas class="void-card-icon" width="20" height="20" data-card-icon="blueprint"></canvas>
-        <b>Wall Plan</b>
-        <small>Draw</small>
-      </button>`;
+    const unlockedStrikes = [...this.sim.tech.unlockedStrikes];
 
-    towerPal.querySelectorAll<HTMLButtonElement>("[data-pick-tower]").forEach((btn) => {
-      const startTowerPick = (fromDrag: boolean, e?: PointerEvent) => {
-        const t = btn.dataset.pickTower as TowerTypeId;
-        if (!fromDrag && this.activeTool.kind === "placeTower" && this.activeTool.type === t) {
-          this.activeTool = { kind: "none" };
-        } else {
-          this.activeTool = { kind: "placeTower", type: t };
-        }
-        this.hoverPreview = null;
+    const catLabel =
+      this.paletteCategory === "towers"
+        ? "Towers"
+        : this.paletteCategory === "strikes"
+          ? "Strikes"
+          : "All";
+    const catList = this.paletteCategoriesOpen
+      ? `<div class="void-pal-categories" role="menu">
+          <button type="button" role="menuitemradio" aria-checked="${this.paletteCategory === "all"}" data-pal-cat="all">All</button>
+          <button type="button" role="menuitemradio" aria-checked="${this.paletteCategory === "towers"}" data-pal-cat="towers">Towers</button>
+          <button type="button" role="menuitemradio" aria-checked="${this.paletteCategory === "strikes"}" data-pal-cat="strikes">Strikes</button>
+        </div>`
+      : "";
+    const catPicker = `<button type="button" class="void-pal-cat-btn" data-pal-cat-toggle aria-haspopup="menu" aria-expanded="${this.paletteCategoriesOpen}" title="Filter deployment palette"><span aria-hidden="true">☰</span> ${catLabel}</button>${catList}`;
+
+    const towerItems =
+      this.paletteCategory === "strikes"
+        ? ""
+        : unlockedTowers
+            .map((type) => {
+              const spec = TOWER_SPECS[type];
+              const price = this.sim.towerPrice(type);
+              const active =
+                this.activeTool.kind === "placeTower" && this.activeTool.type === type;
+              const lockedByMode = !this.sim.canModifyTowers();
+              return `
+                <button type="button" class="void-pal-btn ${active ? "selected" : ""}" data-pick-tower="${type}" ${
+                  lockedByMode ? "disabled" : ""
+                } title="${spec.name}: ${spec.description} (Drag onto board or click then click board)">
+                  <canvas class="void-card-icon" width="20" height="20" data-card-icon="${type}"></canvas>
+                  <b>${spec.shortName}</b>
+                  <small>${price} SUP</small>
+                </button>
+              `;
+            })
+            .join("") +
+          `<button type="button" class="void-pal-btn ${
+            this.activeTool.kind === "drawBlueprint" ? "selected" : ""
+          }" data-pick-blueprint title="Draw a polyline wall blueprint for your 1x2 Engineers to construct">
+            <canvas class="void-card-icon" width="20" height="20" data-card-icon="blueprint"></canvas>
+            <b>Wall Plan</b>
+            <small>Draw</small>
+          </button>`;
+
+    const strikeItems =
+      this.paletteCategory === "towers"
+        ? ""
+        : unlockedStrikes
+            .map((s, idx) => {
+              const spec = STRIKE_SPECS[s];
+              const price = this.sim.strikePrice(s);
+              const cd = Math.ceil(this.sim.combat.strikeCooldowns[s]);
+              const active =
+                this.activeTool.kind === "castStrike" && this.activeTool.strike === s;
+              return `
+                <button type="button" class="void-pal-btn void-pal-btn--strike ${active ? "selected" : ""}" data-pick-strike="${s}" ${
+                  cd > 0 || this.sim.phase !== "battle" ? "disabled" : ""
+                } title="${spec.name} [Hotkey ${idx + 1}]: ${spec.description} (Drag onto board or click then click board)">
+                  <canvas class="void-card-icon" width="20" height="20" data-card-icon="${s}"></canvas>
+                  <b>${spec.shortName}</b>
+                  <small>${cd > 0 ? `${cd}s` : `${price} SUP`}</small>
+                </button>
+              `;
+            })
+            .join("");
+
+    drawer.innerHTML = catPicker + towerItems + strikeItems;
+
+    const catToggle = drawer.querySelector<HTMLButtonElement>("[data-pal-cat-toggle]");
+    if (catToggle) {
+      catToggle.onclick = () => {
+        this.paletteCategoriesOpen = !this.paletteCategoriesOpen;
         this.renderPalette();
-        if (fromDrag && e) {
-          this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-        }
       };
-      btn.onclick = () => startTowerPick(false);
-      btn.onpointerdown = (e) => {
-        if (e.button === 0 && !btn.disabled) startTowerPick(true, e);
+    }
+    drawer.querySelectorAll<HTMLButtonElement>("[data-pal-cat]").forEach((b) => {
+      b.onclick = () => {
+        this.paletteCategory = b.dataset.palCat as "all" | "towers" | "strikes";
+        this.paletteCategoriesOpen = false;
+        this.renderPalette();
+        drawer.scrollTop = 0;
       };
     });
 
-    const bpBtn = towerPal.querySelector<HTMLButtonElement>("[data-pick-blueprint]");
+    drawer.querySelectorAll<HTMLButtonElement>("[data-pick-tower]").forEach((btn) => {
+      const t = btn.dataset.pickTower as TowerTypeId;
+      btn.onpointerdown = (e) => {
+        if (e.button !== 0 || btn.disabled) return;
+        const wasSelected =
+          this.activeTool.kind === "placeTower" && this.activeTool.type === t;
+        this.paletteDrag = {
+          kind: "tower",
+          id: t,
+          pointerId: e.pointerId,
+          startX: e.clientX,
+          startY: e.clientY,
+          dragged: false,
+          wasSelected,
+        };
+      };
+      btn.onclick = (e) => {
+        if (btn.disabled) return;
+        if (e.detail !== 0 && performance.now() - this.lastPalettePointerTapAt < 80) return;
+        this.activeTool =
+          this.activeTool.kind === "placeTower" && this.activeTool.type === t
+            ? { kind: "none" }
+            : { kind: "placeTower", type: t };
+        this.hoverPreview = null;
+        this.renderPalette();
+      };
+    });
+
+    const bpBtn = drawer.querySelector<HTMLButtonElement>("[data-pick-blueprint]");
     if (bpBtn) {
       bpBtn.onclick = () => {
         if (this.activeTool.kind === "drawBlueprint") {
@@ -815,43 +961,31 @@ export class VoidApp {
       };
     }
 
-    const unlockedStrikes = [...this.sim.tech.unlockedStrikes];
-    strikePal.innerHTML = unlockedStrikes
-      .map((s, idx) => {
-        const spec = STRIKE_SPECS[s];
-        const price = this.sim.strikePrice(s);
-        const cd = Math.ceil(this.sim.combat.strikeCooldowns[s]);
-        const active =
+    drawer.querySelectorAll<HTMLButtonElement>("[data-pick-strike]").forEach((btn) => {
+      const s = btn.dataset.pickStrike as StrikeId;
+      btn.onpointerdown = (e) => {
+        if (e.button !== 0 || btn.disabled) return;
+        const wasSelected =
           this.activeTool.kind === "castStrike" && this.activeTool.strike === s;
-        return `
-          <button type="button" class="void-pal-btn void-pal-btn--strike ${active ? "selected" : ""}" data-pick-strike="${s}" ${
-            cd > 0 || this.sim.phase !== "battle" ? "disabled" : ""
-          } title="${spec.name} [Hotkey ${idx + 1}]: ${spec.description}">
-            <canvas class="void-card-icon" width="20" height="20" data-card-icon="${s}"></canvas>
-            <b>${spec.shortName}</b>
-            <small>${cd > 0 ? `${cd}s` : `${price} SUP`}</small>
-          </button>
-        `;
-      })
-      .join("");
-
-    strikePal.querySelectorAll<HTMLButtonElement>("[data-pick-strike]").forEach((btn) => {
-      const startStrikePick = (fromDrag: boolean, e?: PointerEvent) => {
-        const s = btn.dataset.pickStrike as StrikeId;
-        if (!fromDrag && this.activeTool.kind === "castStrike" && this.activeTool.strike === s) {
-          this.activeTool = { kind: "none" };
-        } else {
-          this.activeTool = { kind: "castStrike", strike: s };
-        }
+        this.paletteDrag = {
+          kind: "strike",
+          id: s,
+          pointerId: e.pointerId,
+          startX: e.clientX,
+          startY: e.clientY,
+          dragged: false,
+          wasSelected,
+        };
+      };
+      btn.onclick = (e) => {
+        if (btn.disabled) return;
+        if (e.detail !== 0 && performance.now() - this.lastPalettePointerTapAt < 80) return;
+        this.activeTool =
+          this.activeTool.kind === "castStrike" && this.activeTool.strike === s
+            ? { kind: "none" }
+            : { kind: "castStrike", strike: s };
         this.hoverPreview = null;
         this.renderPalette();
-        if (fromDrag && e) {
-          this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-        }
-      };
-      btn.onclick = () => startStrikePick(false);
-      btn.onpointerdown = (e) => {
-        if (e.button === 0 && !btn.disabled) startStrikePick(true, e);
       };
     });
 

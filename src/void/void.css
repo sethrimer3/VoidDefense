@@ -2529,3 +2529,160 @@
   .void-building-panel .vbp-actions button { min-height: 28px; font-size: 0.7rem; }
   .void-building-menu { --vbm-bar: 42px; }
 }
+
+/* ── Collapsible Side Deployment Palette (modeled after TowerDefense #defend-side / #defend-palette) ── */
+.void-pal-side {
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  left: 8px;
+  z-index: 14;
+  width: 0;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+  display: flex;
+  align-items: stretch;
+  transition: width 0.25s ease, opacity 0.2s ease;
+}
+.void-board-stage.palette-open .void-pal-side {
+  width: 84px;
+  opacity: 1;
+  pointer-events: auto;
+}
+.void-pal-drawer {
+  box-sizing: border-box;
+  width: 84px;
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 5px;
+  background: rgba(11, 15, 22, 0.94);
+  border: 1px solid #3c4d69;
+  border-top: 2px solid var(--void-neon-orange);
+  border-radius: 3px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.85);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: #3a4454 transparent;
+}
+.void-pal-drawer > * {
+  flex: none;
+}
+.void-pal-cat-btn {
+  padding: 5px 3px;
+  font-size: 0.66rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  background: #141b26;
+  border: 1px solid #3c4d69;
+  color: #ffb84d;
+  border-radius: 2px;
+  cursor: pointer;
+}
+.void-pal-categories {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid #263244;
+}
+.void-pal-categories button {
+  padding: 4px 2px;
+  font-size: 0.64rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  background: #0d121a;
+  border: 1px solid #2c384b;
+  color: #cdd8e8;
+  border-radius: 2px;
+  cursor: pointer;
+}
+.void-pal-categories button[aria-checked="true"] {
+  border-color: var(--void-neon-orange);
+  color: #fff;
+  background: rgba(255, 119, 0, 0.16);
+}
+.void-pal-side .void-pal-btn {
+  width: 100%;
+  min-width: 0;
+  min-height: 54px;
+  padding: 5px 3px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  cursor: grab;
+  touch-action: pan-y;
+  user-select: none;
+}
+.void-pal-side .void-pal-btn canvas {
+  width: 24px;
+  height: 24px;
+  pointer-events: none;
+  touch-action: pan-y;
+  image-rendering: pixelated;
+}
+.void-pal-side .void-pal-btn b {
+  font-size: 0.64rem;
+  line-height: 1.1;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+  white-space: nowrap;
+}
+.void-pal-side .void-pal-btn small {
+  font-size: 0.6rem;
+  color: #9fb2c9;
+}
+.void-pal-toggle {
+  position: absolute;
+  top: 50%;
+  left: 8px;
+  transform: translateY(-50%);
+  z-index: 15;
+  width: 22px;
+  height: 44px;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  font-size: 0.72rem;
+  background: rgba(11, 15, 22, 0.92);
+  border: 1px solid #3c4d69;
+  border-left: 2px solid var(--void-neon-orange);
+  color: #ffb84d;
+  border-radius: 2px;
+  cursor: pointer;
+  transition: left 0.25s ease;
+}
+.void-board-stage.palette-open .void-pal-toggle {
+  left: 94px;
+}
+.void-board-stage.palette-open .void-building-panel[data-side="left"] {
+  left: 98px;
+}
+.void-board-stage.palette-open .void-hud-top {
+  left: 98px;
+}
+@media (max-width: 559px) {
+  .void-board-stage.palette-open .void-pal-side,
+  .void-pal-drawer {
+    width: 72px;
+  }
+  .void-board-stage.palette-open .void-pal-toggle {
+    left: 82px;
+  }
+  .void-board-stage.palette-open .void-building-panel[data-side="left"] {
+    left: 86px;
+  }
+  .void-board-stage.palette-open .void-hud-top {
+    left: 86px;
+  }
+}

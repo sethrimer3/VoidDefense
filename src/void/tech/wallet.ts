@@ -343,10 +343,38 @@ export type EvaluatedTech = {
   mechDamageMultiplier: number;
 };
 
+export const ALL_TOWER_TYPES: readonly TowerTypeId[] = [
+  "matterCannon",
+  "repairDepot",
+  "infantryBarracks",
+  "constructorHub",
+  "shieldProjector",
+  "wallSerpent",
+  "gravityAnchor",
+  "rocketTeam",
+  "heavyMechBay",
+  "voidSiphon",
+  "boundaryPrism",
+  "chronoCannon",
+  "lanternBearer",
+  "seamwalker",
+  "echoMine",
+  "countervoidHeart",
+];
+
+export const ALL_STRIKE_IDS: readonly StrikeId[] = [
+  "landfall",
+  "quarantineBell",
+  "containmentPulse",
+  "genesis",
+  "orbitalReinforcement",
+  "seismicFrame",
+];
+
 export function evaluateTech(ranks: Readonly<Record<string, number>>): EvaluatedTech {
   const r = (id: string) => ranks[id] ?? 0;
-  const unlockedTowers = new Set<TowerTypeId>(["matterCannon", "repairDepot", "infantryBarracks"]);
-  const unlockedStrikes = new Set<StrikeId>(["landfall"]);
+  const unlockedTowers = new Set<TowerTypeId>(ALL_TOWER_TYPES);
+  const unlockedStrikes = new Set<StrikeId>(ALL_STRIKE_IDS);
 
   for (const n of TECH_NODES) {
     if (r(n.id) > 0) {
