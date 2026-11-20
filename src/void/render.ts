@@ -18,6 +18,7 @@
 
 import { farmSoilColor, isWheat, wheatLean } from "./farms.ts";
 import { dist } from "../exact.ts";
+import { stream } from "../random.ts";
 import {
   ARCH_PALETTES,
   type ArchPalette,
@@ -159,17 +160,150 @@ export type DragPreview =
   | { kind: "reticle"; towerUid: number; x: number; y: number }
   | { kind: "blueprint"; points: { x: number; y: number }[] };
 
-interface TronCorridor {
-  fromBld: number;
-  toBld: number;
-  path: readonly { x: number; y: number }[];
+export interface BuildingDoor {
+  bldIdx: number;
+  x: number;
+  y: number;
 }
 
-interface TronCycle {
-  corridorIdx: number;
+export interface StreetBfsScratch {
+  parent: Int32Array;
+  queue: Int32Array;
+}
+
+export interface TronCycle {
+  fromDoorIdx: number;
+  toDoorIdx: number;
+  path: readonly { x: number; y: number }[];
   color: string;
   dist: number;
   speed: number;
+}
+
+export const TRON_CYCLE_COLORS = [
+  "#00e5ff",
+  "#18d8ff",
+  "#48e5ff",
+  "#00c8ff",
+  "#66f0ff",
+] as const;
+
+function isCityStreet(world: VoidWorld, x: number, y: number): boolean {
+  const { w, h } = world.grid;
+  if (x < 0 || x >= w || y < 0 || y >= h) return false;
+  const i = y * w + x;
+  // Light cycles ride city streets only, never the countryside's dirt lanes
+  return world.material[i] === CellMaterial.STREET && world.streetTier[i] !== 8;
+}
+
+function findBuildingDoor(world: VoidWorld, b: MetroBuilding): { x: number; y: number } | null {
+  const cx = b.x + Math.floor(b.w / 2);
+  const cy = b.y + Math.floor(b.h / 2);
+  if (isCityStreet(world, cx, b.y - 1)) return { x: cx, y: b.y - 1 };
+  if (isCityStreet(world, cx, b.y + b.h)) return { x: cx, y: b.y + b.h };
+  if (isCityStreet(world, b.x - 1, cy)) return { x: b.x - 1, y: cy };
+  if (isCityStreet(world, b.x + b.w, cy)) return { x: b.x + b.w, y: cy };
+  for (let x = b.x; x < b.x + b.w; x++) {
+    if (isCityStreet(world, x, b.y - 1)) return { x, y: b.y - 1 };
+    if (isCityStreet(world, x, b.y + b.h)) return { x, y: b.y + b.h };
+  }
+  for (let y = b.y; y < b.y + b.h; y++) {
+    if (isCityStreet(world, b.x - 1, y)) return { x: b.x - 1, y };
+    if (isCityStreet(world, b.x + b.w, y)) return { x: b.x + b.w, y };
+  }
+  return null;
+}
+
+/** Collects all buildings that border at least one city street cell. */
+export function collectBuildingDoors(world: VoidWorld): BuildingDoor[] {
+  const doors: BuildingDoor[] = [];
+  for (let i = 0; i < world.buildings.length; i++) {
+    const door = findBuildingDoor(world, world.buildings[i]);
+    if (door) doors.push({ bldIdx: i, x: door.x, y: door.y });
+  }
+  return doors;
+}
+
+/** Finds a shortest orthogonal city-street path between two street cells anywhere on the map. */
+export function findStreetPath(
+  world: VoidWorld,
+  startX: number,
+  startY: number,
+  goalX: number,
+  goalY: number,
+  scratch?: StreetBfsScratch,
+): { x: number; y: number }[] | null {
+  if (!isCityStreet(world, startX, startY) || !isCityStreet(world, goalX, goalY)) {
+    return null;
+  }
+  const { w, h } = world.grid;
+  const startIdx = startY * w + startX;
+  const goalIdx = goalY * w + goalX;
+  if (startIdx === goalIdx) return null;
+
+  const n = w * h;
+  const parent = scratch && scratch.parent.length === n ? scratch.parent : new Int32Array(n);
+  const queue = scratch && scratch.queue.length === n ? scratch.queue : new Int32Array(n);
+  parent.fill(-1);
+
+  parent[startIdx] = -2;
+  queue[0] = startIdx;
+  let head = 0;
+  let tail = 1;
+  let found = false;
+
+  const { material, streetTier } = world;
+  while (head < tail) {
+    const cur = queue[head++];
+    if (cur === goalIdx) {
+      found = true;
+      break;
+    }
+    const cx = cur % w;
+    const cy = (cur - cx) / w;
+
+    if (cx + 1 < w) {
+      const ni = cur + 1;
+      if (parent[ni] === -1 && material[ni] === CellMaterial.STREET && streetTier[ni] !== 8) {
+        parent[ni] = cur;
+        queue[tail++] = ni;
+      }
+    }
+    if (cx - 1 >= 0) {
+      const ni = cur - 1;
+      if (parent[ni] === -1 && material[ni] === CellMaterial.STREET && streetTier[ni] !== 8) {
+        parent[ni] = cur;
+        queue[tail++] = ni;
+      }
+    }
+    if (cy + 1 < h) {
+      const ni = cur + w;
+      if (parent[ni] === -1 && material[ni] === CellMaterial.STREET && streetTier[ni] !== 8) {
+        parent[ni] = cur;
+        queue[tail++] = ni;
+      }
+    }
+    if (cy - 1 >= 0) {
+      const ni = cur - w;
+      if (parent[ni] === -1 && material[ni] === CellMaterial.STREET && streetTier[ni] !== 8) {
+        parent[ni] = cur;
+        queue[tail++] = ni;
+      }
+    }
+  }
+
+  if (!found) return null;
+
+  const path: { x: number; y: number }[] = [];
+  let cur = goalIdx;
+  while (cur >= 0) {
+    const x = cur % w;
+    const y = (cur - x) / w;
+    path.push({ x, y });
+    cur = parent[cur];
+  }
+  path.reverse();
+  return path.length >= 4 ? path : null;
 }
 
 export class VoidRenderer {
@@ -246,10 +380,11 @@ export class VoidRenderer {
     this.outcomeFlashWon = won;
   }
 
-  // Tron light cycle trails along streets connecting buildings
-  private corridors: TronCorridor[] = [];
+  // Tron light cycle trails along streets connecting random buildings across the map
+  private buildingDoors: BuildingDoor[] = [];
   private cycles: TronCycle[] = [];
-  private corridorsWorld: VoidWorld | null = null;
+  private cyclesWorld: VoidWorld | null = null;
+  private bfsScratch: StreetBfsScratch | null = null;
   private lastTimeMs = 0;
 
   // Cached seeded spiral wisps for living Void interior
@@ -396,107 +531,62 @@ export class VoidRenderer {
     return this.spriteCache.pickStructureAt(world, towers, fx, fy, this.buildingHeight);
   }
 
-  /** Builds orthogonal street circuit corridors connecting nearby buildings for Tron light trails. */
-  private syncCorridors(world: VoidWorld): void {
-    if (this.corridorsWorld === world && this.corridors.length > 0) return;
-    this.corridorsWorld = world;
-    this.corridors = [];
-    this.cycles = [];
+  /** Picks a street route from `fromDoorIdx` (or a random building if -1 / eroded) to another random building on the map. */
+  private pickRandomRoute(
+    world: VoidWorld,
+    fromDoorIdx: number,
+  ): { fromDoorIdx: number; toDoorIdx: number; path: { x: number; y: number }[] } | null {
+    const count = this.buildingDoors.length;
+    if (count < 2) return null;
 
-    const { w, h } = world.grid;
-    const isStreet = (x: number, y: number) => {
-      if (x < 0 || x >= w || y < 0 || y >= h) return false;
-      const i = world.grid.index(x, y);
-      // Light cycles ride city streets only, never the countryside's dirt lanes
-      return world.material[i] === CellMaterial.STREET && world.streetTier[i] !== 8;
-    };
-
-    const findDoor = (b: MetroBuilding) => {
-      const cx = b.x + Math.floor(b.w / 2);
-      const cy = b.y + Math.floor(b.h / 2);
-      if (b.y > 0 && isStreet(cx, b.y - 1)) return { x: cx, y: b.y - 1 };
-      if (b.y + b.h < h && isStreet(cx, b.y + b.h)) return { x: cx, y: b.y + b.h };
-      if (b.x > 0 && isStreet(b.x - 1, cy)) return { x: b.x - 1, y: cy };
-      if (b.x + b.w < w && isStreet(b.x + b.w, cy)) return { x: b.x + b.w, y: cy };
-      for (let x = b.x; x < b.x + b.w; x++) {
-        if (b.y > 0 && isStreet(x, b.y - 1)) return { x, y: b.y - 1 };
-        if (b.y + b.h < h && isStreet(x, b.y + b.h)) return { x, y: b.y + b.h };
-      }
-      for (let y = b.y; y < b.y + b.h; y++) {
-        if (b.x > 0 && isStreet(b.x - 1, y)) return { x: b.x - 1, y };
-        if (b.x + b.w < w && isStreet(b.x + b.w, y)) return { x: b.x + b.w, y };
-      }
-      return null;
-    };
-
-    const visited = new Uint8Array(w * h);
-    const bldCount = world.buildings.length;
-
-    for (let i = 0; i < bldCount; i++) {
-      const bA = world.buildings[i];
-      const dA = findDoor(bA);
-      if (!dA) continue;
-
-      let bestB = -1;
-      let bestDist = 26;
-      for (let j = Math.max(0, i - 12); j < Math.min(bldCount, i + 12); j++) {
-        if (i === j) continue;
-        const bB = world.buildings[j];
-        const d = Math.abs(bB.x - bA.x) + Math.abs(bB.y - bA.y);
-        if (d > 2 && d < bestDist) {
-          bestDist = d;
-          bestB = j;
-        }
-      }
-      if (bestB === -1) continue;
-      const dB = findDoor(world.buildings[bestB]);
-      if (!dB) continue;
-
-      visited.fill(0);
-      visited[dA.y * w + dA.x] = 1;
-      const queue: { x: number; y: number; pts: { x: number; y: number }[] }[] = [
-        { x: dA.x, y: dA.y, pts: [dA] },
-      ];
-      let path: { x: number; y: number }[] | null = null;
-
-      while (queue.length > 0) {
-        const cur = queue.shift()!;
-        if (cur.x === dB.x && cur.y === dB.y) {
-          path = cur.pts;
-          break;
-        }
-        if (cur.pts.length >= pixels(28)) continue;
-        for (const [dx, dy] of [
-          [1, 0],
-          [-1, 0],
-          [0, 1],
-          [0, -1],
-        ]) {
-          const nx = cur.x + dx;
-          const ny = cur.y + dy;
-          if (!isStreet(nx, ny)) continue;
-          const idx = ny * w + nx;
-          if (visited[idx]) continue;
-          visited[idx] = 1;
-          queue.push({ x: nx, y: ny, pts: [...cur.pts, { x: nx, y: ny }] });
-        }
-      }
-
-      if (path && path.length >= 4) {
-        this.corridors.push({ fromBld: i, toBld: bestB, path });
-      }
+    const n = world.grid.w * world.grid.h;
+    if (!this.bfsScratch || this.bfsScratch.parent.length !== n) {
+      this.bfsScratch = { parent: new Int32Array(n), queue: new Int32Array(n) };
     }
 
-    // Populate active Tron cycles along the network
-    const cycleCount = Math.min(64, Math.floor(this.corridors.length * 0.45));
-    const colors = ["#ff9e38", "#ff7426", "#ffd166", "#48e5ff", "#ff8c33"];
+    const validStart =
+      fromDoorIdx >= 0 &&
+      fromDoorIdx < count &&
+      isCityStreet(world, this.buildingDoors[fromDoorIdx].x, this.buildingDoors[fromDoorIdx].y);
+
+    const rand = stream("effects");
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const startIdx =
+        validStart && attempt < 5
+          ? fromDoorIdx
+          : Math.floor(rand() * count);
+      const destIdx = Math.floor(rand() * count);
+      if (destIdx === startIdx) continue;
+
+      const start = this.buildingDoors[startIdx];
+      const dest = this.buildingDoors[destIdx];
+      const path = findStreetPath(world, start.x, start.y, dest.x, dest.y, this.bfsScratch);
+      if (path) {
+        return { fromDoorIdx: startIdx, toDoorIdx: destIdx, path };
+      }
+    }
+    return null;
+  }
+
+  /** Initializes Tron light cycles traveling between random buildings across the map. */
+  private syncCycles(world: VoidWorld): void {
+    if (this.cyclesWorld === world && this.buildingDoors.length > 0) return;
+    this.cyclesWorld = world;
+    this.buildingDoors = collectBuildingDoors(world);
+    this.cycles = [];
+
+    if (this.buildingDoors.length < 2) return;
+    const rand = stream("effects");
+    const cycleCount = Math.min(64, Math.max(8, Math.floor(this.buildingDoors.length * 0.45)));
     for (let c = 0; c < cycleCount; c++) {
-      const corridorIdx = (c * 7 + (world.seed & 31)) % Math.max(1, this.corridors.length);
-      const corr = this.corridors[corridorIdx];
+      const route = this.pickRandomRoute(world, -1);
+      if (!route) continue;
       this.cycles.push({
-        corridorIdx,
-        color: colors[c % colors.length],
-        dist: ((c * 13) % Math.max(1, corr.path.length)),
+        fromDoorIdx: route.fromDoorIdx,
+        toDoorIdx: route.toDoorIdx,
+        path: route.path,
+        color: TRON_CYCLE_COLORS[c % TRON_CYCLE_COLORS.length],
+        dist: rand() * route.path.length,
         speed: pixels(5.5 + (c % 4) * 1.5),
       });
     }
@@ -1278,35 +1368,56 @@ export class VoidRenderer {
 
     lap("terrain");
 
-    // 2. Tron Light Cycles & Stream Trails running along street corridors from building to building
-    this.syncCorridors(world);
+    // 2. Neon-blue Tron Light Cycles & Stream Trails traveling between random buildings on the map
+    this.syncCycles(world);
     const dt = this.lastTimeMs > 0 ? Math.min(0.08, (nowMs - this.lastTimeMs) * 0.001) : 0.016;
     this.lastTimeMs = nowMs;
 
     const closeZoom = this.cam.s >= 2.0;
     const TRAIL_LEN = closeZoom ? pixels(4) : pixels(2);
+    let reroutedThisFrame = 0;
     for (const cyc of this.cycles) {
-      if (cyc.corridorIdx >= this.corridors.length) continue;
-      const corr = this.corridors[cyc.corridorIdx];
-      const pLen = corr.path.length;
+      const pLen = cyc.path.length;
       if (pLen < 2) continue;
 
-      cyc.dist = (cyc.dist + cyc.speed * dt) % pLen;
-      const headIdx = Math.floor(cyc.dist);
+      cyc.dist += cyc.speed * dt;
+      if (cyc.dist >= pLen) {
+        if (reroutedThisFrame < 4) {
+          reroutedThisFrame++;
+          const next = this.pickRandomRoute(world, cyc.toDoorIdx);
+          if (next) {
+            cyc.fromDoorIdx = next.fromDoorIdx;
+            cyc.toDoorIdx = next.toDoorIdx;
+            cyc.path = next.path;
+            cyc.dist = 0;
+          } else {
+            cyc.dist %= pLen;
+          }
+        } else {
+          cyc.dist = pLen - 0.01;
+        }
+      }
 
-      // Subtle commuter headlights along avenues (richer tail at close zoom)
-      for (let t = TRAIL_LEN; t >= 0; t--) {
-        const segIdx = ((headIdx - t) % pLen + pLen) % pLen;
-        const pt = corr.path[segIdx];
+      const headIdx = Math.min(cyc.path.length - 1, Math.floor(cyc.dist));
+      const maxTrail = Math.min(TRAIL_LEN, headIdx);
+
+      // Neon-blue light cycle head and fading ribbon trail
+      for (let t = maxTrail; t >= 0; t--) {
+        const pt = cyc.path[headIdx - t];
         if (!pt) continue;
         if (world.material[world.grid.index(pt.x, pt.y)] !== CellMaterial.STREET) continue;
 
         if (t === 0) {
-          c.fillStyle = closeZoom ? "#e6d2a2" : "rgba(215, 195, 150, 0.72)";
+          c.fillStyle = cyc.color;
           c.fillRect(pt.x, pt.y, 1, 1);
-        } else if (closeZoom) {
-          c.fillStyle = "rgba(175, 130, 75, 0.35)";
-          c.fillRect(pt.x + 0.25, pt.y + 0.25, 0.5, 0.5);
+        } else {
+          const alpha = (1 - t / (TRAIL_LEN + 1)) * (closeZoom ? 0.6 : 0.45);
+          c.fillStyle = `rgba(0, 229, 255, ${alpha.toFixed(2)})`;
+          if (closeZoom) {
+            c.fillRect(pt.x + 0.15, pt.y + 0.15, 0.7, 0.7);
+          } else {
+            c.fillRect(pt.x, pt.y, 1, 1);
+          }
         }
       }
     }
@@ -1342,9 +1453,9 @@ export class VoidRenderer {
       }
     }
 
-    // Contested pixels: neon orange fading back to dark Void color over CONTEST_HOLD_TICKS
+    // Contested pixels: neon orange fading back to dark Void color over contestHoldTicks (1s / voidDifficulty)
     if (voidField.contestedCells.size > 0) {
-      const holdDur = Math.max(1, VOID_CONTEST_COSTS.CONTEST_HOLD_TICKS);
+      const holdDur = Math.max(1, voidField.contestHoldTicks);
       for (const [cIdx, rem] of voidField.contestedCells) {
         const ratio = Math.max(0, Math.min(1, rem / holdDur));
         const r = Math.round(10 + (255 - 10) * ratio);
