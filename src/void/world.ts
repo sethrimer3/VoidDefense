@@ -949,7 +949,7 @@ export class VoidWorld {
     for (let i = 0; i < n; i++) {
       if (!this.isBaselineCell[i]) continue;
       const mat = this.material[i];
-      if (mat !== CellMaterial.VOID && mat !== CellMaterial.UNCLAIMED && this.hp[i] > 0) {
+      if (mat !== CellMaterial.VOID && mat !== CellMaterial.UNCLAIMED && mat !== CellMaterial.EMPTY && this.hp[i] > 0) {
         const val = this.baselineCellValue[i];
         preserved += val;
         weightedHp += Math.min(this.hp[i], this.maxHp[i]) * val;

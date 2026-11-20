@@ -23,6 +23,7 @@ export const CellMaterial = {
   SKYSCRAPER: 7,
   WALL: 8,
   BARRIER: 9,
+  EMPTY: 10,
 } as const;
 
 export type CellMaterialId = (typeof CellMaterial)[keyof typeof CellMaterial];
@@ -176,6 +177,8 @@ export type DebrisFragment = {
   portalY: number;
   /** Original terrain or building color at the moment the pixel detached. */
   color: string;
+  /** Secondary architectural or terrain detail color (windows, roof trim, foliage highlight) while intact. */
+  accentColor?: string;
   glowColor: string;
   size: number;
   life: number;
@@ -184,6 +187,10 @@ export type DebrisFragment = {
   startDist?: number;
   /** Event-horizon core radius of the target portal. */
   coreRadius?: number;
+  /** True while this fragment is still an intact multi-pixel building/object block before tidal disintegration. */
+  intact?: boolean;
+  /** Normalized proximity `u` in `[0.25..0.52]` at which tidal forces disintegrate this intact block into individual 1x1 pixels. */
+  disintegrateAt?: number;
 };
 
 /** Pooled 3D falling chunk (masonry, roof, tower, or unit) that falls under gravity (`vz -= g * dt`),

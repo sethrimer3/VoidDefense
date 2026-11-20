@@ -30,10 +30,19 @@
  *    or rifle loops from trivially exhausting the reservoir without surviving the siege. */
 
 import { dist } from "../exact.ts";
-import { MATERIAL_RESISTANCE, pixels, VOID_BALANCE, PIXEL_WORK_SCALE } from "./config.ts";
+import {
+  CORRUPTION_REACH,
+  MATERIAL_RESISTANCE,
+  PIXEL_WORK_SCALE,
+  VOID_BALANCE,
+  VOID_CONTEST_COSTS,
+  pixels,
+} from "./config.ts";
+import { floorsToElevation } from "./elevation.ts";
 import { hash01, ORTHO } from "./grid.ts";
 import {
   CellMaterial,
+  LandCover,
   type PrismState,
   type QuarantineSeal,
   type ScenarioConfig,
@@ -104,7 +113,11 @@ export class VoidField {
         if ((x - cx) * (x - cx) + (y - cy) * (y - cy) > rSq) continue;
         const idx = y * w + x;
         this.lanternRefCount[idx]++;
-        if (world.material[idx] === CellMaterial.VOID || world.material[idx] === CellMaterial.UNCLAIMED) {
+        if (
+          world.material[idx] === CellMaterial.VOID ||
+          world.material[idx] === CellMaterial.UNCLAIMED ||
+          world.material[idx] === CellMaterial.EMPTY
+        ) {
           this.lanternCreatedTemp[idx] = 1;
           world.material[idx] = CellMaterial.RECLAIMED;
           world.hp[idx] = 100;
@@ -161,7 +174,11 @@ export class VoidField {
 
     // Prune Countervoid cells that were eroded back into purple Void
     for (const idx of this.countervoidCells) {
-      if (world.material[idx] === CellMaterial.VOID || world.material[idx] === CellMaterial.UNCLAIMED) {
+      if (
+        world.material[idx] === CellMaterial.VOID ||
+        world.material[idx] === CellMaterial.UNCLAIMED ||
+        world.material[idx] === CellMaterial.EMPTY
+      ) {
         this.countervoidCells.delete(idx);
       }
     }
@@ -211,7 +228,11 @@ export class VoidField {
       if (world.grid.inBounds(cx, cy)) {
         const idx = world.grid.index(cx, cy);
         this.countervoidCells.add(idx);
-        if (world.material[idx] === CellMaterial.VOID || world.material[idx] === CellMaterial.UNCLAIMED) {
+        if (
+          world.material[idx] === CellMaterial.VOID ||
+          world.material[idx] === CellMaterial.UNCLAIMED ||
+          world.material[idx] === CellMaterial.EMPTY
+        ) {
           world.material[idx] = CellMaterial.RECLAIMED;
           world.hp[idx] = cellHp;
           world.maxHp[idx] = cellHp;

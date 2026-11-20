@@ -33,6 +33,18 @@ export const WORK_SCALE = 1000;
 /** Extra fixed-point precision preserves quarter-cell erosion costs exactly. */
 export const PIXEL_WORK_SCALE = WORK_SCALE / PIXEL_AREA;
 
+/** Contested Void consumption costs (in Void power units) and fixed-point scale.
+ * - Empty space: 1 void power per pixel filled.
+ * - Land: 2 void power per pixel of land.
+ * - Buildings: 2 void power per pixel of building height, added on top of land cost. */
+export const VOID_CONTEST_COSTS = {
+  EMPTY_COST: 1,
+  LAND_COST_PER_PIXEL: 2,
+  BUILDING_COST_PER_PIXEL: 2,
+  /** Integer micro-work per 1 unit of Void power (keeps 30 Hz fixed-point budget exact). */
+  MICRO_WORK_PER_VOID_POWER: 200,
+} as const;
+
 /** Material resistance (micro-work required to erode 1 HP of cell integrity).
  * Unreinforced civilian streets and buildings erode rapidly enough that an unopposed
  * Void visibly devours entire city blocks, whereas Resistance-engineered reclaimed

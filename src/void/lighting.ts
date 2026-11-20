@@ -131,6 +131,7 @@ export function terrainReliefAt(world: VoidWorld, x: number, y: number): number 
   const cover = world.landCover[idx];
 
   if (mat === CellMaterial.VOID) return -1.5;
+  if (mat === CellMaterial.EMPTY) return -1.2;
   if (mat === CellMaterial.UNCLAIMED) {
     // Gentle river/water ripples
     return -0.35 + ((cx * 3 + cy * 5) & 3) * 0.05;

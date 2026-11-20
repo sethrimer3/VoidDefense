@@ -17,7 +17,7 @@ export function ledgeFrontDepthAt(world: LedgeWorld, x: number, y: number): numb
   if (x < 0 || y < 0 || x >= w || y + 1 >= h) return 0;
   const idx = y * w + x;
   const material = world.material[idx];
-  if (material === CellMaterial.VOID || material === CellMaterial.UNCLAIMED) return 0;
+  if (material === CellMaterial.VOID || material === CellMaterial.UNCLAIMED || material === CellMaterial.EMPTY) return 0;
   if (world.material[idx + w] !== CellMaterial.VOID) return 0;
   const depth =
     3 +
@@ -58,7 +58,7 @@ export function paintVoidLedge(c: Painter, world: LedgeWorld, frontier: readonly
   };
   for (const idx of frontier) {
     const material = world.material[idx];
-    if (material === CellMaterial.VOID || material === CellMaterial.UNCLAIMED) continue;
+    if (material === CellMaterial.VOID || material === CellMaterial.UNCLAIMED || material === CellMaterial.EMPTY) continue;
     const x = idx % w, y = Math.floor(idx / w);
     const earthy = material === CellMaterial.PARK || material === CellMaterial.SALVAGE
       || world.landCover[idx] === LandCover.DIRT_ROAD;

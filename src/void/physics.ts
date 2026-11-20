@@ -78,6 +78,7 @@ const SLAB_URBAN: Record<number, readonly string[]> = {
   [CellMaterial.WALL]: ["#5c6d85"],
   [CellMaterial.BARRIER]: ["#48e5ff"],
   [CellMaterial.UNCLAIMED]: ["#153956"],
+  [CellMaterial.EMPTY]: ["#0a0b12"],
 };
 
 const moltenHexParseCache = new Map<string, [number, number, number]>();
@@ -427,7 +428,7 @@ export class VoidPhysics {
     const prevMaxHp = world.maxHp[idx];
     const prevFloors = world.columnFloors[idx];
     const prevCover = world.landCover[idx];
-    if (prevMat !== CellMaterial.VOID && this.recentCellLosses.length < 256) {
+    if (prevMat !== CellMaterial.VOID && prevMat !== CellMaterial.EMPTY && this.recentCellLosses.length < 256) {
       this.recentCellLosses.push({
         cellIdx: idx,
         material: prevMat as CellMaterialId,
@@ -459,7 +460,7 @@ export class VoidPhysics {
       }
     }
 
-    if (spawnDebris && prevMat !== CellMaterial.VOID && this.debris.length < 750) {
+    if (spawnDebris && prevMat !== CellMaterial.VOID && prevMat !== CellMaterial.EMPTY && this.debris.length < 750) {
       const x = world.grid.xOf(idx) + 0.5;
       const y = world.grid.yOf(idx) + 0.5;
 
@@ -988,7 +989,7 @@ export class VoidPhysics {
         const idx = y * w + x;
         const mat = world.material[idx];
 
-        if (mat === CellMaterial.VOID || mat === CellMaterial.UNCLAIMED) {
+        if (mat === CellMaterial.VOID || mat === CellMaterial.UNCLAIMED || mat === CellMaterial.EMPTY) {
           if (mat === CellMaterial.VOID) displacedVoidCells++;
           if (asWall) {
             world.material[idx] = CellMaterial.WALL;
@@ -1075,7 +1076,7 @@ export class VoidPhysics {
 
         const idx = y * w + x;
         const mat = world.material[idx];
-        if (mat !== CellMaterial.VOID && mat !== CellMaterial.UNCLAIMED) continue;
+        if (mat !== CellMaterial.VOID && mat !== CellMaterial.UNCLAIMED && mat !== CellMaterial.EMPTY) continue;
         if (world.landCover[idx] === LandCover.RIVER || world.landCover[idx] === LandCover.BRIDGE) continue;
 
         if (mat === CellMaterial.VOID) displacedVoidCells++;
