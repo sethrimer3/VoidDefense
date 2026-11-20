@@ -285,7 +285,8 @@ export function paintVoidInteriorDirect(
   if (reduceEffects) return;
 
   const { w, h } = world.grid;
-  const occupied = getOccupiedMask(w * h);
+  const multiPortal = world.portals.length > 1;
+  const occupied = multiPortal ? getOccupiedMask(w * h) : null;
   const tile = starNestTile();
   const TILE = STARNEST_TILE_SIZE;
   const invTwoPi = 1 / Math.PI;
@@ -316,7 +317,7 @@ export function paintVoidInteriorDirect(
       const row = py * w;
       for (let px = xMin; px <= xMax; px++) {
         const idx = row + px;
-        if (world.material[idx] !== CellMaterial.VOID || occupied[idx]) continue;
+        if (world.material[idx] !== CellMaterial.VOID || (occupied && occupied[idx])) continue;
 
         const dx = px - p.x;
         const r2 = dx * dx + dy2;
@@ -334,7 +335,7 @@ export function paintVoidInteriorDirect(
         const intensity = tile[ty * TILE + tx];
 
         if (intensity > 0.48) {
-          occupied[idx] = 1;
+          if (occupied) occupied[idx] = 1;
           const jitter = (px * 7 + py * 13) & 15;
           let colorIdx: number;
           if (intensity > 0.88) {

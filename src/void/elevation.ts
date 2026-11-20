@@ -234,7 +234,54 @@ export type CachedBuildingSprite = {
   ops: { dx: number; dy: number; color: string }[];
   /** Occupied pixel mask of size `w * (h + maxElev)` for instant roof/facade hit-testing. */
   hitMask: Uint8Array;
+  /** Packed ABGR color buffer of size `w * (h + maxElev)` (0 where transparent). */
+  colorU32: Uint32Array;
+  /** 3D world height `z` (`0..15` px) at each sprite pixel. */
+  elevMap: Uint8Array;
+  /** Quantized 3D bump-mapped surface normal X (`-127..127`) at each sprite pixel. */
+  nxMap: Int8Array;
+  /** Quantized 3D bump-mapped surface normal Y (`-127..127`) at each sprite pixel. */
+  nyMap: Int8Array;
+  /** Quantized 3D bump-mapped surface normal Z (`-127..127`) at each sprite pixel. */
+  nzMap: Int8Array;
+  /** Specular reflectivity weight (`0..255`) at each sprite pixel. */
+  specMap: Uint8Array;
 };
+
+const IS_LITTLE_ENDIAN_ELEV = new Uint8Array(new Uint32Array([0x01020304]).buffer)[0] === 0x04;
+const elevHexCache = new Map<string, number>();
+
+export function packElevAbgr(r: number, g: number, b: number): number {
+  return IS_LITTLE_ENDIAN_ELEV
+    ? (0xff000000 | (b << 16) | (g << 8) | r) >>> 0
+    : ((r << 24) | (g << 16) | (b << 8) | 0xff) >>> 0;
+}
+
+export function hexToElevAbgr(hex: string): number {
+  let v = elevHexCache.get(hex);
+  if (v !== undefined) return v;
+  const r = parseInt(hex.slice(1, 3), 16) & 0xff;
+  const g = parseInt(hex.slice(3, 5), 16) & 0xff;
+  const b = parseInt(hex.slice(5, 7), 16) & 0xff;
+  v = packElevAbgr(r, g, b);
+  elevHexCache.set(hex, v);
+  return v;
+}
+
+function storeUnitNormal(
+  nxMap: Int8Array,
+  nyMap: Int8Array,
+  nzMap: Int8Array,
+  pIdx: number,
+  nx: number,
+  ny: number,
+  nz: number,
+): void {
+  const len = Math.hypot(nx, ny, nz) || 1;
+  nxMap[pIdx] = Math.max(-127, Math.min(127, Math.round((nx / len) * 127)));
+  nyMap[pIdx] = Math.max(-127, Math.min(127, Math.round((ny / len) * 127)));
+  nzMap[pIdx] = Math.max(-127, Math.min(127, Math.round((nz / len) * 127)));
+}
 
 /** Computes a deterministic version signature for building `b` so its cached sprite
  * rebuilds only when footprint cells, columnFloors, HP damage tier, development, or height mode change. */
@@ -414,8 +461,15 @@ export function buildBuildingSprite(
   const maxElev = elevationOf(b, mode);
   const spriteW = b.w;
   const spriteH = b.h + maxElev;
-  const colorBuf = new Array<string | null>(spriteW * spriteH).fill(null);
-  const hitMask = new Uint8Array(spriteW * spriteH);
+  const spriteSize = spriteW * spriteH;
+  const colorBuf = new Array<string | null>(spriteSize).fill(null);
+  const hitMask = new Uint8Array(spriteSize);
+  const colorU32 = new Uint32Array(spriteSize);
+  const elevMap = new Uint8Array(spriteSize);
+  const nxMap = new Int8Array(spriteSize);
+  const nyMap = new Int8Array(spriteSize);
+  const nzMap = new Int8Array(spriteSize);
+  const specMap = new Uint8Array(spriteSize);
   const palettes = ARCH_PALETTES[b.archStyle] ?? ARCH_PALETTES.glassTower;
   const pal = palettes[b.variant % palettes.length];
   const { w, h } = world.grid;
@@ -453,6 +507,12 @@ export function buildBuildingSprite(
       runs: [],
       ops: [],
       hitMask,
+      colorU32,
+      elevMap,
+      nxMap,
+      nyMap,
+      nzMap,
+      specMap,
     };
   }
 
@@ -491,6 +551,12 @@ export function buildBuildingSprite(
     }
   }
 
+  const midX = b.x + b.w * 0.5;
+  const midY = b.y + b.h * 0.5;
+  const rustic = b.archStyle === "homestead" || b.archStyle === "barn";
+  const isGlassStyle =
+    b.archStyle === "glassTower" || b.archStyle === "cyberArcology" || b.archStyle === "solarTerrace";
+
   // Paint row by row from north (`ly = 0`) to south (`ly = b.h - 1`)
   for (let ly = 0; ly < b.h; ly++) {
     const cy = b.y + ly;
@@ -502,6 +568,7 @@ export function buildBuildingSprite(
       const cx = b.x + lx;
       const idx = cy * w + cx;
 
+      const northElev = ly > 0 ? cellElev[(ly - 1) * b.w + lx] : 0;
       const southElev = ly + 1 < b.h ? cellElev[(ly + 1) * b.w + lx] : 0;
       const southHadBuilding = ly + 1 < b.h && cellFullElev[(ly + 1) * b.w + lx] > 0;
       const southMissingOrSpalled =
@@ -523,13 +590,69 @@ export function buildBuildingSprite(
         for (let f = southElev; f < elev; f++) {
           const sy = ly + maxElev - f;
           if (sy < 0 || sy >= spriteH) continue;
-          const isSideBorder = f >= westElev || f >= eastElev;
+          const westBorder = f >= westElev;
+          const eastBorder = f >= eastElev;
+          const isSideBorder = westBorder || eastBorder;
           const fCol = isCutawayFace
             ? cutawayColorAt(world, b, cx, cy, f, elev, isSideBorder, adjVoid, pal)
             : facadeColorAt(world, b, cx, cy, f, elev, isSideBorder, hpRatio, pal);
           const pIdx = sy * spriteW + lx;
           colorBuf[pIdx] = fCol;
+          colorU32[pIdx] = hexToElevAbgr(fCol);
           hitMask[pIdx] = 1;
+          elevMap[pIdx] = Math.max(0, Math.min(255, f));
+
+          // 3D bump-mapped surface normal for south facade / cutaway
+          let nx = 0;
+          let ny = 0.86;
+          let nz = 0.48;
+          let spec = isGlassStyle ? 115 : 55;
+
+          if (westBorder && !eastBorder) nx -= 0.72;
+          else if (eastBorder && !westBorder) nx += 0.72;
+
+          if (isCutawayFace) {
+            if (f % 2 === 0) {
+              // Projecting horizontal concrete floor slab shelf
+              ny = 0.54;
+              nz = 0.84;
+              spec = 40;
+            } else {
+              // Recessed broken interior room with partition wall facets
+              nx += ((cx * 7 + f * 13) & 2) === 0 ? -0.38 : 0.38;
+              ny = 0.88;
+              nz = 0.28;
+              spec = fCol === "#48e5ff" ? 180 : 65;
+            }
+          } else if (rustic) {
+            // Timber & clapboard siding bevels
+            ny += (f & 1) === 0 ? 0.08 : -0.08;
+            nz += (f & 1) === 0 ? -0.06 : 0.14;
+            spec = lx % 3 === 1 ? 120 : 35;
+          } else if (f === 0 || f === elev - 1) {
+            // Ground lobby awning or upper cornice band
+            ny = 0.62;
+            nz = 0.78;
+            spec = 95;
+          } else if (lx % 2 === 1) {
+            // Window column: smooth glass panes with horizontal floor spandrels
+            if (f % 2 === 0) {
+              ny = 0.76;
+              nz = 0.65;
+              spec = 110;
+            } else {
+              ny = 0.94;
+              nz = 0.34;
+              spec = isGlassStyle ? 220 : 165;
+            }
+          } else {
+            // Vertical structural pilaster / mullion rib
+            nx += lx < b.w * 0.5 ? -0.26 : 0.26;
+            ny = 0.82;
+            nz = 0.50;
+          }
+          storeUnitNormal(nxMap, nyMap, nzMap, pIdx, nx, ny, nz);
+          specMap[pIdx] = spec;
         }
       }
 
@@ -549,7 +672,83 @@ export function buildBuildingSprite(
           : roofColorAt(world, b, cx, cy, idx, pal);
         const pIdx = roofSy * spriteW + lx;
         colorBuf[pIdx] = rCol;
+        colorU32[pIdx] = hexToElevAbgr(rCol);
         hitMask[pIdx] = 1;
+        elevMap[pIdx] = Math.max(0, Math.min(255, elev));
+
+        // 3D bump-mapped surface normal for roof / setback terrace / spalled slab
+        let nx = 0;
+        let ny = 0;
+        let nz = 1.0;
+        let spec = isGlassStyle ? 110 : 60;
+
+        if (spalledTop) {
+          nx = (hash01(world.seed, 977, cx, cy) - 0.5) * 0.6;
+          ny = (hash01(world.seed, 978, cx, cy) - 0.5) * 0.6;
+          nz = 0.80;
+          spec = 35;
+        } else if (rustic) {
+          // Pitched gable roof slopes
+          const horizontal = b.w >= b.h;
+          if (horizontal) {
+            ny = cy + 0.5 < midY ? -0.56 : cy + 0.5 > midY ? 0.56 : 0;
+            nx = ((lx & 1) === 0 ? -0.08 : 0.08);
+            nz = 0.82;
+          } else {
+            nx = cx + 0.5 < midX ? -0.56 : cx + 0.5 > midX ? 0.56 : 0;
+            ny = ((ly & 1) === 0 ? -0.08 : 0.08);
+            nz = 0.82;
+          }
+          spec = 45;
+        } else if (b.archStyle === "civicDome") {
+          // Smooth spherical dome normal curving outward from roof center
+          const dx = (cx + 0.5 - midX) / Math.max(1.5, b.w * 0.5);
+          const dy = (cy + 0.5 - midY) / Math.max(1.5, b.h * 0.5);
+          const r2 = Math.min(0.78, dx * dx + dy * dy);
+          nx = dx * 0.75;
+          ny = dy * 0.75;
+          nz = Math.sqrt(Math.max(0.22, 1 - r2));
+          spec = 155;
+        } else {
+          // Outer parapet and setback terrace bevels
+          if (elev > northElev) ny -= 0.62;
+          if (elev > southElev) ny += 0.62;
+          if (elev > westElev) nx -= 0.62;
+          if (elev > eastElev) nx += 0.62;
+
+          // Interior rooftop feature bump mapping
+          if (nx === 0 && ny === 0) {
+            if (b.roofFeature === "solarArray" && ly % 3 === 0) {
+              ny = 0.46;
+              nz = 0.88;
+              spec = 210;
+            } else if (b.roofFeature === "helipad") {
+              const hdx = cx - Math.floor(midX);
+              const hdy = cy - Math.floor(midY);
+              if (Math.abs(hdx) === 2 || Math.abs(hdy) === 2) {
+                nx = hdx * 0.22;
+                ny = hdy * 0.22;
+                nz = 0.92;
+              }
+            } else if (b.roofFeature === "skyGarden") {
+              nx = ((lx & 1) === 0 ? -0.22 : 0.22);
+              ny = ((ly & 1) === 0 ? -0.22 : 0.22);
+              nz = 0.94;
+              spec = 35;
+            } else if (b.archStyle === "foundryComplex") {
+              // Sawtooth industrial roof skylight ridges
+              ny = (ly & 1) === 0 ? -0.34 : 0.34;
+              nz = 0.94;
+            } else {
+              // Subtle structural panel seams
+              nx = lx % 3 === 0 ? -0.14 : 0.08;
+              ny = ly % 3 === 0 ? -0.14 : 0.08;
+              nz = 0.98;
+            }
+          }
+        }
+        storeUnitNormal(nxMap, nyMap, nzMap, pIdx, nx, ny, nz);
+        specMap[pIdx] = spec;
       }
     }
   }
@@ -613,6 +812,12 @@ export function buildBuildingSprite(
     runs,
     ops,
     hitMask,
+    colorU32,
+    elevMap,
+    nxMap,
+    nyMap,
+    nzMap,
+    specMap,
   };
 }
 
@@ -623,6 +828,17 @@ export class BuildingSpriteCache {
   private atlasCanvas: HTMLCanvasElement | null = null;
   private atlasCtx: CanvasRenderingContext2D | null = null;
   private readonly dirtyIds = new Set<number>();
+
+  /** Full-board structure G-buffer for per-pixel 2.5D bump lighting & shadow casting. */
+  atlasColorU32 = new Uint32Array(0);
+  atlasElev = new Uint8Array(0);
+  atlasNx = new Int8Array(0);
+  atlasNy = new Int8Array(0);
+  atlasNz = new Int8Array(0);
+  atlasSpec = new Uint8Array(0);
+  atlasBldId = new Int16Array(0);
+  private gbufferW = 0;
+  private gbufferH = 0;
 
   getSprite(
     world: VoidWorld,
@@ -637,6 +853,8 @@ export class BuildingSpriteCache {
       this.atlasCanvas = null;
       this.atlasCtx = null;
       this.dirtyIds.clear();
+      this.gbufferW = 0;
+      this.gbufferH = 0;
     }
     const existing = this.sprites.get(b.id);
     if (existing && !forceCheck) {
@@ -652,34 +870,34 @@ export class BuildingSpriteCache {
     return built;
   }
 
-  /** Returns a full-board cached canvas containing all buildings sorted back-to-front.
-   * Re-checks signatures only for buildings overlapping dirtied 16x16 terrain chunks. */
-  getBoardAtlas(
+  /** Synchronizes the full-board structure G-buffer (works in both browser and headless Node tests). */
+  syncAtlasGbuffer(
     world: VoidWorld,
     mode: BuildingHeightMode,
     dirtyChunkFlags?: Uint8Array,
-  ): HTMLCanvasElement | null {
-    if (typeof document === "undefined" || typeof document.createElement !== "function") {
-      return null;
-    }
-    const { w, h, chunksW } = world.grid;
+  ): { rebuildAll: boolean; sortedSprites: CachedBuildingSprite[]; dirtyRects: [number, number, number, number][] } {
+    const { w, h, chunksW, count } = world.grid;
     let rebuildAll = false;
     if (
       this.cachedWorld !== world ||
       this.cachedMode !== mode ||
-      !this.atlasCanvas ||
-      this.atlasCanvas.width !== w ||
-      this.atlasCanvas.height !== h
+      this.gbufferW !== w ||
+      this.gbufferH !== h ||
+      this.atlasColorU32.length !== count
     ) {
       this.cachedWorld = world;
       this.cachedMode = mode;
       this.sprites.clear();
       this.dirtyIds.clear();
-      const el = this.atlasCanvas ?? document.createElement("canvas");
-      el.width = w;
-      el.height = h;
-      this.atlasCanvas = el;
-      this.atlasCtx = el.getContext("2d");
+      this.gbufferW = w;
+      this.gbufferH = h;
+      this.atlasColorU32 = new Uint32Array(count);
+      this.atlasElev = new Uint8Array(count);
+      this.atlasNx = new Int8Array(count);
+      this.atlasNy = new Int8Array(count);
+      this.atlasNz = new Int8Array(count);
+      this.atlasSpec = new Uint8Array(count);
+      this.atlasBldId = new Int16Array(count).fill(-1);
       rebuildAll = true;
     }
 
@@ -692,7 +910,7 @@ export class BuildingSpriteCache {
         }
       }
       if (!anyDirty && this.dirtyIds.size === 0) {
-        return this.atlasCanvas;
+        return { rebuildAll: false, sortedSprites: [], dirtyRects: [] };
       }
     }
 
@@ -722,12 +940,8 @@ export class BuildingSpriteCache {
     }
 
     if (!rebuildAll && this.dirtyIds.size === 0) {
-      return this.atlasCanvas;
+      return { rebuildAll: false, sortedSprites: [], dirtyRects: [] };
     }
-
-    const ctx = this.atlasCtx;
-    if (!ctx || !this.atlasCanvas) return null;
-    ctx.imageSmoothingEnabled = false;
 
     const sortedSprites: CachedBuildingSprite[] = [];
     for (let i = 0; i < world.buildings.length; i++) {
@@ -735,6 +949,103 @@ export class BuildingSpriteCache {
       if (sp && sp.intactCount > 0) sortedSprites.push(sp);
     }
     sortedSprites.sort((a, b) => a.bottomY - b.bottomY || a.x - b.x);
+
+    const dirtyRects: [number, number, number, number][] = [];
+    if (!rebuildAll && this.dirtyIds.size <= 32) {
+      for (const id of this.dirtyIds) {
+        const sp = this.sprites.get(id);
+        if (sp) {
+          dirtyRects.push([
+            Math.max(0, sp.x),
+            Math.max(0, sp.y),
+            Math.min(w, sp.x + sp.w),
+            Math.min(h, sp.y + sp.h),
+          ]);
+        }
+      }
+    } else {
+      dirtyRects.push([0, 0, w, h]);
+    }
+
+    const { atlasColorU32, atlasElev, atlasNx, atlasNy, atlasNz, atlasSpec, atlasBldId } = this;
+    for (let r = 0; r < dirtyRects.length; r++) {
+      const [rx0, ry0, rx1, ry1] = dirtyRects[r];
+      if (rx1 <= rx0 || ry1 <= ry0) continue;
+      for (let y = ry0; y < ry1; y++) {
+        const row = y * w;
+        atlasColorU32.fill(0, row + rx0, row + rx1);
+        atlasElev.fill(0, row + rx0, row + rx1);
+        atlasNx.fill(0, row + rx0, row + rx1);
+        atlasNy.fill(0, row + rx0, row + rx1);
+        atlasNz.fill(0, row + rx0, row + rx1);
+        atlasSpec.fill(0, row + rx0, row + rx1);
+        atlasBldId.fill(-1, row + rx0, row + rx1);
+      }
+      for (let i = 0; i < sortedSprites.length; i++) {
+        const sp = sortedSprites[i];
+        if (sp.x + sp.w <= rx0 || sp.x >= rx1 || sp.y + sp.h <= ry0 || sp.y >= ry1) continue;
+        const sx0 = Math.max(rx0, sp.x);
+        const sx1 = Math.min(rx1, sp.x + sp.w);
+        const sy0 = Math.max(ry0, sp.y);
+        const sy1 = Math.min(ry1, sp.y + sp.h);
+        const spW = sp.w;
+        for (let sy = sy0; sy < sy1; sy++) {
+          const dy = sy - sp.y;
+          const spRow = dy * spW;
+          const bRow = sy * w;
+          for (let sx = sx0; sx < sx1; sx++) {
+            const pIdx = spRow + (sx - sp.x);
+            const c = sp.colorU32[pIdx];
+            if (c !== 0) {
+              const bIdx = bRow + sx;
+              atlasColorU32[bIdx] = c;
+              atlasElev[bIdx] = sp.elevMap[pIdx];
+              atlasNx[bIdx] = sp.nxMap[pIdx];
+              atlasNy[bIdx] = sp.nyMap[pIdx];
+              atlasNz[bIdx] = sp.nzMap[pIdx];
+              atlasSpec[bIdx] = sp.specMap[pIdx];
+              atlasBldId[bIdx] = sp.id;
+            }
+          }
+        }
+      }
+    }
+
+    this.dirtyIds.clear();
+    return { rebuildAll, sortedSprites, dirtyRects };
+  }
+
+  /** Returns a full-board cached canvas containing all buildings sorted back-to-front.
+   * Re-checks signatures only for buildings overlapping dirtied 16x16 terrain chunks. */
+  getBoardAtlas(
+    world: VoidWorld,
+    mode: BuildingHeightMode,
+    dirtyChunkFlags?: Uint8Array,
+  ): HTMLCanvasElement | null {
+    if (typeof document === "undefined" || typeof document.createElement !== "function") {
+      this.syncAtlasGbuffer(world, mode, dirtyChunkFlags);
+      return null;
+    }
+    const { w, h } = world.grid;
+    let forceCanvasRebuild = false;
+    if (!this.atlasCanvas || this.atlasCanvas.width !== w || this.atlasCanvas.height !== h) {
+      const el = this.atlasCanvas ?? document.createElement("canvas");
+      el.width = w;
+      el.height = h;
+      this.atlasCanvas = el;
+      this.atlasCtx = el.getContext("2d");
+      this.gbufferW = 0; // trigger full gbuffer + canvas sync
+      forceCanvasRebuild = true;
+    }
+
+    const { sortedSprites, dirtyRects } = this.syncAtlasGbuffer(world, mode, dirtyChunkFlags);
+    if (!forceCanvasRebuild && dirtyRects.length === 0) {
+      return this.atlasCanvas;
+    }
+
+    const ctx = this.atlasCtx;
+    if (!ctx || !this.atlasCanvas) return null;
+    ctx.imageSmoothingEnabled = false;
 
     const repaintRect = (rx0: number, ry0: number, rx1: number, ry1: number): void => {
       if (rx1 <= rx0 || ry1 <= ry0) return;
@@ -762,25 +1073,11 @@ export class BuildingSpriteCache {
       ctx.restore();
     };
 
-    // Incrementally repaint each dirty building's local region when <= 32 buildings changed
-    // (avoids spanning a single giant bounding box across opposite sides of the board).
-    if (!rebuildAll && this.dirtyIds.size <= 32) {
-      for (const id of this.dirtyIds) {
-        const sp = this.sprites.get(id);
-        if (sp) {
-          repaintRect(
-            Math.max(0, sp.x),
-            Math.max(0, sp.y),
-            Math.min(w, sp.x + sp.w),
-            Math.min(h, sp.y + sp.h),
-          );
-        }
-      }
-    } else {
-      repaintRect(0, 0, w, h);
+    for (let r = 0; r < dirtyRects.length; r++) {
+      const [rx0, ry0, rx1, ry1] = dirtyRects[r];
+      repaintRect(rx0, ry0, rx1, ry1);
     }
 
-    this.dirtyIds.clear();
     return this.atlasCanvas;
   }
 
