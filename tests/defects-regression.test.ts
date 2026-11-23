@@ -26,6 +26,7 @@ test("Defect 1: Countervoid decays only Countervoid-created land and never destr
   const wallet = emptyTechWallet();
   wallet.ranks.countervoidHeartUnlock = 1;
   const sim = new VoidSim("classicCore", "buildWatch", wallet, true);
+  sim.stepTicks(30);
   sim.supplies = 5000;
 
   const cx = 60;
@@ -63,6 +64,7 @@ test("Defect 1: Countervoid decays only Countervoid-created land and never destr
   w2.ranks.countervoidHeartUnlock = 1;
   w2.ranks.countervoidLasting = 1;
   const sim2 = new VoidSim("classicCore", "buildWatch", w2, true);
+  sim2.stepTicks(30);
   sim2.supplies = 5000;
   clearArea(sim2, cx, cy, 12, CellMaterial.RECLAIMED);
   for (let dy = -4; dy <= 4; dy++) {
@@ -123,6 +125,7 @@ test("Defect 3: Chrono Cannon restores unit with meaningful recorded prior healt
   const wallet = emptyTechWallet();
   wallet.ranks.chronoCannonUnlock = 1;
   const sim = new VoidSim("classicCore", "buildWatch", wallet, true);
+  sim.stepTicks(30);
   sim.supplies = 5000;
 
   const cx = 60;

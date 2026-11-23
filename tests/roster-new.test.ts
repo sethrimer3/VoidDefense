@@ -25,6 +25,7 @@ test("Lantern Bearer: spawns bearer units, walks into Void with solid ground, an
   const wallet = emptyTechWallet();
   wallet.ranks.lanternBearerUnlock = 1;
   const sim = new VoidSim("classicCore", "buildWatch", wallet, true);
+  sim.stepTicks(30);
   sim.supplies = 2000;
 
   const cx = 40;

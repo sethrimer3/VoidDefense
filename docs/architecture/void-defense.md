@@ -65,6 +65,13 @@ Per-pixel erosion costs represent one quarter the former area. `PIXEL_WORK_SCALE
 keeps that conversion in integer fixed-point arithmetic, including shields and
 ablation, without multiplying reservoir energy, income or rewards. Progression saves contain no terrain grid or live placements, so the `voiddefense.v1` save format and existing progression are retained cleanly.
 
+Live battles start with intact ground and a marked breach location. Starting portals
+open after one second of simulation in Under Siege and on the first battle tick
+in Build & Watch. Later portals retain their scenario timings. The global
+reservoir powers all portals, whose inner rings show the remaining fraction.
+Occupied area reduces the growth budget before it is divided across the frontier.
+The reduction increases with coverage and approaches 25%.
+
 Validation: `tests/void-defense.test.ts` covers four independent pixels, city
 footprint/income preservation and erosion accounting. `node tests/void-pixels.mjs`
 (with the Vite dev server running) checks scene/terrain resolution, camera hit

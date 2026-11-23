@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { pixels, VOID_BALANCE, VOID_SAVE_KEY } from "../src/void/config.ts";
+import { pixels, TICK_HZ, VOID_BALANCE, VOID_SAVE_KEY } from "../src/void/config.ts";
 import { getScenario, SCENARIOS } from "../src/void/maps.ts";
 import { CellMaterial } from "../src/void/model.ts";
 import { VoidPhysics } from "../src/void/physics.ts";
@@ -164,11 +164,9 @@ test("2. Void perimeter-budget physics: sacrificial land island slows city-front
     `Expected island to protect baseline city (${presWithIsland} > ${presNoIsland})`,
   );
 
-  // Both spent the same total energy from their reservoir
-  assert.ok(
-    Math.abs(vfNoIsland.energyRemaining - vfWithIsland.energyRemaining) < 1.0,
-    "Both scenarios draw from the same instantaneous growth rate budget",
-  );
+  assert.ok(vfNoIsland.voidCellCount > vfWithIsland.voidCellCount);
+  assert.ok(vfNoIsland.energyRemaining > vfWithIsland.energyRemaining,
+    "The larger Void draws less work from its reservoir");
 });
 
 test("3. Baseline score cap invariant: extra land islands and >100% building development never inflate survival above 100%", () => {
@@ -399,13 +397,14 @@ test("8. Live tower placement, Landfall strike, and Build & Watch vs Under Siege
   assert.ok(placedBarracks, "Placed Infantry Barracks during active Under Siege battle");
   assert.ok(simSiege.combat.agents.length >= 7, "Spawned autonomous 1x2 engineers and 1x1 riflemen");
 
+  simSiege.stepTicks(TICK_HZ);
   // Cast Landfall strike inside the Void portal
   const portal = simSiege.world.portals[0];
   const castOk = simSiege.castStrike("landfall", portal.x, portal.y);
   assert.equal(castOk, true, "Cast Landfall strike inside Void");
 
   // Advance 60 ticks (2 seconds) and verify deterministic progress
-  simSiege.stepTicks(60);
+  simSiege.stepTicks(60 - TICK_HZ);
   assert.equal(simSiege.tick, 60);
 
   // Build & Watch mode locks tower placement once battle starts
@@ -569,7 +568,7 @@ test("14. Sector 01 balance: idle loses, coach run wins >=1 Spark, greedy spend 
   const s1 = SCENARIOS.find((s) => s.id === "tutorialBreach")!;
 
   // 14a. Idle run (0 towers placed) must end as City Lost with 0 Sparks
-  const idle = new VoidSim(s1, "underSiege", emptyTechWallet());
+  const idle = new VoidSim(s1.id, "underSiege", emptyTechWallet());
   idle.startBattle();
   for (let i = 0; i < 30 * 180 && idle.phase === "battle"; i++) idle.stepOneTick();
   assert.equal(idle.phase, "lost");
@@ -578,17 +577,18 @@ test("14. Sector 01 balance: idle loses, coach run wins >=1 Spark, greedy spend 
   assert.ok((idle.outcome?.preservedRatio ?? 1) < 0.35, "Idle run must fall below 35% preserved");
 
   // 14b. Scripted coach run (1 Matter Cannon, 1 Repair Depot, 1 Solar Anchor) earns >= 1 Spark
-  const coach = new VoidSim(s1, "underSiege", emptyTechWallet());
+  const coach = new VoidSim(s1.id, "underSiege", emptyTechWallet());
   coach.startBattle();
   assert.ok(coach.placeTower("matterCannon", Math.floor(s1.worldW * 0.5), Math.floor(s1.worldH * 0.44)));
   assert.ok(coach.placeTower("repairDepot", Math.floor(s1.worldW * 0.44), Math.floor(s1.worldH * 0.46)));
+  coach.stepTicks(TICK_HZ);
   assert.ok(coach.castStrike("landfall", Math.floor(s1.worldW * 0.5), Math.floor(s1.worldH * 0.33)));
   for (let i = 0; i < 30 * 180 && coach.phase === "battle"; i++) coach.stepOneTick();
   assert.equal(coach.phase, "won");
   assert.ok((coach.outcome?.sparksAwarded ?? 0) >= 1, "Coach run must earn at least 1 Spark");
 
   // 14c. Greedy-spend run ends with under 3,000 unspent Supplies
-  const greedy = new VoidSim(s1, "underSiege", emptyTechWallet());
+  const greedy = new VoidSim(s1.id, "underSiege", emptyTechWallet());
   greedy.startBattle();
   const spots: [number, number][] = [
     [0.5, 0.44],
@@ -621,4 +621,30 @@ test("14. Sector 01 balance: idle loses, coach run wins >=1 Spark, greedy spend 
   }
   assert.equal(greedy.phase, "won");
   assert.ok(greedy.supplies < 3000, `Expected < 3000 unspent Supplies, got ${greedy.supplies}`);
+});
+
+test("Portal markers precede the breach on solid ground in both play styles", () => {
+  for (const mode of ["underSiege", "buildAndWatch"] as const) {
+    const sim = new VoidSim("delayedCollapse", mode, emptyTechWallet());
+    const [first, later] = sim.world.portals;
+    const center = sim.world.grid.index(first.x, first.y);
+    const assertPending = () => {
+      assert.equal(first.active, false);
+      assert.ok(sim.world.hp[center] > 0);
+      assert.equal(sim.voidField.voidCellCount, 0);
+    };
+    assertPending();
+    if (mode === "buildAndWatch") {
+      sim.stepTicks(TICK_HZ);
+      assertPending();
+      sim.startBattle();
+    }
+    const openingTick = mode === "underSiege" ? TICK_HZ : 1;
+    sim.stepTicks(openingTick - 1);
+    assertPending();
+    sim.stepTicks(1);
+    assert.equal(first.active, true);
+    assert.equal(sim.world.material[center], CellMaterial.VOID);
+    assert.equal(later.active, false);
+  }
 });

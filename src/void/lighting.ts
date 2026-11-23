@@ -36,8 +36,7 @@ import {
   TOWER_ELEVATION_PX,
 } from "./elevation.ts";
 import { hash, hash01 } from "./grid.ts";
-import { CellMaterial, type DebrisFragment, LandCover } from "./model.ts";
-import { computeDebrisGlowAlpha, computeDebrisHeat } from "./physics.ts";
+import { CellMaterial, LandCover } from "./model.ts";
 import { valueNoise } from "./portal-noise.ts";
 import type { VoidSim } from "./sim.ts";
 import { TOWER_SPECS } from "./towers.ts";
@@ -1269,8 +1268,7 @@ export class LightingEngine {
   }
 
   /** Composites soft additive screen-space bloom halos over the scaled display canvas
-   * for explosions, portals, frontier surges, shells, lasers, fires, towers, skyscraper beacons,
-   * and molten debris pixels approaching the Void's center/core. */
+   * for explosions, portals, frontier surges, shells, lasers, fires, towers, and skyscraper beacons. */
   drawBloom(
     ctx: CanvasRenderingContext2D,
     camX: number,
@@ -1279,7 +1277,6 @@ export class LightingEngine {
     world: VoidWorld,
     lights: readonly PointLight[],
     reduceEffects: boolean,
-    debris?: readonly DebrisFragment[],
   ): void {
     const cw = ctx.canvas.width;
     const ch = ctx.canvas.height;
@@ -1315,33 +1312,7 @@ export class LightingEngine {
       }
     }
 
-    // 2. Smooth slight molten glow on sucked-in pixels as they heat up near the Void's center/core
-    if (!reduceEffects && debris && debris.length > 0) {
-      const emberStamp = this.getBloomStamp(1.0, 0.42, 0.12);
-      const goldStamp = this.getBloomStamp(1.0, 0.78, 0.32);
-      if (emberStamp && goldStamp) {
-        const stride = debris.length > 180 ? 2 : 1;
-        for (let i = 0; i < debris.length; i += stride) {
-          const d = debris[i];
-          const distToPortal = Math.hypot(d.portalX - d.x, d.portalY - d.y);
-          const coreR = d.coreRadius ?? 5;
-          if (distToPortal < coreR * 0.92) continue;
-          const lifeRatio = d.life / Math.max(0.01, d.maxLife);
-          const heat = computeDebrisHeat(distToPortal, d.startDist ?? 24, coreR, lifeRatio);
-          const glowAlpha = computeDebrisGlowAlpha(heat);
-          if (glowAlpha <= 0.01) continue;
-          const sx = camX + d.x * scale;
-          const sy = camY + d.y * scale;
-          const rad = Math.max(2, (1.4 + heat * 1.8) * scale);
-          if (sx + rad < 0 || sx - rad > cw || sy + rad < 0 || sy - rad > ch) continue;
-          ctx.globalAlpha = glowAlpha * 0.68;
-          const stamp = heat > 0.62 ? goldStamp : emberStamp;
-          ctx.drawImage(stamp, sx - rad, sy - rad, rad * 2, rad * 2);
-        }
-      }
-    }
-
-    // 3. Subtle warm rooftop beacon & neon lobby bloom on intact developed city skyscrapers
+    // 2. Subtle warm rooftop beacon & neon lobby bloom on intact developed city skyscrapers
     if (!reduceEffects) {
       const amberStamp = this.getBloomStamp(1.0, 0.72, 0.32);
       if (amberStamp) {

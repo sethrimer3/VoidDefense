@@ -15,6 +15,7 @@ import {
   computeDebrisGlowAlpha,
   computeDebrisHeat,
   computeWhirlpoolKinematics,
+  MAX_DEBRIS,
   moltenColorAtHeat,
   moltenGlowColorAtHeat,
 } from "../src/void/physics.ts";
@@ -317,6 +318,7 @@ test("5. collectSceneLights gathers lights from explosions, portals, frontier, s
 
 test("6. Sucked-in Void debris retains original color at detachment, heats into molten hues, and smoothly ramps from no glow to slight glow near the core", () => {
   const sim = new VoidSim("tutorialBreach", "underSiege", emptyTechWallet());
+  sim.stepTicks(30);
   const { world, physics } = sim;
   const { w } = world.grid;
 
@@ -394,6 +396,7 @@ test("6. Sucked-in Void debris retains original color at detachment, heats into 
 
 test("7. Whirlpool spin, spaghettification acceleration, intact-to-pixel disintegration, and exact inner-circle disappearance", () => {
   const sim = new VoidSim("tutorialBreach", "underSiege", emptyTechWallet());
+  sim.stepTicks(30);
   const { world, physics } = sim;
   physics.debris.length = 0;
 
@@ -486,4 +489,35 @@ test("7. Whirlpool spin, spaghettification acceleration, intact-to-pixel disinte
   const sG = parseInt(streetFrag.color.slice(3, 5), 16);
   const sB = parseInt(streetFrag.color.slice(5, 7), 16);
   assert.ok(sR >= 55 && sG >= 65 && sB >= 80, `Street debris must use readable broken asphalt tones, got ${streetFrag.color}`);
+});
+
+test("Saturated whirlpool debris keeps existing fragments and resumes emission when space frees up", () => {
+  const { world, physics } = new VoidSim("tutorialBreach", "underSiege", emptyTechWallet());
+  const portal = world.portals[0];
+  portal.active = true;
+  const site = world.grid.index(portal.x + portal.radius + 8, portal.y);
+  const material = world.material[site];
+  physics.consumeCellIntoVoid(world, site);
+  const first = physics.debris[0];
+  assert.ok(first);
+  first.intact = false;
+
+  while (physics.debris.length < MAX_DEBRIS) physics.debris.push({ ...first });
+  const existing = physics.debris.slice();
+  world.material[site] = material;
+  physics.consumeCellIntoVoid(world, site);
+  assert.equal(world.material[site], CellMaterial.VOID);
+  assert.equal(physics.debris.length, MAX_DEBRIS);
+  assert.ok(physics.debris.every((fragment, i) => fragment === existing[i]));
+
+  first.life = first.maxLife;
+  physics.stepStructuralSupport(world, 1 / 30);
+  assert.equal(physics.debris.length, MAX_DEBRIS - 1);
+  assert.equal(physics.debris[0], existing[1]);
+
+  world.material[site] = material;
+  physics.consumeCellIntoVoid(world, site);
+  assert.equal(physics.debris.length, MAX_DEBRIS);
+  assert.equal(physics.debris[0], existing[1]);
+  assert.equal(physics.debris.at(-1)?.life, 0);
 });

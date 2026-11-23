@@ -66,7 +66,14 @@ export class VoidSim {
     this.scenario = getScenario(scenarioId);
     this.mode = mode;
     this.tech = evaluateTech(wallet.ranks);
-    this.world = new VoidWorld(this.scenario);
+    this.world = new VoidWorld({
+      ...this.scenario,
+      portals: this.scenario.portals.map((portal) => ({
+        ...portal,
+        // Give the deployment marker a moment on the live battlefield.
+        activateAtSeconds: portal.activateAtSeconds || (mode === "buildAndWatch" ? TICK_DT : 1),
+      })),
+    });
     this.physics = new VoidPhysics();
     this.farms = new FarmFires(this.world);
     this.voidField = new VoidField(this.world, this.scenario);

@@ -170,6 +170,7 @@ test("Phase 2: columnFloors initializes deterministically and cantilever / brink
 
 test("Phase 3: FallingChunk pool (cap 200), ground salvage deposition vs Void abyss plunge (z < -24), and ledge front-face occlusion", () => {
   const sim = new VoidSim("tutorialBreach", "underSiege", emptyTechWallet(), true);
+  sim.stepTicks(30);
   const { world, physics } = sim;
   const { w } = world.grid;
 
@@ -272,6 +273,8 @@ test("Phase 3: FallingChunk pool (cap 200), ground salvage deposition vs Void ab
 
 test("Phase 4: pooled dust puffs, large-collapse camera shake trigger, and Void abyss ripples", () => {
   const sim = new VoidSim("tutorialBreach", "buildAndWatch", emptyTechWallet());
+  sim.startBattle();
+  sim.stepTicks(1);
   const { world, physics } = sim;
   const p = world.portals[0];
 

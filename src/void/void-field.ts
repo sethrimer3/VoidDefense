@@ -33,6 +33,7 @@ import { dist } from "../exact.ts";
 import {
   CORRUPTION_REACH,
   MATERIAL_RESISTANCE,
+  PIXEL_AREA,
   PIXEL_WORK_SCALE,
   TICK_HZ,
   VOID_BALANCE,
@@ -630,8 +631,8 @@ export class VoidField {
         p.active = true;
         portalOpened = true;
         const { w, h } = world.grid;
-        for (let y = Math.max(0, p.y - p.radius); y <= Math.min(h - 1, p.y + p.radius); y++) {
-          for (let x = Math.max(0, p.x - p.radius); x <= Math.min(w - 1, p.x + p.radius); x++) {
+        for (let y = Math.max(0, Math.ceil(p.y - p.radius)); y <= Math.min(h - 1, p.y + p.radius); y++) {
+          for (let x = Math.max(0, Math.ceil(p.x - p.radius)); x <= Math.min(w - 1, p.x + p.radius); x++) {
             if (dist(x - p.x, y - p.y) <= p.radius) {
               const cIdx = y * w + x;
               if (this.lanternRefCount[cIdx] === 0) {
@@ -730,7 +731,9 @@ export class VoidField {
     // 5. Compute instantaneous tick work budget and distribute across ALL frontier contact edges
     const elapsedMinutes = (tick * dt) / 60;
     const growthRate = scenario.baseGrowthRate + scenario.rampPerMinute * elapsedMinutes;
-    const workAvailable = Math.min(this.energyRemaining, growthRate * dt);
+    const area = this.voidCellCount * PIXEL_AREA;
+    const areaMultiplier = 1 - VOID_BALANCE.maxGrowthSlowdown * area / (area + VOID_BALANCE.growthSlowdownArea);
+    const workAvailable = Math.min(this.energyRemaining, growthRate * areaMultiplier * dt);
     if (workAvailable <= 0) {
       return portalOpened ? "active" : "reservoirDepletedVictory";
     }

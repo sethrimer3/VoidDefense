@@ -35,14 +35,10 @@ import { isOccludedByLedge, paintVoidLedge } from "./ledge.ts";
 import { valueNoise } from "./portal-noise.ts";
 import { computeOrganismContour, computeNodeContour, paintOrganismContour, paintNodeContour } from "./contour.ts";
 import {
-  generateWispsForPortals,
-  computeVoidInterior,
-  paintVoidInterior,
   paintVoidInteriorDirect,
   paintVoidRipples,
   sampleStarNest,
   starNestColor,
-  type SeededWisp,
 } from "./interior.ts";
 import { pixelPainter } from "./pixel-painter.ts";
 import { Loupe } from "./loupe.ts";
@@ -60,7 +56,6 @@ import {
   type VoidPortal,
 } from "./model.ts";
 import {
-  computeDebrisGlowAlpha,
   computeDebrisHeat,
   FALL_GRAVITY_PX,
   moltenColorAtHeat,
@@ -70,6 +65,14 @@ import {
 import type { VoidSim } from "./sim.ts";
 import { STRIKE_SPECS, TOWER_SPECS } from "./towers.ts";
 import type { VoidWorld } from "./world.ts";
+
+const DEBRIS_HEAT_STEPS = 64;
+const debrisGlowColors = Array.from({ length: DEBRIS_HEAT_STEPS + 1 }, (_, i) =>
+  moltenGlowColorAtHeat(i / DEBRIS_HEAT_STEPS),
+);
+const hotDebrisColors = Array.from({ length: DEBRIS_HEAT_STEPS + 1 }, (_, i) =>
+  moltenColorAtHeat("#000000", i / DEBRIS_HEAT_STEPS),
+);
 
 /** Side of the local window a chunk's distance-to-Void transform runs on (chunk plus margin). */
 const DIST_WINDOW = CHUNK_SIZE + CORRUPTION_REACH * 2;
@@ -388,8 +391,6 @@ export class VoidRenderer {
   private lastTimeMs = 0;
 
   // Cached seeded spiral wisps for living Void interior
-  private interiorWisps: SeededWisp[] = [];
-  private wispsWorld: VoidWorld | null = null;
 
   /** Pre-allocated pool of 60 cosmetic street civilians who flee encroaching Void and fall if their street becomes Void. */
   readonly civilians: Civilian[] = Array.from({ length: 60 }, () => ({
@@ -970,6 +971,20 @@ export class VoidRenderer {
     return maxShade;
   }
 
+  private readonly debrisPalettes = new Map<string, string[]>();
+
+  private debrisColor(color: string, heatStep: number): string {
+    if (heatStep === 0) return color;
+    if (heatStep / DEBRIS_HEAT_STEPS >= 0.32) return hotDebrisColors[heatStep];
+    let palette = this.debrisPalettes.get(color);
+    if (!palette) {
+      if (this.debrisPalettes.size >= 256) this.debrisPalettes.clear();
+      palette = [];
+      this.debrisPalettes.set(color, palette);
+    }
+    return palette[heatStep] ??= moltenColorAtHeat(color, heatStep / DEBRIS_HEAT_STEPS);
+  }
+
   /** Result of `nearestPortal` (reused to avoid an allocation per Void cell). */
   private readonly np: { p: VoidPortal | null; d: number; ang: number } = { p: null, d: 0, ang: 0 };
 
@@ -1525,15 +1540,15 @@ export class VoidRenderer {
     lap("frontier");
 
     // Living, moving Void interior: subtle inward-flowing nebula wisps behind the portal silhouette
-    if (this.wispsWorld !== world) {
-      this.wispsWorld = world;
-      this.interiorWisps = generateWispsForPortals(world);
+    if (activePortals.length > 0) {
+      paintVoidInteriorDirect(rawScene, world, animTime, this.reduceEffects);
     }
-    paintVoidInteriorDirect(rawScene, world, animTime, this.reduceEffects);
     paintVoidRipples(rawScene, world, physics.voidRipples, this.reduceEffects);
     lap("interior");
 
-    // 4. The black hole: strong lightless core, crisp photon rim, and a single restrained accretion arc
+    // 4. Black-hole silhouette, reservoir gauge and deployment markers.
+    const energy = sim.scenario.endless ? 1 :
+      Math.max(0, Math.min(1, voidField.energyRemaining / Math.max(1, sim.scenario.initialVoidEnergy)));
     for (const p of world.portals) {
       if (p.active) {
         const coreR = Math.max(3.6, p.radius * 0.42);
@@ -1556,6 +1571,23 @@ export class VoidRenderer {
         c.arc(p.x, p.y, coreR + 0.65 + 0.08 * pulse, 0, Math.PI * 2);
         c.stroke();
 
+        // The bright arc shows the remaining reservoir against a dim, complete track.
+        const gaugeR = coreR * 0.73;
+        const gaugeTop = -Math.PI / 2;
+        c.lineWidth = 1.1;
+        c.strokeStyle = "#51365f";
+        c.beginPath();
+        c.arc(p.x, p.y, gaugeR, 0, Math.PI * 2);
+        c.stroke();
+        if (energy > 0) {
+          c.strokeStyle = energy > 0.25 ? "#b4edff" : "#ff9d70";
+          c.beginPath();
+          c.arc(p.x, p.y, gaugeR, gaugeTop, gaugeTop + Math.PI * 2 * energy);
+          c.stroke();
+        }
+        c.fillStyle = "#e5d7fb";
+        c.fillRect(p.x - 0.45, p.y - gaugeR - 0.9, 0.9, 1.4);
+
         // Single restrained tilted accretion arc
         if (!this.reduceEffects) {
           c.save();
@@ -1569,14 +1601,25 @@ export class VoidRenderer {
           c.restore();
         }
       } else {
-        // Telegraphed warning ring for delayed secondary portal
-        c.strokeStyle = `rgba(195, 85, 235, ${0.4 + 0.35 * pulse})`;
-        c.lineWidth = 0.5;
-        c.setLineDash([1.5, 1.5]);
+        // A dashed survey ring and small diamond mark the breach on intact terrain.
+        c.strokeStyle = "#251533";
+        c.lineWidth = 1.8;
+        c.setLineDash([2.5, 2]);
         c.beginPath();
         c.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
         c.stroke();
+        c.strokeStyle = `rgba(234, 190, 255, ${0.58 + 0.34 * pulse})`;
+        c.lineWidth = 0.85;
+        c.stroke();
         c.setLineDash([]);
+        c.lineWidth = 1;
+        c.beginPath();
+        c.moveTo(p.x, p.y - 3);
+        c.lineTo(p.x + 3, p.y);
+        c.lineTo(p.x, p.y + 3);
+        c.lineTo(p.x - 3, p.y);
+        c.closePath();
+        c.stroke();
       }
     }
 
@@ -2586,7 +2629,7 @@ export class VoidRenderer {
     //       upon touching the Void's inner black circle (`coreR`).
     const swallowPortals = activePortals.map((p) => {
       const coreR = Math.max(3.6, p.radius * 0.42);
-      return { x: p.x, y: p.y, r2: coreR * coreR, coreR };
+      return { x: p.x, y: p.y, r2: coreR * coreR };
     });
     const swallowCount = swallowPortals.length;
     let lastRawFill = "";
@@ -2601,8 +2644,18 @@ export class VoidRenderer {
       return false;
     };
 
+    // At high densities the particles themselves provide the texture. Skip their extra overlays.
+    const detailedDebris = !this.reduceEffects && physics.debris.length <= 1500;
+    const scale = this.pixelScale();
+    const viewLeft = -this.cam.x / scale;
+    const viewRight = (this.canvas.width - this.cam.x) / scale;
+    const viewTop = -this.cam.y / scale;
+    const viewBottom = (this.canvas.height - this.cam.y) / scale;
     for (let i = 0; i < physics.debris.length; i++) {
       const d = physics.debris[i];
+      const padding = (d.intact ? d.size * 0.5 : 0) + 3;
+      if (Math.max(d.x, d.px) + padding < viewLeft || Math.min(d.x, d.px) - padding > viewRight ||
+          Math.max(d.y, d.py) + padding < viewTop || Math.min(d.y, d.py) - padding > viewBottom) continue;
       if (isInsideInnerCircle(d.x, d.y)) continue;
 
       const distToPortal = dist(d.portalX - d.x, d.portalY - d.y);
@@ -2616,8 +2669,8 @@ export class VoidRenderer {
         coreR > 0 ? coreR : 5,
         lifeRatio,
       );
-      const bodyColor = moltenColorAtHeat(d.color, heat);
-      const glowAlpha = this.reduceEffects ? 0 : computeDebrisGlowAlpha(heat);
+      const heatStep = Math.round(heat * DEBRIS_HEAT_STEPS);
+      const bodyColor = this.debrisColor(d.color, heatStep);
 
       if (d.intact) {
         // Intact building/object block in the outer whirlpool before tidal disintegration
@@ -2625,15 +2678,14 @@ export class VoidRenderer {
         const bh = Math.max(2, Math.round(d.size));
         const bx = Math.round(d.x - bw * 0.5);
         const by = Math.round(d.y - bh * 0.5);
-        if (glowAlpha > 0.005) {
-          const glowCol = moltenGlowColorAtHeat(heat);
-          rawScene.fillStyle = glowCol;
+        if (detailedDebris && heat > 0.2) {
+          rawScene.fillStyle = debrisGlowColors[heatStep];
           rawScene.fillRect(bx - 1, by - 1, bw + 2, bh + 2);
         }
         rawScene.fillStyle = bodyColor;
         rawScene.fillRect(bx, by, bw, bh);
         if (d.accentColor) {
-          rawScene.fillStyle = moltenColorAtHeat(d.accentColor, heat);
+          rawScene.fillStyle = this.debrisColor(d.accentColor, heatStep);
           rawScene.fillRect(bx, by, 1, 1);
           if (bw >= 3) rawScene.fillRect(bx + 2, by, 1, 1);
         }
@@ -2645,19 +2697,16 @@ export class VoidRenderer {
         // Disintegrated individual 1x1 pixel accelerating into the inner whirlpool (spaghettification)
         const x1 = Math.floor(d.x);
         const y1 = Math.floor(d.y);
-        if (glowAlpha > 0.005) {
-          const glowCol = moltenGlowColorAtHeat(heat);
-          if (lastRawFill !== glowCol) {
-            rawScene.fillStyle = glowCol;
-            lastRawFill = glowCol;
+        if (detailedDebris && heat > 0.42) {
+          const glowColor = debrisGlowColors[heatStep];
+          if (lastRawFill !== glowColor) {
+            rawScene.fillStyle = glowColor;
+            lastRawFill = glowColor;
           }
-          if (heat > 0.42) {
-            // Slight 1-px molten halo around the heated pixel near the inner circle
-            if (!isInsideInnerCircle(x1 - 1, y1)) rawScene.fillRect(x1 - 1, y1, 1, 1);
-            if (!isInsideInnerCircle(x1 + 1, y1)) rawScene.fillRect(x1 + 1, y1, 1, 1);
-            if (!isInsideInnerCircle(x1, y1 - 1)) rawScene.fillRect(x1, y1 - 1, 1, 1);
-            if (!isInsideInnerCircle(x1, y1 + 1)) rawScene.fillRect(x1, y1 + 1, 1, 1);
-          }
+          if (!isInsideInnerCircle(x1 - 1, y1)) rawScene.fillRect(x1 - 1, y1, 1, 1);
+          if (!isInsideInnerCircle(x1 + 1, y1)) rawScene.fillRect(x1 + 1, y1, 1, 1);
+          if (!isInsideInnerCircle(x1, y1 - 1)) rawScene.fillRect(x1, y1 - 1, 1, 1);
+          if (!isInsideInnerCircle(x1, y1 + 1)) rawScene.fillRect(x1, y1 + 1, 1, 1);
         }
         if (lastRawFill !== bodyColor) {
           rawScene.fillStyle = bodyColor;
@@ -2669,7 +2718,7 @@ export class VoidRenderer {
         let y0 = Math.floor(d.py);
         const dxAbs = x1 >= x0 ? x1 - x0 : x0 - x1;
         const dyAbs = y1 >= y0 ? y1 - y0 : y0 - y1;
-        if (!this.reduceEffects && (dxAbs > 1 || dyAbs > 1)) {
+        if (detailedDebris && (dxAbs > 1 || dyAbs > 1)) {
           const dy = -dyAbs;
           const sx = x0 < x1 ? 1 : -1;
           const sy = y0 < y1 ? 1 : -1;
@@ -2783,13 +2832,12 @@ export class VoidRenderer {
     const output = this.ctx;
     output.setTransform(1, 0, 0, 1, 0, 0);
     output.drawImage(this.backdropFor(this.canvas.width, this.canvas.height, world.seed), 0, 0);
-    const scale = this.pixelScale();
     output.imageSmoothingEnabled = false;
     output.setTransform(scale, 0, 0, scale, this.cam.x + shakeX, this.cam.y + shakeY);
     output.drawImage(this.sceneLayer, 0, 0);
     output.setTransform(1, 0, 0, 1, 0, 0);
 
-    // 15a. Screen-space additive bloom halos (explosions, Void portals, frontier surges, shells, lasers, fires, towers, beacons, molten core debris)
+    // 15a. Screen-space additive bloom halos (explosions, Void portals, frontier surges, shells, lasers, fires, towers, beacons)
     this.lighting.drawBloom(
       output,
       this.cam.x + shakeX,
@@ -2798,7 +2846,6 @@ export class VoidRenderer {
       world,
       sceneLights,
       this.reduceEffects,
-      physics.debris,
     );
     lap("bloom");
 

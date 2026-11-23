@@ -84,6 +84,8 @@ export const MATERIAL_RESISTANCE = {
 export const VOID_BALANCE = {
   baseWorkPerSecond: 220,
   rampPerMinute: 140,
+  growthSlowdownArea: 2048, // Former-cell units for half of the maximum slowdown
+  maxGrowthSlowdown: 0.25,
   isolatedPocketBurnPerSecond: 120,
   infantryAblationEfficiency: 0.12,
   minReservoirFloorFraction: 0.15,

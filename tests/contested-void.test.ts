@@ -193,9 +193,9 @@ test("Contested Void: rocketeers deploy from rocketTeam and remove an area of Vo
   const sim = new VoidSim("tutorialBreach", "buildAndWatch", wallet, true);
   const { world, voidField } = sim;
 
-  const fCell = voidField.frontierCells[0];
-  const fx = world.grid.xOf(fCell);
-  const fy = world.grid.yOf(fCell);
+  const portal = world.portals[0];
+  const fx = portal.x + portal.radius - 1;
+  const fy = portal.y;
 
   const bx = Math.max(4, Math.min(world.grid.w - 10, fx + 6));
   const by = Math.max(4, Math.min(world.grid.h - 10, fy));
@@ -240,11 +240,10 @@ test("Contested Void: laser guns declare removesVoid=true (1 px) and remove Void
   const sim = new VoidSim("tutorialBreach", "buildAndWatch", emptyTechWallet());
   const { world, voidField } = sim;
 
-  // Find a frontier cell near the active portal to place an Infantry Barracks nearby
-  assert.ok(voidField.frontierCells.length > 0);
-  const fCell = voidField.frontierCells[0];
-  const fx = world.grid.xOf(fCell);
-  const fy = world.grid.yOf(fCell);
+  // Aim at the east edge of the marked breach before it opens.
+  const portal = world.portals[0];
+  const fx = portal.x + portal.radius - 1;
+  const fy = portal.y;
 
   // Clear a safe build pad 6 pixels away from the frontier
   const bx = Math.max(4, Math.min(world.grid.w - 10, fx + 6));

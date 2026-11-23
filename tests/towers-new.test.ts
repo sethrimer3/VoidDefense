@@ -41,6 +41,7 @@ test("Void Siphon: live placement initializes tank, erosion fills it, and ventin
   const wallet = emptyTechWallet();
   wallet.ranks.voidSiphonUnlock = 1;
   const sim = new VoidSim("classicCore", "buildWatch", wallet, true);
+  sim.stepTicks(30);
   sim.supplies = 2000;
 
   const spot = findLandSpot(sim, 22);
@@ -117,6 +118,7 @@ test("Chrono Cannon: live Void consumption of terrain, building floors, and Void
   const wallet = emptyTechWallet();
   wallet.ranks.chronoCannonUnlock = 1;
   const sim = new VoidSim("classicCore", "buildWatch", wallet, true);
+  sim.stepTicks(30);
   sim.supplies = 2000;
 
   const spot = findLandSpot(sim, 32);

@@ -214,6 +214,8 @@ export function moltenGlowColorAtHeat(heat: number, alphaScale = 1): string {
   return `rgba(${r}, ${g}, ${b}, ${alpha.toFixed(3)})`;
 }
 
+export const MAX_DEBRIS = 8192;
+
 export class VoidPhysics {
   readonly debris: DebrisFragment[] = [];
   readonly shockwaves: ShockwaveEffect[] = [];
@@ -499,10 +501,7 @@ export class VoidPhysics {
       }
     }
 
-    if (spawnDebris && prevMat !== CellMaterial.VOID && prevMat !== CellMaterial.EMPTY) {
-      if (this.debris.length >= 750) {
-        this.debris.shift();
-      }
+    if (spawnDebris && this.debris.length < MAX_DEBRIS && prevMat !== CellMaterial.VOID && prevMat !== CellMaterial.EMPTY) {
       const rawX = world.grid.xOf(idx) + 0.5;
       const rawY = world.grid.yOf(idx) + 0.5;
 
@@ -537,7 +536,9 @@ export class VoidPhysics {
 
       const rawDx = portalX - rawX;
       const rawDy = portalY - rawY;
-      const rawDist = Math.max(bestCoreR + 0.8, dist(rawDx, rawDy));
+      const distanceToCore = dist(rawDx, rawDy);
+      if (distanceToCore <= bestCoreR) return;
+      const rawDist = Math.max(bestCoreR + 0.8, distanceToCore);
       const nx = rawDx / rawDist;
       const ny = rawDy / rawDist;
 
@@ -598,7 +599,7 @@ export class VoidPhysics {
       });
 
       // Streets also shed a crumbling 1x1 asphalt/roadbed particle as the pavement fractures into the Void
-      if (isStreet && startsIntact && d > bestCoreR + 2.0 && this.debris.length < 750) {
+      if (isStreet && startsIntact && d > bestCoreR + 2.0 && this.debris.length < MAX_DEBRIS) {
         const px2 = x - ny * 0.65 + nx * 0.5;
         const py2 = y + nx * 0.65 + ny * 0.5;
         const d2 = Math.max(bestCoreR + 0.5, dist(portalX - px2, portalY - py2));
@@ -878,7 +879,9 @@ export class VoidPhysics {
     }
 
     // Advance drifting debris along whirlpool spirals with spaghettification acceleration and tidal disintegration
-    for (let i = this.debris.length - 1; i >= 0; i--) {
+    const initialDebrisCount = this.debris.length;
+    let survivingDebrisCount = 0;
+    for (let i = 0; i < initialDebrisCount; i++) {
       const d = this.debris[i];
       d.px = d.x;
       d.py = d.y;
@@ -889,8 +892,8 @@ export class VoidPhysics {
         // Non-portal street impact spark
         d.x += d.vx * dt;
         d.y += d.vy * dt;
-        if (d.life >= d.maxLife) {
-          this.debris.splice(i, 1);
+        if (d.life < d.maxLife) {
+          this.debris[survivingDebrisCount++] = d;
         }
         continue;
       }
@@ -899,7 +902,6 @@ export class VoidPhysics {
       const ry = d.y - d.portalY;
       const distToPortal = dist(rx, ry);
       if (distToPortal <= coreR || d.life >= d.maxLife) {
-        this.debris.splice(i, 1);
         continue;
       }
 
@@ -916,7 +918,7 @@ export class VoidPhysics {
         const uy = ry / distToPortal;
         const tx = -uy;
         const ty = ux;
-        for (let k = 1; k <= pieceCount && this.debris.length < 950; k++) {
+        for (let k = 1; k <= pieceCount && this.debris.length < MAX_DEBRIS; k++) {
           const radOff = (k - 1.5) * 0.65;
           const tanOff = ((k & 1) === 0 ? 1 : -1) * 0.75;
           const sx = d.x + ux * radOff + tx * tanOff;
@@ -948,7 +950,6 @@ export class VoidPhysics {
       const rNext = distToPortal - kin.radialSpeed * dt;
       if (rNext <= coreR) {
         // Disappears upon touching the Void's center mass / inner circle
-        this.debris.splice(i, 1);
         continue;
       }
 
@@ -965,7 +966,13 @@ export class VoidPhysics {
       d.vy = (ny - d.y) * invDt;
       d.x = nx;
       d.y = ny;
+      this.debris[survivingDebrisCount++] = d;
     }
+    // Children begin moving on the next tick. Keep draw order while removing expired fragments in one pass.
+    for (let i = initialDebrisCount; i < this.debris.length; i++) {
+      this.debris[survivingDebrisCount++] = this.debris[i];
+    }
+    this.debris.length = survivingDebrisCount;
 
     // Advance expanding shockwaves
     for (let i = this.shockwaves.length - 1; i >= 0; i--) {
@@ -1040,7 +1047,7 @@ export class VoidPhysics {
           }
 
           // Debris sparks on heavy impact
-          if (this.debris.length < 750) {
+          if (this.debris.length < MAX_DEBRIS) {
             const dAng = hash01(world.seed, 962, i, this.supportTick) * Math.PI * 2;
             const dSpd = pixels(4.5);
             this.debris.push({
@@ -1099,7 +1106,7 @@ export class VoidPhysics {
           this.spawnVoidRipple(Math.round(ch.x), Math.round(ch.y - ch.z));
         }
         // Disintegrate fallen building/tower/agent chunk into individual 1x1 pixels that spiral into the portal core
-        if (world.portals.length > 0 && this.debris.length < 850) {
+        if (world.portals.length > 0 && this.debris.length < MAX_DEBRIS) {
           const sx0 = Math.round(ch.x);
           const sy0 = Math.round(ch.y - ch.z);
           let portalX = sx0;
@@ -1118,7 +1125,7 @@ export class VoidPhysics {
           }
           if (Number.isFinite(bestDist) && bestDist > bestCoreR + 0.5) {
             const count = Math.min(4, Math.max(1, ch.w * ch.h));
-            for (let k = 0; k < count && this.debris.length < 850; k++) {
+            for (let k = 0; k < count && this.debris.length < MAX_DEBRIS; k++) {
               const px = sx0 + (k & 1) * 0.7;
               const py = sy0 + (k >> 1) * 0.7;
               const pDist = dist(px - portalX, py - portalY);
