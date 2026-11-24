@@ -5,6 +5,7 @@ import { pixels } from "./config.ts";
 import { hash, hash01 } from "./grid.ts";
 import {
   CellMaterial,
+  SurfaceMaterial,
   type MetroBuilding,
   type PlacedTower,
 } from "./model.ts";
@@ -246,6 +247,7 @@ export type CachedBuildingSprite = {
   nzMap: Int8Array;
   /** Specular reflectivity weight (`0..255`) at each sprite pixel. */
   specMap: Uint8Array;
+  surfaceMap: Uint8Array;
 };
 
 const IS_LITTLE_ENDIAN_ELEV = new Uint8Array(new Uint32Array([0x01020304]).buffer)[0] === 0x04;
@@ -519,6 +521,7 @@ export function buildBuildingSprite(
   const nyMap = new Int8Array(spriteSize);
   const nzMap = new Int8Array(spriteSize);
   const specMap = new Uint8Array(spriteSize);
+  const surfaceMap = new Uint8Array(spriteSize);
   const palettes = ARCH_PALETTES[b.archStyle] ?? ARCH_PALETTES.glassTower;
   const pal = palettes[b.variant % palettes.length];
   const { w, h } = world.grid;
@@ -562,6 +565,7 @@ export function buildBuildingSprite(
       nyMap,
       nzMap,
       specMap,
+      surfaceMap,
     };
   }
 
@@ -734,6 +738,9 @@ export function buildBuildingSprite(
           baseNz[pIdx] = nz;
           microHeight[pIdx] = f * 0.18 + partRelief;
           specMap[pIdx] = spec;
+          surfaceMap[pIdx] = !isCutawayFace && !rustic && hpRatio >= 0.75 &&
+            lx % 2 === 1 && f % 2 === 1 && f < elev - 1 && spec < 240
+            ? SurfaceMaterial.GLASS : SurfaceMaterial.OPAQUE;
         }
       }
 
@@ -840,6 +847,9 @@ export function buildBuildingSprite(
         baseNz[pIdx] = nz;
         microHeight[pIdx] = elev * 0.22 + partRelief;
         specMap[pIdx] = rCol === pal.neonCore || rCol === pal.neonEdge ? 250 : spec;
+        const hasGlassRoof = (isGlassStyle && (rCol === pal.crown || rCol === pal.mid || rCol === pal.roofAccent)) || spec === 210;
+        surfaceMap[pIdx] = !spalledTop && hpRatio >= 0.75 && hasGlassRoof && specMap[pIdx] < 240
+          ? SurfaceMaterial.GLASS : SurfaceMaterial.OPAQUE;
       }
     }
   }
@@ -943,6 +953,7 @@ export function buildBuildingSprite(
     nyMap,
     nzMap,
     specMap,
+    surfaceMap,
   };
 }
 
@@ -961,6 +972,7 @@ export class BuildingSpriteCache {
   atlasNy = new Int8Array(0);
   atlasNz = new Int8Array(0);
   atlasSpec = new Uint8Array(0);
+  atlasSurface = new Uint8Array(0);
   atlasBldId = new Int16Array(0);
   private gbufferW = 0;
   private gbufferH = 0;
@@ -1022,6 +1034,7 @@ export class BuildingSpriteCache {
       this.atlasNy = new Int8Array(count);
       this.atlasNz = new Int8Array(count);
       this.atlasSpec = new Uint8Array(count);
+      this.atlasSurface = new Uint8Array(count);
       this.atlasBldId = new Int16Array(count).fill(-1);
       rebuildAll = true;
     }
@@ -1092,7 +1105,7 @@ export class BuildingSpriteCache {
       dirtyRects.push([0, 0, w, h]);
     }
 
-    const { atlasColorU32, atlasElev, atlasNx, atlasNy, atlasNz, atlasSpec, atlasBldId } = this;
+    const { atlasColorU32, atlasElev, atlasNx, atlasNy, atlasNz, atlasSpec, atlasSurface, atlasBldId } = this;
     for (let r = 0; r < dirtyRects.length; r++) {
       const [rx0, ry0, rx1, ry1] = dirtyRects[r];
       if (rx1 <= rx0 || ry1 <= ry0) continue;
@@ -1104,6 +1117,7 @@ export class BuildingSpriteCache {
         atlasNy.fill(0, row + rx0, row + rx1);
         atlasNz.fill(0, row + rx0, row + rx1);
         atlasSpec.fill(0, row + rx0, row + rx1);
+        atlasSurface.fill(0, row + rx0, row + rx1);
         atlasBldId.fill(-1, row + rx0, row + rx1);
       }
       for (let i = 0; i < sortedSprites.length; i++) {
@@ -1129,6 +1143,7 @@ export class BuildingSpriteCache {
               atlasNy[bIdx] = sp.nyMap[pIdx];
               atlasNz[bIdx] = sp.nzMap[pIdx];
               atlasSpec[bIdx] = sp.specMap[pIdx];
+              atlasSurface[bIdx] = sp.surfaceMap[pIdx];
               atlasBldId[bIdx] = sp.id;
             }
           }

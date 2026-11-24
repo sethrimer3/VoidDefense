@@ -10,7 +10,7 @@ import {
   TOWER_ELEVATION_PX,
 } from "./elevation.ts";
 import { hash, hash01 } from "./grid.ts";
-import { type Agent, CellMaterial, type FallingChunk, LandCover } from "./model.ts";
+import { type Agent, CellMaterial, type FallingChunk, LandCover, SurfaceMaterial } from "./model.ts";
 import { valueNoise } from "./portal-noise.ts";
 import type { VoidSim } from "./sim.ts";
 import { TOWER_SPECS } from "./towers.ts";
@@ -29,6 +29,8 @@ export type TimeOfDayPreset = {
   sunHeight: number;
   /** Linear RGB directional sun color. */
   sunColor: readonly [number, number, number];
+  /** Reflected sky color in 8-bit RGB. */
+  skyColor: readonly [number, number, number];
   /** Directional sun intensity multiplier. */
   sunIntensity: number;
   /** Base ambient fill linear RGB (deep tinted blue/purple in Sunset & Night, never flat grey/black). */
@@ -53,6 +55,7 @@ function norm3(x: number, y: number, z: number): readonly [number, number, numbe
 export const TIME_OF_DAY_PRESETS: Record<VoidTimeOfDay, TimeOfDayPreset> = {
   day: {
     id: "day",
+    skyColor: [106, 164, 213],
     sunDir: norm3(-0.36, -0.36, 0.86),
     sunHeight: 0.86,
     sunColor: [1.02, 0.96, 0.86],
@@ -66,6 +69,7 @@ export const TIME_OF_DAY_PRESETS: Record<VoidTimeOfDay, TimeOfDayPreset> = {
   },
   sunset: {
     id: "sunset",
+    skyColor: [201, 105, 122],
     sunDir: norm3(-0.66, -0.58, 0.48),
     sunHeight: 0.48,
     sunColor: [1.38, 0.68, 0.24],
@@ -79,6 +83,7 @@ export const TIME_OF_DAY_PRESETS: Record<VoidTimeOfDay, TimeOfDayPreset> = {
   },
   night: {
     id: "night",
+    skyColor: [23, 39, 81],
     sunDir: norm3(-0.48, -0.52, 0.71),
     sunHeight: 0.32,
     sunColor: [0.22, 0.34, 0.62],
@@ -122,6 +127,7 @@ export function blendTimeOfDayPresets(
     ),
     sunHeight: lerp(a.sunHeight, b.sunHeight),
     sunColor: lerp3(a.sunColor, b.sunColor),
+    skyColor: lerp3(a.skyColor, b.skyColor),
     sunIntensity: lerp(a.sunIntensity, b.sunIntensity),
     ambientColor: lerp3(a.ambientColor, b.ambientColor),
     voidAmbientColor: lerp3(a.voidAmbientColor, b.voidAmbientColor),
@@ -1059,6 +1065,9 @@ export class LightingEngine {
   terrainNy = new Int8Array(0);
   terrainNz = new Int8Array(0);
   terrainElev = new Uint8Array(0);
+  terrainSurface = new Uint8Array(0);
+  surfaceTileRevision = new Float64Array(0);
+  private surfaceFrame = 0;
   /** Ground-footprint height-field (`w * h`) for 2.5D shadow raycasting. */
   groundElev = new Uint8Array(0);
   private terrainRelief = new Float32Array(0);
@@ -1154,6 +1163,7 @@ export class LightingEngine {
       this.terrainNy = new Int8Array(count);
       this.terrainNz = new Int8Array(count);
       this.terrainElev = new Uint8Array(count);
+      this.terrainSurface = new Uint8Array(count);
       this.groundElev = new Uint8Array(count);
       this.terrainRelief = new Float32Array(count);
       this.roofSunShadow = new Uint8Array(count).fill(255);
@@ -1173,6 +1183,7 @@ export class LightingEngine {
 
       const tileCount = chunksW * chunksH;
       this.shadowTileRevision = new Float64Array(tileCount);
+      this.surfaceTileRevision = new Float64Array(tileCount);
       this.tileLightsLo = new Uint32Array(tileCount);
       this.tileLightsHi = new Uint32Array(tileCount);
       this.tileVisited = new Uint8Array(tileCount);
@@ -1280,6 +1291,7 @@ export class LightingEngine {
         this.terrainNz[idx] = Math.round(nz);
 
         const mat = material[idx];
+        this.terrainSurface[idx] = mat === CellMaterial.UNCLAIMED ? SurfaceMaterial.WATER : SurfaceMaterial.OPAQUE;
         const cover = landCover[idx];
         const tGround =
           mat === CellMaterial.VOID || mat === CellMaterial.EMPTY ? 0 :
@@ -1539,6 +1551,7 @@ export class LightingEngine {
     viewBounds?: { x0: number; y0: number; x1: number; y1: number },
     groundShadowMap?: Uint8Array,
     blending = false,
+    reflectionMargin = 0,
   ): void {
     const { w, h, chunksW, chunksH } = world.grid;
     const {
@@ -1623,10 +1636,10 @@ export class LightingEngine {
     let vtx1 = chunksW - 1;
     let vty1 = chunksH - 1;
     if (preset && viewBounds) {
-      vtx0 = Math.max(0, Math.floor((viewBounds.x0 - 2) / CHUNK_SIZE));
-      vty0 = Math.max(0, Math.floor((viewBounds.y0 - MAX_ELEVATION_PX - 2) / CHUNK_SIZE));
-      vtx1 = Math.min(chunksW - 1, Math.floor((viewBounds.x1 + 2) / CHUNK_SIZE));
-      vty1 = Math.min(chunksH - 1, Math.floor((viewBounds.y1 + 2) / CHUNK_SIZE));
+      vtx0 = Math.max(0, Math.floor((viewBounds.x0 - 2 - reflectionMargin) / CHUNK_SIZE));
+      vty0 = Math.max(0, Math.floor((viewBounds.y0 - MAX_ELEVATION_PX - 2 - reflectionMargin) / CHUNK_SIZE));
+      vtx1 = Math.min(chunksW - 1, Math.floor((viewBounds.x1 + 2 + reflectionMargin) / CHUNK_SIZE));
+      vty1 = Math.min(chunksH - 1, Math.floor((viewBounds.y1 + 2 + reflectionMargin) / CHUNK_SIZE));
     }
 
     // 2. Compile lights and bin them into 16x16 tiles via 64-bit bitmasks
@@ -1719,6 +1732,7 @@ export class LightingEngine {
     const reachScale = preset ? preset.shadowReachScale : 1;
     const strengthScale = preset ? preset.shadowStrengthScale : 1;
 
+    const shadedFrame = ++this.surfaceFrame;
     // 3. Shade active 16x16 tiles
     for (let t = 0; t < curActiveTiles.length; t++) {
       const tileIdx = curActiveTiles[t];
@@ -1763,6 +1777,7 @@ export class LightingEngine {
         this.tileAmbientClean[tileIdx] = 0;
       }
 
+      this.surfaceTileRevision[tileIdx] = shadedFrame;
       const tx = tileIdx % chunksW;
       const ty = (tileIdx / chunksW) | 0;
       const x0 = tx * CHUNK_SIZE;

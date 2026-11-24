@@ -38,6 +38,7 @@ import {
   LightingEngine,
   type LightingQualityMode,
   normalizeVoidTimeOfDay,
+  parseColorRgb01,
   looseMaterialLight,
   shadeLooseMaterial,
   TIME_OF_DAY_PRESETS,
@@ -77,6 +78,7 @@ import {
   moltenGlowColorAtHeat,
   VOID_ABYSS_Z,
 } from "./physics.ts";
+import { reflectionColor, SurfaceReflections } from "./reflections.ts";
 import { findStreetPath, isCityStreet, type StreetBfsScratch } from "./street-routes.ts";
 import type { VoidSim } from "./sim.ts";
 import { STRIKE_SPECS, TOWER_SPECS } from "./towers.ts";
@@ -307,6 +309,7 @@ export class VoidRenderer {
   readonly spriteCache = new BuildingSpriteCache();
   /** Tiled 2.5D bump-mapped surface lighting, surface glows and dynamic cast shadows. */
   readonly lighting = new LightingEngine();
+  private readonly reflections = new SurfaceReflections();
   private lastDirtyChunks = new Uint8Array(0);
   private placementPulses: { x: number; y: number; ageMs: number }[] = [];
   private incomePopups: { x: number; y: number; text: string; ageMs: number }[] = [];
@@ -1518,6 +1521,7 @@ export class VoidRenderer {
       this.buildingLightBudget,
     );
     this.lighting.syncMovingCasters(combat.agents, this.reduceEffects ? [] : physics.fallingChunks, sim.tick);
+    const reflectionQuality = this.effectiveLightingQuality;
     this.lighting.renderLighting(
       world,
       this.terrainU32,
@@ -1527,11 +1531,43 @@ export class VoidRenderer {
       viewBounds,
       this.shadowMap,
       this.presetBlendT < 1,
+      reflectionQuality === "low" ? 0 : MAX_ELEVATION_PX + 1,
     );
     lap("lighting");
 
+    this.reflections.begin(world, this.lastDirtyChunks, viewBounds);
+    if (reflectionQuality === "high") {
+      const surface = this.lighting.terrainSurface;
+      const towerRise = this.buildingHeight === "flat" ? 1 : this.buildingHeight === "low" ? 2 : TOWER_ELEVATION_PX + 1;
+      const litColor = (x: number, y: number, z: number, color: string, uid?: number) => {
+        const [r, g, b] = parseColorRgb01(this.lighting.surfacePalette(x, y, z, 0, 0, 1, uid)(color));
+        return reflectionColor([r * 255, g * 255, b * 255]);
+      };
+      for (const tower of combat.towers) {
+        const y = tower.y + tower.h - 1;
+        for (let z = 1; z <= towerRise; z++) {
+          const color = z === towerRise ? TOWER_SPECS[tower.type].color : "#424657";
+          this.reflections.stampActor(surface, tower.x, y, tower.w, z, () =>
+            litColor(tower.x + tower.w * 0.5, y, z, color, tower.uid));
+        }
+      }
+      for (const agent of combat.agents) {
+        if (agent.hp <= 0) continue;
+        const x = Math.floor(agent.x);
+        const y = Math.floor(agent.y);
+        const wide = agent.kind === "heavyMech" || agent.kind === "wallSerpent";
+        const height = agent.layer === "air" || wide ? 2 : 1;
+        const color = agent.layer === "air" || agent.kind === "wallSerpent" ? "#6ad8ff" : "#ffd15c";
+        this.reflections.stampActor(surface, wide ? x - 1 : x, y, wide ? 2 : 1, height, () =>
+          litColor(x, y, height, color));
+      }
+    }
+    this.reflections.paint(this.spriteCache, this.lighting, this.terrainU32, sceneLights,
+      activePreset, reflectionQuality, animTime);
+    lap("reflections");
+
     // Auto-drop lighting quality on slow devices when lighting + terrain exceeds frame budget
-    const lightMs = T["lighting"] ?? 0;
+    const lightMs = (T["lighting"] ?? 0) + (T["reflections"] ?? 0);
     if (lightMs > 11.5) {
       this.slowLightFrames++;
       this.fastLightFrames = 0;
@@ -1556,6 +1592,10 @@ export class VoidRenderer {
       const dh = lBounds.y1 - lBounds.y0;
       rawScene.drawImage(this.lighting.terrainCanvas, lBounds.x0, lBounds.y0, dw, dh, lBounds.x0, lBounds.y0, dw, dh);
     }
+
+    const waterBlit = performance.now();
+    this.reflections.drawWater(rawScene);
+    T.reflections += performance.now() - waterBlit;
 
     lap("terrain");
 
@@ -2632,6 +2672,10 @@ export class VoidRenderer {
       const dh = lBounds.y1 - lBounds.y0;
       rawScene.drawImage(this.lighting.buildingCanvas, lBounds.x0, lBounds.y0, dw, dh, lBounds.x0, lBounds.y0, dw, dh);
     }
+
+    const glassBlit = performance.now();
+    this.reflections.drawGlass(rawScene);
+    T.reflections += performance.now() - glassBlit;
 
     // Fire is authoritative; flames/smoke are bounded visual witnesses, including elevated farm roofs.
     for (const [idx, fire] of sim.farms.active) {

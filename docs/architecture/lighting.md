@@ -66,9 +66,46 @@ All world surfaces—terrain, buildings, placed towers, and infantry—generate 
   - Building point lights use a seeded, spatially spaced ordering established once per world. Low, Medium, and High use fixed prefixes of up to 4, 7, and 10 building point lights, and a tier change fades the point-light contribution through the cutoff. Combat-light priorities cannot evict a building fixture. The emissive halo stays independent of both budgets.
 - **Lighting Quality Tiers & Auto-Drop (`lightingQuality` in `src/settings.ts`):**
   - Configurable in Command Settings (`High`: 34 lights / 12 shadow casters; `Medium`: 24 lights / 9 shadow casters; `Low`: 16 lights / 5 shadow casters). Lights beyond the shadow cap smoothly fade their `shadowStrength` to unshadowed surface glow.
-  - `VoidRenderer` monitors `lastTimings.lighting` and automatically drops `effectiveLightingQuality` one tier after sustained slow frames (`> 11.5 ms`), recovering when frame times drop (`< 4.5 ms`).
+  - `VoidRenderer` monitors the combined lighting and reflection computation time and automatically drops `effectiveLightingQuality` one tier after sustained slow frames (`> 11.5 ms`), recovering when frame times drop (`< 4.5 ms`).
 
 
 ## 6. Void Debris and Traffic
 
 Loose fragments and submerged chunks use cached heat palettes shaded by the current sky. Heat adds its own emission near the event horizon. The Void's floor takes the preset's ambient tint, with a directional highlight on the portal rim. Blue civilian traffic and amber delivery trucks cast small, additive pools on nearby road and park pixels at native resolution.
+
+## 7. Water and Glass Reflections
+
+Terrain tags open water, and the building atlas tags intact facade panes and glass
+roof panels. Damaged panes and exposed floor slabs are opaque. Each surface has
+its own reflectivity, Fresnel strength, roughness, tint, and ripple settings in
+`reflections.ts`.
+
+For the fixed oblique camera, a point with height `z` appears at
+`groundY - z` on screen and `groundY + z` in water. The water ray checks those
+exact projected atlas pixels from near to far and samples the existing lit
+building color. High also samples trees and projects lit tower and unit
+silhouettes. Point lights cast staggered streaks on nearby water, including
+lights along the banks. Ripple displacement uses whole pixels.
+
+Glass reflects the preset sky and sun, the lighting pass supplies aligned
+point-light highlights, and a short grid-boundary ray following the reflected
+view direction can intercept taller neighboring columns. The sky colors
+interpolate during a preset blend.
+
+Only visible reflection tiles and a small camera margin are drawn. Terrain and
+atlas edits invalidate nearby receiver tiles. The cache stores geometry hits
+separately from their lit colors. Its color validity uses exact sky and sun
+parameters, lighting tile revisions, and current moving samples and streaks.
+Stable tiles skip uploads. Medium shares ray hits across 2×2 blocks and omits
+trees and actors. Low uses sky, light streaks, and glass glints.
+
+Run `node tests/void-reflections.mjs` against the dev server for desktop and
+mobile captures, a destruction and moving-unit regression, and per-tier
+timings at close zoom and at fit. The gallery uses a canal beside existing
+procedural city buildings.
+
+- [Day river](../void-defense/reflections/reflection-river-day.png)
+- [Sunset river](../void-defense/reflections/reflection-river-sunset.png)
+- [Night river](../void-defense/reflections/reflection-river-night.png)
+- [Glass tower at sunset](../void-defense/reflections/reflection-glass-sunset.png)
+- [Explosion reflected in water](../void-defense/reflections/reflection-explosion.png)

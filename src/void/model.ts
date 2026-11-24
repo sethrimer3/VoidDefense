@@ -31,6 +31,9 @@ export type CellMaterialId = (typeof CellMaterial)[keyof typeof CellMaterial];
 /** Render-only surface detail layered over a cell's material: the countryside between
  * the metropolis and the Void (grass, meadow, forest, crop fields, orchards, dirt roads,
  * rivers and bridges) plus rural props. `NONE` means the plain urban surface. */
+/** Optical surface tags shared by the terrain and building G-buffers. */
+export const SurfaceMaterial = { OPAQUE: 0, WATER: 1, GLASS: 2 } as const;
+
 export const LandCover = {
   NONE: 0,
   GRASS: 1,
