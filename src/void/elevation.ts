@@ -164,6 +164,15 @@ export const ARCH_PALETTES: Record<MetroBuilding["archStyle"], readonly ArchPale
   ],
 };
 
+/** Striped storefront awning colour pairs (red, green, teal, amber, plum). */
+const AWNING_COLORS: readonly (readonly [string, string])[] = [
+  ["#b8423a", "#e8d9c4"],
+  ["#2f7a4a", "#d9e6cf"],
+  ["#2b7f86", "#cfe7e6"],
+  ["#c98a2c", "#f0dfb8"],
+  ["#7a3d6b", "#e6d0de"],
+];
+
 export type BuildingNeonTier = "landmark" | "sign" | "outline" | "dark";
 
 export type DistrictNeonAccent = {
@@ -417,6 +426,78 @@ export function computeBuildingSignature(
   return h >>> 0;
 }
 
+/** Rooftop prop shapes (2 rows x up to 2 columns, `""` = none): AC unit, water tank, skylight,
+ * vent stack and antenna mast. */
+const ROOF_PROP_SHAPES: readonly { w: number; h: number; px: readonly string[] }[] = [
+  { w: 2, h: 2, px: ["#9aa3ad", "#7d8692", "#5d6570", "#2b3038"] }, // AC unit with dark fan
+  { w: 2, h: 2, px: ["#8a5a3a", "#a36c46", "#6e472e", "#5a3a26"] }, // timber water tank
+  { w: 2, h: 1, px: ["#86b4d6", "#5e86a8"] }, // skylight glass
+  { w: 1, h: 1, px: ["#3a3f47"] }, // vent stack
+  { w: 1, h: 1, px: ["#c9d0d8"] }, // antenna mast foot
+];
+
+const roofPropCache = new WeakMap<VoidWorld, Map<number, Map<number, string>>>();
+
+/** Seeded rooftop clutter for building `b`: a few AC units, tanks, skylights, vents and masts scattered on
+ * its top deck, kept clear of the deck rim (where roof neon runs), the central core and any helipad.
+ * Returns the prop colour at world cell `(x, y)`, or `null`. */
+export function rooftopPropAt(world: VoidWorld, b: MetroBuilding, x: number, y: number): string | null {
+  if (b.archStyle === "homestead" || b.archStyle === "barn" || b.archStyle === "civicDome") return null;
+  if (b.roofFeature === "skyGarden" || b.roofFeature === "solarArray") return null;
+  let perWorld = roofPropCache.get(world);
+  if (!perWorld) {
+    perWorld = new Map();
+    roofPropCache.set(world, perWorld);
+  }
+  let props = perWorld.get(b.id);
+  if (!props) {
+    props = new Map();
+    const baseElev = floorsToElevation(b.height, "full");
+    const stepped = b.archStyle === "artDecoSetback" || b.archStyle === "solarTerrace" || (b.isSkyscraper && baseElev >= 6);
+    const deckInset = stepped && Math.min(b.w, b.h) - 2 * pixels(2) >= 8 ? pixels(2) : stepped ? pixels(1) : 1;
+    const x0 = b.x + deckInset + 1;
+    const y0 = b.y + deckInset + 1;
+    const x1 = b.x + b.w - 1 - deckInset - 1;
+    const y1 = b.y + b.h - 1 - deckInset - 1;
+    const cx = Math.floor(b.x + b.w / 2);
+    const cy = Math.floor(b.y + b.h / 2);
+    const keepOut = b.roofFeature === "helipad" ? 3 : 1;
+    const area = Math.max(0, x1 - x0 + 1) * Math.max(0, y1 - y0 + 1);
+    const want = Math.min(4, Math.floor(area / 22));
+    let placed = 0;
+    for (let attempt = 0; attempt < 16 && placed < want; attempt++) {
+      const roll = hash(world.seed, 981, b.id, attempt);
+      const kindRoll = roll % 10;
+      const kind = b.isSkyscraper
+        ? (kindRoll < 4 ? 0 : kindRoll < 6 ? 2 : kindRoll < 8 ? 3 : 4)
+        : (kindRoll < 4 ? 0 : kindRoll < 7 ? 1 : kindRoll < 8 ? 2 : 3);
+      const shape = ROOF_PROP_SHAPES[kind];
+      const spanX = x1 - x0 - shape.w + 2;
+      const spanY = y1 - y0 - shape.h + 2;
+      if (spanX <= 0 || spanY <= 0) continue;
+      const px = x0 + ((roll >>> 8) % spanX);
+      const py = y0 + ((roll >>> 18) % spanY);
+      let ok = true;
+      for (let dy = -1; dy <= shape.h && ok; dy++) {
+        for (let dx = -1; dx <= shape.w && ok; dx++) {
+          const qx = px + dx;
+          const qy = py + dy;
+          if (props.has(qy * world.grid.w + qx)) ok = false;
+          if (dx >= 0 && dy >= 0 && dx < shape.w && dy < shape.h &&
+            Math.abs(qx - cx) <= keepOut && Math.abs(qy - cy) <= keepOut) ok = false;
+        }
+      }
+      if (!ok) continue;
+      for (let dy = 0; dy < shape.h; dy++) {
+        for (let dx = 0; dx < shape.w; dx++) props.set((py + dy) * world.grid.w + px + dx, shape.px[dy * shape.w + dx]);
+      }
+      placed++;
+    }
+    perWorld.set(b.id, props);
+  }
+  return props.get(y * world.grid.w + x) ?? null;
+}
+
 /** Paints the roof pixel color for cell `(x, y)` of building `b` (matches native roof palette). */
 export function roofColorAt(
   world: VoidWorld,
@@ -457,6 +538,17 @@ export function roofColorAt(
     if (sEdge || eEdge) color = pal.shadeEdge;
     else if (nEdge || wEdge) color = pal.litEdge;
     else if (inset === pixels(1) && Math.min(b.w, b.h) >= pixels(4)) color = pal.roofAccent;
+    else if (inset >= 2) {
+      // Roof surface texture by style: curtain-wall roofs show a panel seam grid, industrial roofs run
+      // corrugated ridges, masonry roofs a sparse gravel speckle.
+      if (b.archStyle === "glassTower" || b.archStyle === "cyberArcology") {
+        if ((lx - 2) % 4 === 0 || (ly - 2) % 4 === 0) color = inset >= pixels(2) ? pal.mid : pal.podium;
+      } else if (b.archStyle === "foundryComplex") {
+        if ((ly & 1) === 0) color = pal.mid;
+      } else if (r < 0.1) {
+        color = pal.roofAccent;
+      }
+    }
 
     if (inset >= pixels(1)) {
       const dx = x - cx;
@@ -471,6 +563,8 @@ export function roofColorAt(
         // Single clean rooftop HVAC unit / penthouse core instead of noisy checkerboard
         color = dx === 0 && dy === 0 ? pal.litEdge : pal.roofAccent;
       }
+      const prop = rooftopPropAt(world, b, x, y);
+      if (prop) color = prop;
     }
 
     // Architectural roof neon: perimeter outlines, L-shaped corner accents, and centered rooftop sign plaques
@@ -666,26 +760,52 @@ export function facadeColorAt(
     }
   }
 
-  // 5. Recessed structural window columns: most windows dark; some buildings have small clusters of soft warm yellow room lights
+  // 5. Storefront awnings: about a third of low and mid-rise buildings shade their ground-floor shops with a
+  //    striped canvas awning on the street-facing wall, either side of the entrance.
+  if (isFrontWall && fRow === 1 && elev >= 3 && b.w >= 8 && hpRatio > 0.35 && !b.isSkyscraper &&
+    hash01(world.seed, 985, b.id) < 0.34) {
+    const awning = AWNING_COLORS[hash(world.seed, 986, b.id) % AWNING_COLORS.length];
+    return (lx & 1) === 0 ? awning[0] : awning[1];
+  }
+  // 6. Floor-plate spandrel bands every third floor and a pale parapet cap give the facade a clear rhythm.
+  if (elev >= 6 && fRow > 1 && fRow < elev - 1 && fRow % 3 === 0 && lx > tierLeft - 1 && lx < tierRight + 1) {
+    return (lx & 1) === 0 ? pal.mid : pal.crown;
+  }
+  if (elev >= 3 && fRow === elev - 1 && hpRatio > 0.35) {
+    return pal.roofAccent;
+  }
+
+  // 7. Window grid: each floor is a row of glass panes over a spandrel, framed by pilasters, so facades read
+  //    as real storeys. Most panes are dark glass with a seeded diagonal sky glint; a few buildings keep
+  //    small clusters of warm yellow room lights (emissive, with a soft yellow halo spill).
   const isWindowCol = ((lx - tierLeft) & 1) === 1;
   if (isWindowCol && fRow >= 2 && fRow <= elev - 2 && lx > tierLeft && lx < tierRight) {
+    if ((fRow & 1) === 0) return pal.mid; // spandrel between floors
     const clusterX = (lx - tierLeft) >> 2;
     const clusterY = fRow >> 1;
     const clusterRoll = hash01(world.seed, 965, b.id, clusterX, clusterY);
     const buildingHasWarmRooms = hash01(world.seed, 964, b.id) < 0.48;
     if (hpRatio > 0.35) {
-      if (buildingHasWarmRooms && clusterRoll < 0.11) {
-        // Soft warm yellow room light cluster (emits gentle yellow halo spill)
-        return ((lx + fRow) & 1) === 0 ? "#ffe082" : "#e6b44c";
-      }
+      if (buildingHasWarmRooms && clusterRoll < 0.13) return (lx & 2) === 0 ? "#ffe082" : "#e6b44c";
       const coolThreshold = neonTier === "landmark" ? 0.14 : neonTier === "sign" ? 0.08 : 0.04;
-      if (!buildingHasWarmRooms && clusterRoll < coolThreshold) {
-        return pal.litEdge;
-      }
+      if (!buildingHasWarmRooms && clusterRoll < coolThreshold) return pal.litEdge;
     }
-    return pal.shadeEdge;
+    const glass = GLASS_TINTS[isGlassFacade(b) ? 0 : 1];
+    // Sky glint: a diagonal band that sweeps across the panes, offset per building
+    const glint = (lx + (elev - fRow) + (b.id % 5)) % 6 === 0;
+    return glint ? glass[1] : fRow >= elev - 3 ? glass[2] : glass[0];
   }
-  return fRow % 2 === 0 ? pal.mid : pal.podium;
+  return pal.podium;
+}
+
+/** Glass pane tints `[pane, sky glint, upper-floor sky reflection]` for curtain-wall and masonry facades. */
+const GLASS_TINTS: readonly (readonly [string, string, string])[] = [
+  ["#1c2b40", "#4e7398", "#28405c"],
+  ["#161c26", "#3a4a5e", "#1f2836"],
+];
+
+function isGlassFacade(b: MetroBuilding): boolean {
+  return b.archStyle === "glassTower" || b.archStyle === "cyberArcology";
 }
 
 /** Paints an exposed interior cutaway pixel for column `(x, yFoot)` at elevation row `fRow`
@@ -1052,7 +1172,13 @@ export function buildBuildingSprite(
           if (elev > eastElev) { nx += 0.62; partRelief += 0.16; }
 
           // Interior rooftop feature bump mapping
-          if (nx === 0 && ny === 0) {
+          if (nx === 0 && ny === 0 && rooftopPropAt(world, b, cx, cy)) {
+            // Rooftop props stand proud of the deck: lit tops, a raised relief for crisp shading
+            ny = -0.34;
+            nz = 0.88;
+            spec = 120;
+            partRelief += 0.32;
+          } else if (nx === 0 && ny === 0) {
             if (b.roofFeature === "solarArray" && ly % 3 === 0) {
               ny = 0.46;
               nz = 0.88;

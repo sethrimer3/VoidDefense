@@ -17,6 +17,7 @@ import { hash, hash01 } from "./grid.ts";
 import { type Agent, CellMaterial, type FallingChunk, LandCover, SurfaceMaterial } from "./model.ts";
 import { valueNoise } from "./portal-noise.ts";
 import { streetFireFlicker } from "./street-fires.ts";
+import { halogenLampStanding, halogenLamps, halogenPoolCell, isHalogenPoolAt } from "./city-details.ts";
 import type { VoidSim } from "./sim.ts";
 import { TOWER_SPECS } from "./towers.ts";
 import type { VoidWorld } from "./world.ts";
@@ -602,6 +603,9 @@ export function traceLightOcclusion(
  * additive street glow in the renderer, so low quality keeps their glow without point-light cost. */
 export const DELIVERY_CAR_LIGHT_CAP: Record<LightingQualityMode, number> = { low: 0, medium: 1, high: 8 };
 
+/** Most halogen street-lamp point lights per frame, by quality tier (all lamps always seed the halo). */
+export const HALOGEN_LIGHT_CAP: Record<LightingQualityMode, number> = { low: 0, medium: 0, high: 6 };
+
 /** Most street-fire point lights per frame, by quality tier. */
 export const STREET_FIRE_LIGHT_CAP: Record<LightingQualityMode, number> = { low: 0, medium: 2, high: 8 };
 
@@ -959,6 +963,23 @@ export function collectSceneLights(
         castsShadows: quality === "high",
         shadowStrength: 0.3 * shadowScale,
         priority: 71,
+      });
+    }
+  }
+
+  // 7b2. Halogen street lamps: on high quality the nearest few also light facades and wet roads as point lights
+  //      (no shadows). Every lamp always seeds the warm halo, so lower tiers keep their pools for free.
+  if (HALOGEN_LIGHT_CAP[quality] > 0 && neonMult > 0.3) {
+    let n = 0;
+    for (const lamp of halogenLamps(world)) {
+      if (n >= HALOGEN_LIGHT_CAP[quality]) break;
+      const pool = halogenPoolCell(lamp);
+      if (!inView(pool.x, pool.y, 12) || !halogenLampStanding(world, lamp)) continue;
+      n++;
+      lights.push({
+        x: pool.x + 0.5, y: pool.y + 0.5, z: 5,
+        r: 1.15 * Math.min(1, neonMult), g: 0.74 * Math.min(1, neonMult), b: 0.3 * Math.min(1, neonMult),
+        radius: 13, specular: 0.5, castsShadows: false, shadowStrength: 0, priority: 60,
       });
     }
   }
@@ -1789,6 +1810,11 @@ export class LightingEngine {
               seeds[dst] = Math.max(seeds[dst], IS_LITTLE_ENDIAN ? color & 255 : color >>> 24);
               seeds[dst + 1] = Math.max(seeds[dst + 1], (color >>> (IS_LITTLE_ENDIAN ? 8 : 16)) & 255);
               seeds[dst + 2] = Math.max(seeds[dst + 2], (color >>> (IS_LITTLE_ENDIAN ? 16 : 8)) & 255);
+            } else if (world && atlasBldId[i] < 0 && isHalogenPoolAt(world, wx, wy)) {
+              // Warm sodium-halogen street lamp pool, distinct from the cool median lights
+              seeds[dst] = Math.max(seeds[dst], 255);
+              seeds[dst + 1] = Math.max(seeds[dst + 1], 168);
+              seeds[dst + 2] = Math.max(seeds[dst + 2], 74);
             } else if (world && atlasBldId[i] < 0 && isBoulevardStreetlightAt(world, wx, wy)) {
               // Soft boulevard streetlight pool seed at regular spacing along medians
               seeds[dst] = Math.max(seeds[dst], 115);

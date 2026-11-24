@@ -87,6 +87,7 @@ import { reflectionColor, SurfaceReflections } from "./reflections.ts";
 import { findStreetPath, isCityStreet, type StreetBfsScratch } from "./street-routes.ts";
 import { depotBoltPixels, depotLinks, type DeliveryRoute } from "./deliveries.ts";
 import { streetFireFlicker } from "./street-fires.ts";
+import { CITY_DETAIL_COLORS, cityDetailAt, halogenLampStanding, halogenLamps } from "./city-details.ts";
 import type { VoidSim } from "./sim.ts";
 import { STRIKE_SPECS, TOWER_SPECS } from "./towers.ts";
 import type { VoidWorld } from "./world.ts";
@@ -731,6 +732,43 @@ export class VoidRenderer {
       }
     }
     c.globalCompositeOperation = "source-over";
+  }
+
+  /** Draws each standing halogen lamp: a 4 px pole, an arm reaching over the road and a warm lamp head
+   * that brightens with the time of day's neon intensity. */
+  private paintHalogenLamps(
+    world: VoidWorld,
+    c: CanvasRenderingContext2D,
+    view: { x0: number; y0: number; x1: number; y1: number },
+    neon: number,
+  ): void {
+    const lit = Math.max(0, Math.min(1, (neon - 0.3) / 0.9));
+    for (const lamp of halogenLamps(world)) {
+      const { x, y, ax, ay } = lamp;
+      if (x < view.x0 - 6 || x > view.x1 + 6 || y < view.y0 - 4 || y > view.y1 + 10) continue;
+      if (!halogenLampStanding(world, lamp)) continue;
+      c.fillStyle = "#4a515b";
+      c.fillRect(x, y - 4, 1, 4);
+      c.fillStyle = "#6b7380";
+      c.fillRect(x, y - 5, 1, 1);
+      // Arms reach sideways over east-west roads; over a road to the north the arm rises one pixel, and
+      // over a road to the south (toward the viewer) the head sits on the pole top.
+      const hx = x + ax * 2;
+      const hy = ay < 0 ? y - 6 : y - 5;
+      c.fillStyle = "#5a616c";
+      if (ax !== 0) c.fillRect(x + ax, y - 5, 1, 1);
+      c.fillStyle = lit > 0 ? "#ffe2a0" : "#9a8f78";
+      c.fillRect(hx, hy, 1, 1);
+      if (lit > 0) {
+        c.globalCompositeOperation = "lighter";
+        c.fillStyle = `rgba(255, 176, 80, ${(0.45 * lit).toFixed(3)})`;
+        c.fillRect(hx - 1, hy, 1, 1);
+        c.fillRect(hx + 1, hy, 1, 1);
+        c.fillRect(hx, hy - 1, 1, 1);
+        c.fillRect(hx, hy + 1, 1, 1);
+        c.globalCompositeOperation = "source-over";
+      }
+    }
   }
 
   /** Draws each persistent street fire as a whole-pixel prop with flickering flames, sparks and smoke,
@@ -1609,6 +1647,9 @@ export class VoidRenderer {
         } else {
           color = (x + y) % 3 === 0 ? "#2a3542" : "#222b36";
         }
+      } else if (hp >= 0.85 && cityDetailAt(world, idx) !== 0) {
+        // Procedural street furniture: crosswalks, manholes, benches, planters, hydrants, lamp bases...
+        color = CITY_DETAIL_COLORS[cityDetailAt(world, idx)];
       } else {
         const kerb = (x > 0 && world.buildingAt[idx - 1] >= 0) || (x + 1 < w && world.buildingAt[idx + 1] >= 0) ||
           (y > 0 && world.buildingAt[idx - w] >= 0) || (y + 1 < h && world.buildingAt[idx + w] >= 0);
@@ -2967,6 +3008,7 @@ export class VoidRenderer {
 
     // Persistent street fires: trash cans, debris piles and trash heaps that burn all level until destroyed
     this.paintStreetFires(sim, rawScene, animTime, viewBounds, glow);
+    this.paintHalogenLamps(world, rawScene, viewBounds, activePreset.neonIntensity);
 
     // Draw above-ground falling chunks (`z >= 0`) and fleeing street civilians (`z >= 0`)
     if (!this.reduceEffects) {
