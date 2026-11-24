@@ -32,7 +32,7 @@ export function computeCityIncomePerCycle(
     }
     if (remainingFloors <= 0) continue;
     const avgFloors = remainingFloors / b.cells.length;
-    const areaScale = Math.max(1, b.cells.length / 56);
+    const areaScale = Math.max(1, b.cells.length / 72);
     total += avgFloors * areaScale * 0.015 * b.development * tech.cityIncomeMultiplier;
   }
   const timeScale = 1 / (1 + Math.max(0, elapsedSeconds) / 120);

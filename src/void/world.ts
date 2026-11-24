@@ -385,7 +385,7 @@ export class VoidWorld {
 
     // 3. Subdivide each city superblock into larger, calmer metropolitan footprints with open lots & setbacks.
     const centerX = w * 0.5;
-    const centerY = h * 0.54;
+    const centerY = h * 0.52;
     const portalCenters = scenario.portals.map((p) => ({
       x: Math.round(p.xFrac * w),
       y: Math.round(p.yFrac * h),
@@ -406,7 +406,7 @@ export class VoidWorld {
 
         const blkCx = (blkX0 + blkX1) * 0.5;
         const blkCy = (blkY0 + blkY1) * 0.5;
-        const distFromCenter = dist(blkCx - centerX, blkCy - centerY) / Math.max(w, h);
+        const distFromCore = dist(blkCx - centerX, blkCy - centerY) / Math.max(w, h);
         const blkRoll = hash01(seed, 303, bx, by);
         const blkUrbanity = this.urbanity[Math.min(h - 1, (blkY0 + blkY1) >> 1) * w + Math.min(w - 1, (blkX0 + blkX1) >> 1)] / 255;
 
@@ -416,15 +416,14 @@ export class VoidWorld {
           const d = dist(blkCx - p.x, blkCy - p.y) - p.r;
           if (d < minPortalClearance) minPortalClearance = d;
         }
-        const nearBreach = minPortalClearance < 11;
+        const nearBreach = minPortalClearance < 4;
 
         let district: DistrictKind = "midtown";
-        if (isSuburb) district = blkRoll < 0.24 ? "plaza" : "residential";
-        else if (blkRoll < 0.16) district = "plaza";
-        else if (distFromCenter < 0.24 && blkUrbanity > 0.72 && !nearBreach) district = "downtown";
-        else if (distFromCenter < 0.36 && blkUrbanity > 0.60) district = "midtown";
-        else if (distFromCenter > 0.34 && blkRoll < 0.52 && blkUrbanity > 0.55) district = "industrial";
-        else district = "residential";
+        if (isSuburb) district = blkRoll < 0.22 ? "plaza" : "residential";
+        else if (distFromCore < 0.25 && blkUrbanity > 0.78) district = "downtown";
+        else if (blkRoll < 0.11) district = "plaza";
+        else if (distFromCore > 0.36 && blkRoll < 0.45 && blkUrbanity > 0.58) district = "industrial";
+        else if (blkRoll > 0.74 || blkUrbanity < 0.45) district = "residential";
 
         if (district === "plaza") {
           const openKind = hash(seed, 311, bx, by) % 3; // 0 = green park, 1 = civic plaza + pavilion, 2 = parking/rubble commons
@@ -448,7 +447,7 @@ export class VoidWorld {
               }
             }
           }
-          if (openKind === 1 && blkW >= 12 && blkH >= 10 && !isSuburb && !nearBreach) {
+          if (openKind !== 0 && blkW >= 10 && blkH >= 8 && !isSuburb) {
             this.addBuilding(
               blkX0 + Math.floor(blkW / 2) - 3,
               blkY0 + Math.floor(blkH / 2) - 2,
@@ -456,31 +455,23 @@ export class VoidWorld {
               5,
               "plaza",
               false,
-              5,
+              6,
               hash(seed, 399, bx, by),
             );
           }
           continue;
         }
 
-        // Use narrow interior alleys sparingly (~32% of tall blocks) so blocks hold larger, calmer footprints
-        const hasHAlley = blkH >= 14 && hash01(seed, 401, bx, by) < 0.32;
+        // Use narrow interior alleys sparingly (~35% of tall blocks) so blocks hold larger, calmer footprints
+        const hasHAlley = blkH >= 13 && hash01(seed, 401, bx, by) < 0.35;
         const alleyY = hasHAlley ? blkY0 + Math.floor(blkH / 2) : -1;
-
-        // Leave a 1-coarse-cell (2 world px) sidewalk setback around urban blocks so towers don't crowd the curb
-        const padX = isSuburb ? 0 : 1;
-        const padY = isSuburb ? 0 : 1;
-        const innerX0 = blkX0 + padX;
-        const innerX1 = blkX1 - padX;
-        const innerY0 = blkY0 + padY;
-        const innerY1 = blkY1 - padY;
 
         const rowSlices: { y0: number; y1: number }[] = hasHAlley
           ? [
-              { y0: innerY0, y1: alleyY },
-              { y0: alleyY + 1, y1: innerY1 },
+              { y0: blkY0, y1: alleyY },
+              { y0: alleyY + 1, y1: blkY1 },
             ]
-          : [{ y0: innerY0, y1: innerY1 }];
+          : [{ y0: blkY0, y1: blkY1 }];
 
         for (let sIdx = 0; sIdx < rowSlices.length; sIdx++) {
           const sy0 = rowSlices[sIdx].y0;
@@ -488,43 +479,40 @@ export class VoidWorld {
           const sh = sy1 - sy0;
           if (sh < 4) continue;
 
-          let px = innerX0;
+          let px = blkX0;
           let lotIdx = 0;
-          while (px < innerX1 - 3) {
-            const maxLotW = innerX1 - px;
+          while (px < blkX1 - 3) {
+            const maxLotW = blkX1 - px;
             if (maxLotW < 4) break;
             const wantW =
               district === "downtown"
                 ? 6 + (hash(seed, 501, bx, by, sIdx, lotIdx) % 5) // 6..10 coarse (12..20 world px)
                 : district === "industrial"
-                  ? 6 + (hash(seed, 502, bx, by, sIdx, lotIdx) % 5) // 6..10 coarse (12..20 world px)
+                  ? 6 + (hash(seed, 502, bx, by, sIdx, lotIdx) % 6) // 6..11 coarse (12..22 world px)
                   : isSuburb
                     ? 3 + (hash(seed, 503, bx, by, sIdx, lotIdx) % 3) // 3..5 leafy lots
                     : 5 + (hash(seed, 503, bx, by, sIdx, lotIdx) % 5); // 5..9 coarse (10..18 world px)
             const lw = Math.min(maxLotW, wantW);
 
-            // Breathing room: ~22% of urban parcels become calm open lots (pocket parks, parking lots, or rubble lots)
+            // Breathing room: ~14% of urban parcels become calm open lots (pocket parks, parking lots, or rubble lots)
             const openLotRoll = hash01(seed, 515, bx, by, sIdx, lotIdx);
-            if (!isSuburb && openLotRoll < (district === "downtown" ? 0.14 : 0.24)) {
+            if (!isSuburb && openLotRoll < (district === "downtown" ? 0.08 : 0.15)) {
               const openType = hash(seed, 516, bx, by, sIdx, lotIdx) % 3;
               for (let py = sy0; py < sy1; py++) {
                 for (let lx = px; lx < px + lw; lx++) {
                   const i = py * w + lx;
                   if (this.material[i] === CellMaterial.UNCLAIMED || this.zone[i] === ZoneKind.RURAL) continue;
                   if (openType === 0) {
-                    // Pocket park / dark green plaza
                     this.material[i] = CellMaterial.PARK;
                     this.hp[i] = 14;
                     this.maxHp[i] = 14;
                     this.landCover[i] = LandCover.NONE;
                   } else if (openType === 1) {
-                    // Parking lot
                     this.material[i] = CellMaterial.STREET;
                     this.streetTier[i] = PARKING_STREET_TIER;
                     this.hp[i] = 16;
                     this.maxHp[i] = 16;
                   } else {
-                    // Quiet empty / foundation lot with sparse salvage rubble
                     const isRubble = hash01(seed, 517, lx, py) < 0.22;
                     this.material[i] = isRubble ? CellMaterial.SALVAGE : CellMaterial.STREET;
                     this.streetTier[i] = 4;
@@ -540,7 +528,7 @@ export class VoidWorld {
 
             const lh = Math.min(
               isSuburb ? Math.min(sh, 4) : sh,
-              (isSuburb ? 3 : 5) + (hash(seed, 504, bx, by, sIdx, lotIdx) % Math.max(1, sh - (isSuburb ? 2 : 4))),
+              (isSuburb ? 3 : 4) + (hash(seed, 504, bx, by, sIdx, lotIdx) % Math.max(1, sh - (isSuburb ? 2 : 3))),
             );
             const ly0 = sy0 + (sIdx === 0 ? 0 : sh - lh);
 
@@ -548,36 +536,36 @@ export class VoidWorld {
             const isSkyscraper =
               !isSuburb &&
               !nearBreach &&
-              lw >= 5 &&
-              lh >= 5 &&
+              lw >= 4 &&
+              lh >= 4 &&
               ((district === "downtown" && skyRoll < 0.80) ||
-                (district === "midtown" && distFromCenter < 0.32 && skyRoll < 0.38));
+                (district === "midtown" && skyRoll < 0.45));
 
-            // Strong downtown-to-edge height gradient: tall core fading to low, sparse outer edges
-            const coreFactor = Math.max(0, 1 - distFromCenter * 2.1);
-            const heightBias = Math.round(coreFactor * 8 + blkUrbanity * 3);
+            // Strong downtown-to-edge height gradient: tall downtown core fading to lower, sparser outer edges
+            const coreFactor = Math.max(0, Math.min(1, (1 - distFromCore * 1.6) * 0.6 + blkUrbanity * 0.45));
+            const heightBias = Math.round(coreFactor * 7);
             let height = isSkyscraper
-              ? Math.min(30, 16 + heightBias + (hash(seed, 506, bx, by, sIdx, lotIdx) % 9)) // 18..30 stories in core
+              ? Math.min(30, 15 + heightBias + (hash(seed, 506, bx, by, sIdx, lotIdx) % 11)) // 15..30 stories
               : district === "downtown" || district === "midtown"
-                ? 6 + Math.round(coreFactor * 5) + (hash(seed, 507, bx, by, sIdx, lotIdx) % 6) // 6..16 stories
+                ? 7 + Math.round(coreFactor * 4) + (hash(seed, 507, bx, by, sIdx, lotIdx) % 7) // 7..17 stories
                 : isSuburb
                   ? 1 + (hash(seed, 508, bx, by, sIdx, lotIdx) % 3) // 1..3 stories
-                  : 2 + (hash(seed, 508, bx, by, sIdx, lotIdx) % 4); // 2..5 stories at edges
+                  : 2 + (hash(seed, 508, bx, by, sIdx, lotIdx) % 5); // 2..6 stories at edges
             if (nearBreach) {
-              // Keep buildings immediately adjacent to portals low so they never hide the breach or frontline towers
-              height = Math.min(height, 5);
+              height = Math.min(height, 6);
             }
 
-            const gap = isSuburb ? 1 + (hash(seed, 510, bx, by, sIdx, lotIdx) % 2) : 1 + (hash(seed, 510, bx, by, sIdx, lotIdx) % 2);
+            const gap = isSuburb ? 1 + (hash(seed, 510, bx, by, sIdx, lotIdx) % 2) : 1;
             let variant = hash(seed, 509, bx, by, sIdx, lotIdx);
-            // Ensure central skyscrapers include glassTower landmarks for reflections & skyline contrast
             if (isSkyscraper && bx === (xBlocks.length >> 1) && lotIdx === 0) {
               district = "downtown";
-              variant = variant - (variant % 3); // index 0 in downtown is glassTower
+              variant = variant - (variant % 3);
               height = Math.max(22, height);
             }
+            // Leave a 1-cell setback on wider parcels so buildings don't pack edge-to-edge
+            const buildingWidth = !isSuburb && lw >= 7 ? lw - 1 : lw;
             this.addBuilding(
-              px, ly0, lw, lh, district, isSkyscraper, height, variant,
+              px, ly0, buildingWidth, lh, district, isSkyscraper, height, variant,
             );
 
             const parkingY = sIdx === 0 ? ly0 + lh : sy0;

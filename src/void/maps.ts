@@ -13,7 +13,7 @@ export const SCENARIOS: readonly ScenarioConfig[] = [
     seed: 0x3001_a110,
     worldW: DEFAULT_WORLD_W,
     worldH: DEFAULT_WORLD_H,
-    initialVoidEnergy: 28200,
+    initialVoidEnergy: 25650,
     baseGrowthRate: 195,
     rampPerMinute: 130,
     startingSuppliesSiege: 220,
