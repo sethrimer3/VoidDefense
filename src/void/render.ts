@@ -31,11 +31,16 @@ import {
   TOWER_ELEVATION_PX,
 } from "./elevation.ts";
 import {
+  blendTimeOfDayPresets,
   collectSceneLights,
   INFANTRY_SOBEL_NORMALS,
   LightingEngine,
   type LightingQualityMode,
+  normalizeVoidTimeOfDay,
+  TIME_OF_DAY_PRESETS,
+  type TimeOfDayPreset,
   TOWER_SOBEL_NORMALS,
+  type VoidTimeOfDay,
 } from "./lighting.ts";
 import { isOccludedByLedge, paintVoidLedge } from "./ledge.ts";
 import { valueNoise } from "./portal-noise.ts";
@@ -367,6 +372,11 @@ export class VoidRenderer {
   effectiveLightingQuality: LightingQualityMode = "high";
   private slowLightFrames = 0;
   private fastLightFrames = 0;
+  /** Active Time of Day lighting preset (`day`, `sunset`, or `night`) with smooth mode blending. */
+  timeOfDay: VoidTimeOfDay = "night";
+  private fromPreset: TimeOfDayPreset = TIME_OF_DAY_PRESETS.night;
+  private toPreset: TimeOfDayPreset = TIME_OF_DAY_PRESETS.night;
+  private presetBlendT = 1;
   /** Per-building elevated roof & south-facade sprite cache. */
   readonly spriteCache = new BuildingSpriteCache();
   /** Tiled 2.5D bump-mapped surface lighting, surface glows and dynamic cast shadows. */
@@ -376,6 +386,26 @@ export class VoidRenderer {
   private incomePopups: { x: number; y: number; text: string; ageMs: number }[] = [];
   private outcomeFlashMs = 0;
   private outcomeFlashWon = true;
+
+  setTimeOfDay(mode: VoidTimeOfDay, immediate = false): void {
+    const clean = normalizeVoidTimeOfDay(mode);
+    const nextPreset = TIME_OF_DAY_PRESETS[clean];
+    if (immediate || this.reduceEffects) {
+      this.timeOfDay = clean;
+      this.fromPreset = nextPreset;
+      this.toPreset = nextPreset;
+      this.presetBlendT = 1;
+      return;
+    }
+    if (this.toPreset.id === clean && this.presetBlendT >= 1) {
+      this.timeOfDay = clean;
+      return;
+    }
+    this.fromPreset = blendTimeOfDayPresets(this.fromPreset, this.toPreset, this.presetBlendT);
+    this.toPreset = nextPreset;
+    this.timeOfDay = clean;
+    this.presetBlendT = 0;
+  }
 
   triggerPlacementPulse(wx: number, wy: number): void {
     if (this.reduceEffects) return;
@@ -1404,8 +1434,23 @@ export class VoidRenderer {
     c.imageSmoothingEnabled = false;
 
     // 1. Draw cached metropolitan terrain layer + tiled 2.5D bump lighting & dynamic cast shadows
+    const dt = this.lastTimeMs > 0 ? Math.min(0.08, (nowMs - this.lastTimeMs) * 0.001) : 0.016;
+    this.lastTimeMs = nowMs;
     const animTime = this.reduceEffects ? 0 : nowMs * 0.001;
     const pulse = this.reduceEffects ? 0.75 : 0.65 + 0.35 * Math.sin(animTime * 5.2);
+    const cleanTod = normalizeVoidTimeOfDay(this.timeOfDay);
+    if (this.toPreset.id !== cleanTod) {
+      this.fromPreset = TIME_OF_DAY_PRESETS[cleanTod];
+      this.toPreset = TIME_OF_DAY_PRESETS[cleanTod];
+      this.presetBlendT = 1;
+    } else if (this.presetBlendT < 1) {
+      this.presetBlendT = this.reduceEffects ? 1 : Math.min(1, this.presetBlendT + dt / 0.32);
+    }
+    const activePreset = blendTimeOfDayPresets(
+      this.fromPreset,
+      this.toPreset,
+      this.reduceEffects ? 1 : this.presetBlendT,
+    );
     const atlas = this.spriteCache.getBoardAtlas(world, this.buildingHeight, this.lastDirtyChunks);
     const scale = this.pixelScale();
     const viewBounds = {
@@ -1432,9 +1477,18 @@ export class VoidRenderer {
       this.buildingHeight,
       this.effectiveLightingQuality,
       viewBounds,
+      activePreset,
     );
     this.lighting.syncMovingCasters(combat.agents, this.reduceEffects ? [] : physics.fallingChunks, sim.tick);
-    this.lighting.renderLighting(world, this.terrainU32, this.spriteCache, sceneLights);
+    this.lighting.renderLighting(
+      world,
+      this.terrainU32,
+      this.spriteCache,
+      sceneLights,
+      activePreset,
+      viewBounds,
+      this.shadowMap,
+    );
     lap("lighting");
 
     // Auto-drop lighting quality on slow devices when lighting + terrain exceeds frame budget
@@ -1468,8 +1522,6 @@ export class VoidRenderer {
 
     // 2. Neon-blue Tron Light Cycles & Stream Trails traveling between random buildings on the map
     this.syncCycles(world);
-    const dt = this.lastTimeMs > 0 ? Math.min(0.08, (nowMs - this.lastTimeMs) * 0.001) : 0.016;
-    this.lastTimeMs = nowMs;
 
     const closeZoom = this.cam.s >= 2.0;
     const TRAIL_LEN = closeZoom ? pixels(4) : pixels(2);

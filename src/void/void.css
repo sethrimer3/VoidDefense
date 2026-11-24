@@ -548,6 +548,50 @@
   pointer-events: auto;
 }
 
+/* Top Left Time-of-Day Mode Buttons (Day / Sunset / Night) */
+.void-hud-top-left {
+  position: absolute;
+  top: 0.5rem;
+  left: 0.75rem;
+  z-index: 6;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  background: rgba(8, 12, 18, 0.88);
+  border: 1px solid #38465e;
+  border-top-color: #4d6080;
+  border-radius: 2px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.85);
+  transition: left 0.25s ease;
+}
+
+.void-tod-btn {
+  min-width: 0;
+  min-height: 22px;
+  padding: 0.12rem 0.42rem;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  line-height: 1;
+  color: #9cb1cb;
+  background: linear-gradient(180deg, #151c27 0%, #0b0f16 100%);
+  border: 1px solid #2a3548;
+  border-radius: 2px;
+  box-shadow: none;
+}
+
+.void-tod-btn.active,
+.void-tod-btn[aria-pressed="true"] {
+  color: #fff;
+  border-color: var(--void-neon-orange);
+  border-top-color: var(--void-neon-amber);
+  background: linear-gradient(180deg, #2d1e12 0%, #160f09 100%);
+  box-shadow: 0 0 8px rgba(255, 119, 0, 0.45), inset 0 0 4px rgba(255, 157, 0, 0.25);
+  text-shadow: 0 0 6px rgba(255, 157, 0, 0.75);
+}
+
 /* Top Center Status Bar */
 .void-hud-top {
   display: flex;
@@ -2027,6 +2071,19 @@
     padding-top: 5.1rem;
     padding-bottom: 8rem;
   }
+  .void-hud-top-left {
+    position: static;
+    align-self: flex-start;
+    margin: 0.24rem 0 0 0.5rem;
+  }
+  .void-board-stage.palette-open .void-hud-top-left {
+    margin-left: 96px;
+  }
+  .void-tod-btn {
+    min-height: 20px;
+    padding: 0.1rem 0.36rem;
+    font-size: 0.58rem;
+  }
   .void-dock-label {
     display: none;
   }
@@ -2216,9 +2273,15 @@
   .void-hud-bar-wrap {
     width: 100%;
   }
+  .void-hud-top-left {
+    position: absolute;
+    top: 0.28rem;
+    left: 0.45rem;
+    margin: 0 !important;
+  }
   .void-hud-top {
     position: absolute;
-    top: 0.3rem;
+    top: 1.95rem;
     left: 0.45rem;
     padding-top: 0;
     flex-direction: column;
@@ -2676,6 +2739,9 @@
 .void-board-stage.palette-open .void-hud-top {
   left: 110px;
 }
+.void-board-stage.palette-open .void-hud-top-left {
+  left: 110px;
+}
 @media (max-width: 559px) {
   .void-board-stage.palette-open .void-pal-side,
   .void-pal-drawer {
@@ -2688,6 +2754,9 @@
     left: 96px;
   }
   .void-board-stage.palette-open .void-hud-top {
+    left: 96px;
+  }
+  .void-board-stage.palette-open .void-hud-top-left {
     left: 96px;
   }
 }

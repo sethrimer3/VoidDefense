@@ -3,6 +3,7 @@ import test from "node:test";
 import { ARCH_PALETTES, BuildingSpriteCache, hexToElevAbgr } from "../src/void/elevation.ts";
 import {
   AMBIENT_COOL_FILL,
+  blendTimeOfDayPresets,
   collectSceneLights,
   computeSpriteSobelNormals,
   computeTerrainNormalAt,
@@ -10,10 +11,12 @@ import {
   LIGHTING_QUALITY_CAPS,
   LightingEngine,
   MAX_DYNAMIC_LIGHTS,
+  normalizeVoidTimeOfDay,
   type PointLight,
   SUN_DIRECTION,
   SUN_WARM_COLOR,
   terrainReliefAt,
+  TIME_OF_DAY_PRESETS,
   TOWER_SOBEL_NORMALS,
   traceLightOcclusion,
   VOID_AMBIENT_FILL,
@@ -665,4 +668,107 @@ test("8. Tron neon blue building lights, Tron neon orange tower lights, Sobel sp
     lowShadowCasters <= LIGHTING_QUALITY_CAPS.low.maxShadowLights,
     `Expected <= ${LIGHTING_QUALITY_CAPS.low.maxShadowLights} shadow casters on low quality, got ${lowShadowCasters}`,
   );
+});
+
+test("9. Time of Day presets (Day, Sunset, Night), smooth preset blending, emissive neon features, and 1/2-res halo spill", () => {
+  const { day, sunset, night } = TIME_OF_DAY_PRESETS;
+
+  // Day: bright warm-white sun high in the sky, short shadows, subtle neon
+  assert.ok(day.sunHeight > sunset.sunHeight && sunset.sunHeight > night.sunHeight, "Sun height decreases Day -> Sunset -> Night");
+  assert.ok(day.shadowReachScale < sunset.shadowReachScale, "Day casts shorter shadows than Sunset");
+  assert.ok(day.neonIntensity < sunset.neonIntensity && sunset.neonIntensity < night.neonIntensity, "Neon intensity ramps up Day -> Sunset -> Night");
+
+  // Sunset: golden-orange sun (R > G > B) with purple-blue ambient in the shade (B > R and B > G)
+  assert.ok(sunset.sunColor[0] > sunset.sunColor[1] && sunset.sunColor[1] > sunset.sunColor[2], "Sunset sun is golden-orange");
+  assert.ok(sunset.ambientColor[2] > sunset.ambientColor[0] && sunset.ambientColor[2] > sunset.ambientColor[1], "Sunset shade ambient is purple-blue");
+
+  // Night: deep blue ambient (B > G > R), never flat black or grey, strong neon and haze
+  assert.ok(night.ambientColor[2] > night.ambientColor[1] && night.ambientColor[1] > night.ambientColor[0], "Night ambient is deep tinted blue");
+  assert.ok(night.voidAmbientColor[2] > night.voidAmbientColor[0] && night.voidAmbientColor[0] > night.voidAmbientColor[1], "Void night ambient is deep purple");
+
+  // Normalization & smooth blending
+  assert.equal(normalizeVoidTimeOfDay("day"), "day");
+  assert.equal(normalizeVoidTimeOfDay("sunset"), "sunset");
+  assert.equal(normalizeVoidTimeOfDay("night"), "night");
+  assert.equal(normalizeVoidTimeOfDay("dusk"), "sunset");
+  assert.equal(normalizeVoidTimeOfDay("unknown"), "night");
+
+  const mid = blendTimeOfDayPresets(day, night, 0.5);
+  assert.ok(mid.sunHeight < day.sunHeight && mid.sunHeight > night.sunHeight);
+  assert.ok(mid.neonIntensity > day.neonIntensity && mid.neonIntensity < night.neonIntensity);
+  assert.ok(Math.abs(Math.hypot(mid.sunDir[0], mid.sunDir[1], mid.sunDir[2]) - 1) < 1e-6);
+
+  // Render a city scene across Day, Sunset, and Night and verify contrast, emissive neon tags, and 1/2-res halo spill
+  const sim = new VoidSim("tutorialBreach", "underSiege", emptyTechWallet(), true);
+  const { world } = sim;
+  const { w, h, count } = world.grid;
+  const cache = new BuildingSpriteCache();
+  cache.getBoardAtlas(world, "full");
+  const engine = new LightingEngine();
+  engine.syncChunks(world, "full");
+  world.grid.clearDirtyFlags();
+
+  // Verify buildings paint coherent emissive neon features marked with atlasSpec >= 240
+  let emissivePixels = 0;
+  for (let i = 0; i < count; i++) {
+    if (cache.atlasSpec[i] >= 240 && cache.atlasColorU32[i] !== 0) emissivePixels++;
+  }
+  assert.ok(emissivePixels >= 100, `Expected >= 100 emissive neon building pixels, got ${emissivePixels}`);
+
+  const terrainU32 = new Uint32Array(count).fill(hexToElevAbgr("#363d4a"));
+  const view = { x0: 16, y0: 16, x1: 180, y1: 180 };
+
+  // Compare average non-emissive ground/roof luminance across the view in Day vs Night,
+  // and verify that Night mode lights up streets near neon buildings much brighter than unlit Night ambient
+  const dayLights = collectSceneLights(sim, 1.0, false, "full", "high", view, day);
+  engine.renderLighting(world, terrainU32, cache, dayLights, day, view);
+  let daySumLuma = 0;
+  let dayCount = 0;
+  for (let y = 40; y < 140; y += 2) {
+    for (let x = 40; x < 140; x += 2) {
+      const idx = y * w + x;
+      if (world.material[idx] === CellMaterial.VOID || cache.atlasSpec[idx] >= 240) continue;
+      const px = engine.buildingLightU32[idx] || engine.terrainLightU32[idx];
+      if (!px) continue;
+      daySumLuma += (px & 0xff) + ((px >>> 8) & 0xff) + ((px >>> 16) & 0xff);
+      dayCount++;
+    }
+  }
+
+  // Render Night with no point lights to measure pure unlit Night ambient darkness
+  engine.renderLighting(world, terrainU32, cache, [], night, view);
+  let nightAmbientB = 0;
+  let nightAmbientR = 0;
+  for (let y = 40; y < 140; y += 4) {
+    for (let x = 40; x < 140; x += 4) {
+      const idx = y * w + x;
+      if (world.material[idx] === CellMaterial.VOID || cache.atlasColorU32[idx] !== 0) continue;
+      const px = engine.terrainLightU32[idx];
+      if (px) {
+        nightAmbientR += px & 0xff;
+        nightAmbientB += (px >>> 16) & 0xff;
+      }
+    }
+  }
+
+  const nightLights = collectSceneLights(sim, 1.0, false, "full", "high", view, night);
+  engine.renderLighting(world, terrainU32, cache, nightLights, night, view);
+  let nightSumLuma = 0;
+  let nightLitPools = 0;
+  for (let y = 40; y < 140; y += 2) {
+    for (let x = 40; x < 140; x += 2) {
+      const idx = y * w + x;
+      if (world.material[idx] === CellMaterial.VOID || cache.atlasSpec[idx] >= 240) continue;
+      const px = engine.buildingLightU32[idx] || engine.terrainLightU32[idx];
+      if (!px) continue;
+      const luma = (px & 0xff) + ((px >>> 8) & 0xff) + ((px >>> 16) & 0xff);
+      nightSumLuma += luma;
+      if (luma > 160) nightLitPools++;
+    }
+  }
+
+  assert.ok(dayCount > 100 && daySumLuma > nightSumLuma, `Average Day scene luminance (${daySumLuma}) must exceed Night (${nightSumLuma})`);
+  assert.ok(nightAmbientB > nightAmbientR, `Unlit Night ambient surface must have deep blue tint (B=${nightAmbientB} > R=${nightAmbientR})`);
+  assert.ok(nightLitPools >= 20, `Expected >= 20 bright neon light pool samples in Night mode, got ${nightLitPools}`);
+  assert.ok(w > 0 && h > 0);
 });

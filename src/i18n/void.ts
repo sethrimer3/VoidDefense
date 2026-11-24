@@ -36,6 +36,9 @@ export const VOID_TEXT = [
   ["void.hud.contacts", "Contacts", "Contactos", "Contacts", "Kontakte", "Contatos", "Contatti", "接触", "접촉", "接触"],
   ["void.hud.units", "Units", "Unidades", "Unités", "Einheiten", "Unidades", "Unità", "ユニット", "유닛", "单位"],
   ["void.hud.time", "Time", "Tiempo", "Temps", "Zeit", "Tempo", "Tempo", "時間", "시간", "时间"],
+  ["void.tod.day", "Day", "Día", "Jour", "Tag", "Dia", "Giorno", "昼", "낮", "白昼"],
+  ["void.tod.sunset", "Sunset", "Ocaso", "Crépuscule", "Abend", "Pôr do Sol", "Tramonto", "夕暮れ", "석양", "黄昏"],
+  ["void.tod.night", "Night", "Noche", "Nuit", "Nacht", "Noite", "Notte", "夜", "밤", "深夜"],
 
   // Inspector
   ["void.insp.lv", "Lv {n}", "Nv {n}", "Niv {n}", "St {n}", "Nv {n}", "Lv {n}", "Lv {n}", "Lv {n}", "等级 {n}"],
@@ -107,6 +110,7 @@ export const VOID_TEXT = [
   ["void.settings.pixelFont", "Custom Pixel Font (Alembic)", "Fuente Píxel (Alembic)", "Police Pixel (Alembic)", "Pixelschrift (Alembic)", "Fonte Pixel (Alembic)", "Font Pixel (Alembic)", "ピクセルフォント", "픽셀 글꼴 (Alembic)", "像素字体 (Alembic)"],
   ["void.settings.bheight", "Building Height", "Altura de Edificios", "Hauteur des Bâtiments", "Gebäudehöhe", "Altura dos Prédios", "Altezza Edifici", "建物の高さ", "건물 높이", "建筑高度"],
   ["void.settings.lquality", "Lighting Quality", "Calidad de Iluminación", "Qualité d'Éclairage", "Beleuchtungsqualität", "Qualidade da Iluminação", "Qualità Illuminazione", "ライティング品質", "조명 품질", "光照质量"],
+  ["void.settings.tod", "Time of Day", "Hora del Día", "Heure du Jour", "Tageszeit", "Hora do Dia", "Ora del Giorno", "時間帯", "시간대", "时间段"],
   ["void.settings.done", "Done", "Listo", "Terminé", "Fertig", "Concluir", "Fatto", "完了", "완료", "完成"],
   ["void.profile.welcome", "Welcome, Commander", "Bienvenido, Comandante", "Bienvenue, Commandant", "Willkommen, Commander", "Bem-vindo, Comandante", "Benvenuto, Comandante", "ようこそ、司令官", "환영합니다, 사령관님", "欢迎，指挥官"],
   ["void.profile.edit", "Commander Profile", "Perfil de Comandante", "Profil de Commandant", "Commander-Profil", "Perfil de Comandante", "Profilo Comandante", "司令官プロフィール", "사령관 프로필", "指挥官档案"],

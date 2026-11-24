@@ -17,6 +17,7 @@ import type {
 import { ResistanceMapView } from "./map/view.ts";
 import { sectorUnlocked } from "./map/progress.ts";
 import { ResistanceOperationsView } from "./operations/scene.ts";
+import { normalizeVoidTimeOfDay, type VoidTimeOfDay } from "./lighting.ts";
 import { VoidRenderer, type DragPreview } from "./render.ts";
 import { type VoidSave } from "./save.ts";
 import { VoidSim } from "./sim.ts";
@@ -275,6 +276,12 @@ export class VoidApp {
 
               <!-- Clean HUD Overlays floating over battle canvas -->
               <div class="void-battle-hud" data-battle-hud>
+                <div class="void-hud-top-left" data-tod-bar role="group" aria-label="Time of Day">
+                  <button type="button" class="void-tod-btn" data-set-tod="day" data-i18n="void.tod.day" title="Day">Day</button>
+                  <button type="button" class="void-tod-btn" data-set-tod="sunset" data-i18n="void.tod.sunset" title="Sunset">Sunset</button>
+                  <button type="button" class="void-tod-btn" data-set-tod="night" data-i18n="void.tod.night" title="Night">Night</button>
+                </div>
+
                 <div class="void-hud-top">
                   <div class="void-hud-bar-wrap" title="Metropolitan Integrity">
                     <div class="void-hud-bar void-hud-bar--city">
@@ -355,6 +362,15 @@ export class VoidApp {
     this.renderer.buildingHeight = this.save.settings.buildingHeight;
     this.renderer.lightingQuality = this.save.settings.lightingQuality;
     this.renderer.effectiveLightingQuality = this.save.settings.lightingQuality;
+    this.renderer.setTimeOfDay(normalizeVoidTimeOfDay(this.save.settings.timeOfDay), true);
+    this.syncTimeOfDayButtons();
+    this.root.querySelectorAll<HTMLButtonElement>("[data-set-tod]").forEach((btn) => {
+      btn.onclick = () => {
+        const mode = normalizeVoidTimeOfDay(btn.dataset.setTod);
+        this.setTimeOfDay(mode);
+        this.soundEngine.playSfx("uiToggle");
+      };
+    });
     this.bindBoardPointers(canvas);
 
     this.towerMenu = new TowerMenuController({
@@ -497,6 +513,23 @@ export class VoidApp {
     this.refreshHUD();
   }
 
+  setTimeOfDay(mode: VoidTimeOfDay, immediate = false): void {
+    const clean = normalizeVoidTimeOfDay(mode);
+    this.save.settings.timeOfDay = clean;
+    this.renderer.setTimeOfDay(clean, immediate);
+    this.syncTimeOfDayButtons();
+    this.persist();
+  }
+
+  private syncTimeOfDayButtons(): void {
+    const cur = normalizeVoidTimeOfDay(this.save.settings.timeOfDay);
+    this.root.querySelectorAll<HTMLButtonElement>("[data-set-tod]").forEach((btn) => {
+      const active = btn.dataset.setTod === cur;
+      btn.classList.toggle("active", active);
+      btn.setAttribute("aria-pressed", String(active));
+    });
+  }
+
   startNewRun(scenarioId = this.save.selectedScenario, mode?: PlayStyleMode): void {
     this.save.selectedScenario = scenarioId;
     if (mode && this.save.profile) {
@@ -517,6 +550,8 @@ export class VoidApp {
     if (this.awaitingDeploy) this.sim.paused = true;
     this.renderer.reduceEffects = this.save.settings.reduceMotion;
     this.renderer.buildingHeight = this.save.settings.buildingHeight;
+    this.renderer.setTimeOfDay(normalizeVoidTimeOfDay(this.save.settings.timeOfDay), true);
+    this.syncTimeOfDayButtons();
     this.renderer.resetCam(this.sim.world.grid.w, this.sim.world.grid.h);
     this.persist();
     this.renderPalette();
@@ -1684,6 +1719,13 @@ export class VoidApp {
                 <option value="low" ${this.save.settings.lightingQuality === "low" ? "selected" : ""}>Low</option>
               </select>
             </label>
+            <label class="void-select-row"><span>${t("void.settings.tod")}</span>
+              <select data-set-tod-select>
+                <option value="day" ${normalizeVoidTimeOfDay(this.save.settings.timeOfDay) === "day" ? "selected" : ""}>${t("void.tod.day")}</option>
+                <option value="sunset" ${normalizeVoidTimeOfDay(this.save.settings.timeOfDay) === "sunset" ? "selected" : ""}>${t("void.tod.sunset")}</option>
+                <option value="night" ${normalizeVoidTimeOfDay(this.save.settings.timeOfDay) === "night" ? "selected" : ""}>${t("void.tod.night")}</option>
+              </select>
+            </label>
             ${
               showDev
                 ? `<label><input type="checkbox" data-set-dev ${this.save.settings.devMode ? "checked" : ""} /> Developer Mode (Unlock All &amp; Unlimited Supplies)</label>`
@@ -1768,6 +1810,10 @@ export class VoidApp {
       this.renderer.lightingQuality = this.save.settings.lightingQuality;
       this.renderer.effectiveLightingQuality = this.save.settings.lightingQuality;
       this.persist();
+    };
+    dlg.querySelector<HTMLSelectElement>("[data-set-tod-select]")!.onchange = (e) => {
+      const v = normalizeVoidTimeOfDay((e.target as HTMLSelectElement).value);
+      this.setTimeOfDay(v);
     };
     const devInput = dlg.querySelector<HTMLInputElement>("[data-set-dev]");
     if (devInput) {
