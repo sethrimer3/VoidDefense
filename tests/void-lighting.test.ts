@@ -772,3 +772,106 @@ test("9. Time of Day presets (Day, Sunset, Night), smooth preset blending, emiss
   assert.ok(nightLitPools >= 20, `Expected >= 20 bright neon light pool samples in Night mode, got ${nightLitPools}`);
   assert.ok(w > 0 && h > 0);
 });
+
+test("Ambient farmland tiles match a fresh raster after both preset blends and a pan", () => {
+  const { world } = new VoidSim("tutorialBreach", "underSiege", emptyTechWallet());
+  world.material.fill(CellMaterial.PARK);
+  world.landCover.fill(LandCover.FIELD_H);
+  world.buildingAt.fill(-1);
+  world.columnFloors.fill(0);
+  const { w, h, count } = world.grid;
+  const terrain = new Uint32Array(count).fill(hexToElevAbgr("#6f8737"));
+  const atlas = new BuildingSpriteCache();
+  atlas.syncAtlasGbuffer(world, "full");
+  const engine = new LightingEngine();
+  engine.syncChunks(world, "full");
+  const fresh = new LightingEngine();
+  fresh.syncChunks(world, "full");
+  const shadows = new Uint8Array(count);
+  const day = TIME_OF_DAY_PRESETS.day;
+  const night = TIME_OF_DAY_PRESETS.night;
+  const left = { x0: 0, y0: 0, x1: 65, y1: 100 };
+  const right = { x0: w - 62, y0: 0, x1: w, y1: 100 };
+  const render = (preset: typeof day, view?: typeof left, blending = false) =>
+    engine.renderLighting(world, terrain, atlas, [], preset, view, shadows, blending);
+
+  render(day);
+  const dayOutput = engine.terrainLightU32.slice();
+  render(day, left);
+  render(day, right);
+  assert.deepEqual(engine.terrainLightU32, dayOutput, "Panning preserves valid offscreen ambient pixels");
+  for (const [from, to] of [[day, night], [night, day]]) {
+    for (let step = 1; step < 8; step++) {
+      render(blendTimeOfDayPresets(from, to, step / 8), step % 2 ? left : right, true);
+    }
+    render(to, left);
+    render(to, right);
+    render(to);
+    fresh.renderLighting(world, terrain, atlas, [], to, undefined, shadows);
+    assert.deepEqual(engine.terrainLightU32, fresh.terrainLightU32);
+    assert.ok(engine.terrainLightU32.every((pixel, idx) => pixel !== 0 &&
+      (to === day ? pixel === dayOutput[idx] : pixel !== dayOutput[idx])));
+  }
+
+  world.grid.clearDirtyFlags();
+  const changed = world.grid.index(w - 15, h - 15);
+  world.landCover[changed] = LandCover.FOREST;
+  terrain[changed] = hexToElevAbgr("#a5874a");
+  world.grid.markIndexDirty(changed);
+  engine.syncChunks(world, "full", world.grid.dirtyChunks);
+  render(day, left);
+  render(day);
+  assert.notEqual(engine.terrainLightU32[changed], dayOutput[changed]);
+});
+
+test("Small camera pans preserve building emitter IDs and their glow in the shared viewport", () => {
+  const sim = new VoidSim("tutorialBreach", "underSiege", emptyTechWallet());
+  const { world } = sim;
+  const atlas = new BuildingSpriteCache();
+  atlas.syncAtlasGbuffer(world, "full");
+  const terrain = new Uint32Array(world.grid.count).fill(hexToElevAbgr("#52634b"));
+  const engine = new LightingEngine();
+  engine.syncChunks(world, "full");
+  const night = TIME_OF_DAY_PRESETS.night;
+  const first = collectSceneLights(sim, 12, true, "full", "high", undefined, night)
+    .find((light) => light.buildingId !== undefined)!;
+  assert.ok(first);
+  const x0 = Math.max(0, Math.floor(first.x) - 56);
+  const y0 = Math.max(0, Math.floor(first.y) - 56);
+  const { w, h } = world.grid;
+  const common = { x0: x0 + 8, y0: y0 + 8, x1: Math.min(w, x0 + 101), y1: Math.min(h, y0 + 101) };
+  const pixels = (buffer: Uint32Array) => {
+    const width = common.x1 - common.x0;
+    const region = new Uint32Array(width * (common.y1 - common.y0));
+    for (let y = common.y0; y < common.y1; y++) {
+      region.set(buffer.subarray(y * w + common.x0, y * w + common.x1), (y - common.y0) * width);
+    }
+    return region;
+  };
+  let expected: { ids: number[]; ground: Uint32Array; roofs: Uint32Array } | undefined;
+  for (const offset of [0, 2, 4, 7, 1, 0]) {
+    const viewport = { x0: x0 + offset, y0: y0 + offset, x1: x0 + offset + 104, y1: y0 + offset + 104 };
+    const lights = collectSceneLights(sim, 12, true, "full", "high", viewport, night)
+      .filter((light) => light.buildingId !== undefined);
+    const ids = lights.filter(({ x, y }) => x >= common.x0 && x < common.x1 && y >= common.y0 && y < common.y1)
+      .map((light) => light.buildingId!);
+    assert.ok(ids.includes(first.buildingId!));
+    engine.renderLighting(world, terrain, atlas, lights, night, viewport);
+    const sample = { ids, ground: pixels(engine.terrainLightU32), roofs: pixels(engine.buildingLightU32) };
+    assert.ok(sample.roofs.some((pixel) => pixel !== 0));
+    if (expected) assert.deepEqual(sample, expected);
+    else expected = sample;
+  }
+
+  // The half-res fallback remains present even with no budgeted building lights.
+  engine.renderLighting(world, terrain, atlas, [], night);
+  const emissive = atlas.atlasSpec.findIndex((spec, idx) => spec >= 240 && atlas.atlasBldId[idx] >= 0);
+  assert.ok(emissive >= 0);
+  assert.notEqual(engine.buildingLightU32[emissive], 0);
+  const withSpill = engine.terrainLightU32.slice();
+  atlas.atlasSpec.fill(0);
+  engine.syncChunks(world, "full");
+  engine.renderLighting(world, terrain, atlas, [], night);
+  assert.ok(withSpill.some((pixel, idx) => pixel !== engine.terrainLightU32[idx]),
+    "Emissive buildings spill light on the ground without budgeted point lights");
+});

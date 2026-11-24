@@ -152,6 +152,8 @@ export const AMBIENT_COOL_FILL = [0.05, 0.09, 0.16] as const;
 export const VOID_AMBIENT_FILL = [0.11, 0.05, 0.20] as const;
 
 export type PointLight = {
+  buildingId?: number;
+  shadowMix?: number;
   /** World X coordinate in simulation cells / world pixels. */
   x: number;
   /** World Y coordinate (ground plane) in simulation cells / world pixels. */
@@ -490,6 +492,26 @@ export function traceLightOcclusion(
   return visibility;
 }
 
+export const BUILDING_LIGHT_BUDGET: Record<LightingQualityMode, number> = { low: 4, medium: 7, high: 10 };
+
+const buildingLightOrder = new WeakMap<VoidWorld, VoidWorld["buildings"]>();
+
+function priorityBuildingLights(world: VoidWorld): VoidWorld["buildings"] {
+  let selected = buildingLightOrder.get(world);
+  if (selected) return selected;
+  const ordered = world.buildings.filter((b) => b.archStyle !== "homestead" && b.archStyle !== "barn" && b.cells.length > 0)
+    .map((b) => ({ b, rank: hash(world.seed, 927, b.id) }))
+    .sort((a, b) => a.rank - b.rank || a.b.id - b.b.id);
+  selected = [];
+  for (const { b } of ordered) {
+    if (selected.some((other) => (other.x - b.x) ** 2 + (other.y - b.y) ** 2 < 36 ** 2)) continue;
+    selected.push(b);
+    if (selected.length === BUILDING_LIGHT_BUDGET.high) break;
+  }
+  buildingLightOrder.set(world, selected);
+  return selected;
+}
+
 /** Gathers and prioritizes all active dynamic light sources in the scene (explosions, Void portals,
  * active Void frontier & lightning, shells, lasers, farm fires, Countervoid, Lantern Bearers,
  * Tron-orange Resistance towers, Tron-blue metropolitan buildings, Void Nodes, and cosmic organisms),
@@ -502,6 +524,7 @@ export function collectSceneLights(
   quality: LightingQualityMode = "high",
   viewBounds?: { x0: number; y0: number; x1: number; y1: number },
   preset: TimeOfDayPreset = TIME_OF_DAY_PRESETS.night,
+  buildingBudget = BUILDING_LIGHT_BUDGET[quality],
 ): PointLight[] {
   const { world, voidField, combat, physics } = sim;
   const { w, h } = world.grid;
@@ -779,42 +802,30 @@ export function collectSceneLights(
     });
   }
 
-  // 8b. Metropolitan buildings & streetlamps: Tron-style neon blue lights (#00d8ff / #18e5ff) and warm
-  //     street-corner pools that emit light, cast shadows, and spill colored light across streets and facades
-  if (world.buildings.length > 0 && neonMult > 0.15) {
-    const inViewBuildings = [];
-    for (let i = 0; i < world.buildings.length; i++) {
-      const b = world.buildings[i];
-      if (b.archStyle === "homestead" || b.archStyle === "barn" || b.cells.length === 0) continue;
-      const bx = b.x + b.w * 0.5;
-      const by = b.y + b.h + 0.5;
-      if (!inView(bx, by, 24)) continue;
-      let intactCells = 0;
-      for (let c = 0; c < b.cells.length; c++) {
-        const cIdx = b.cells[c];
-        if (world.material[cIdx] !== CellMaterial.VOID && world.hp[cIdx] > 0 && (!world.columnFloors || world.columnFloors[cIdx] > 0)) {
-          intactCells++;
-        }
-      }
-      if (intactCells === 0) continue;
-      const bxFloor = Math.min(w - 1, Math.max(0, Math.floor(bx)));
-      const byFloor = Math.min(h - 1, Math.max(0, Math.floor(b.y + b.h - 0.5)));
-      if (world.material[byFloor * w + bxFloor] === CellMaterial.VOID) continue;
-      inViewBuildings.push(b);
-    }
-    const targetBldLights = quality === "low" ? 4 : quality === "medium" ? 7 : 10;
-    const bStride = Math.max(1, Math.floor(inViewBuildings.length / targetBldLights));
-    for (let i = 0; i < inViewBuildings.length; i += bStride) {
-      const b = inViewBuildings[i];
-      // Offset the light 0.8 px south of the building's south facade onto the street so the storefront
-      // neon canopy visibly pools saturated cyan/blue light onto the street and casts long shadows!
+  // The same city fixtures keep their point-light ranks as the camera moves.
+  // Unselected buildings retain their emissive atlas glow.
+  const buildingLights: PointLight[] = [];
+  if (neonMult > 0.15) {
+    const selected = priorityBuildingLights(world);
+    const shadowBudget = Math.max(1, (buildingBudget - 1) / 3);
+    for (let i = 0; i < selected.length && i < buildingBudget; i++) {
+      const b = selected[i];
+      const weight = Math.min(1, buildingBudget - i);
+      const shadowMix = Math.max(0, Math.min(1, shadowBudget - i));
+      // Place the storefront light just beyond the facade so it reaches the street.
       const bx = b.x + b.w * 0.5;
       const by = Math.min(h - 1.5, b.y + b.h + 0.8);
       const radius = b.isSkyscraper ? 18 : 14;
+      if (!inView(bx, by, radius)) continue;
+      const foot = Math.min(h - 1, Math.floor(b.y + b.h - 0.5)) * w + Math.min(w - 1, Math.floor(bx));
+      if (world.material[foot] === CellMaterial.VOID ||
+          !b.cells.some((idx) => world.hp[idx] > 0 && world.columnFloors[idx] > 0)) continue;
       const bElev = elevationOf(b, buildingHeight);
-      const hum = (reduceEffects ? 0.94 : 0.88 + 0.12 * Math.sin(animTime * 3.8 + b.id)) * neonMult;
+      const hum = (reduceEffects ? 0.94 : 0.88 + 0.12 * Math.sin(animTime * 3.8 + b.id)) * neonMult * weight;
       const isWarmStorefront = ((b.id * 7 + b.variant * 3) & 7) === 3;
-      lights.push({
+      buildingLights.push({
+        buildingId: b.id,
+        shadowMix,
         x: bx,
         y: by,
         z: Math.max(2.6, Math.min(7.0, bElev * 0.45 + 1.8)),
@@ -823,7 +834,7 @@ export function collectSceneLights(
         b: (isWarmStorefront ? 0.16 : 1.48) * hum,
         radius,
         specular: 0.92,
-        castsShadows: true,
+        castsShadows: shadowMix > 0,
         shadowStrength: Math.min(0.58, 0.36 * shadowScale),
         priority: b.isSkyscraper ? 73 : 69,
       });
@@ -996,23 +1007,24 @@ export function collectSceneLights(
   }
 
   lights.sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
-  if (lights.length > caps.maxLights) {
-    lights.length = caps.maxLights;
-  }
+  const dynamicBudget = caps.maxLights - buildingLights.length;
+  if (lights.length > dynamicBudget) lights.length = dynamicBudget;
+  const dynamicShadowBudget = caps.maxShadowLights - buildingLights.filter((light) => light.castsShadows).length;
   // Cap shadow-casting lights per frame and fade the remaining lights to unshadowed glow
   let shadowCasters = 0;
   for (let i = 0; i < lights.length; i++) {
     const l = lights[i];
     if (!l.castsShadows) continue;
     shadowCasters++;
-    if (shadowCasters > caps.maxShadowLights) {
+    if (shadowCasters > dynamicShadowBudget) {
       l.castsShadows = false;
       l.shadowStrength = 0;
-    } else if (shadowCasters > caps.maxShadowLights - 3) {
-      const fade = (caps.maxShadowLights - shadowCasters + 1) / 3;
+    } else if (shadowCasters > dynamicShadowBudget - 3) {
+      const fade = (dynamicShadowBudget - shadowCasters + 1) / 3;
       l.shadowStrength *= fade;
     }
   }
+  lights.push(...buildingLights);
   return lights;
 }
 
@@ -1040,6 +1052,7 @@ export class LightingEngine {
   private readonly oldCasterBottom: number[] = [];
   private previousCasterCell = new Uint8Array(0);
   private compiledLights: CompiledLight[] = [];
+  private readonly buildingShadowCaches = new Map<number, ShadowCache>();
   private readonly shadowCaches: (ShadowCache | undefined)[] = [];
   private shadowRevision = 0;
   private geometryRevision = 0;
@@ -1071,27 +1084,21 @@ export class LightingEngine {
   private tileLightsLo = new Uint32Array(0);
   private tileLightsHi = new Uint32Array(0);
   private tileVisited = new Uint8Array(0);
-  private tileActiveInFrame = new Uint8Array(0);
   private tileAmbientClean = new Uint8Array(0);
-  private tileHadPointLight = new Uint8Array(0);
+  private tileHaloClean = new Uint8Array(0);
   private prevActiveTiles: number[] = [];
   private curActiveTiles: number[] = [];
 
   /** Current active TimeOfDayPreset used for global shading when `timeOfDayActive` is true. */
   activePreset: TimeOfDayPreset = TIME_OF_DAY_PRESETS.night;
   private lastPresetKey = "";
-  /** Cached 1/2-res (`w/2 x h/2`) emissive halo spill buffers (rebuilt only when geometry or preset changes). */
+  private lastGroundShadows?: Uint8Array;
+  /** Half-resolution, world-space emissive spill before the time-of-day multiplier. */
   private haloW = 0;
   private haloH = 0;
-  private haloRevision = -1;
-  private haloPresetKey = "";
-  private haloBoundsKey = "";
-  private haloR = new Float32Array(0);
-  private haloG = new Float32Array(0);
-  private haloB = new Float32Array(0);
-  private haloTmpR = new Float32Array(0);
-  private haloTmpG = new Float32Array(0);
-  private haloTmpB = new Float32Array(0);
+  private halo = new Float32Array(0);
+  private readonly haloSeeds = new Float32Array((CHUNK_SIZE / 2 + 4) ** 2 * 3);
+  private readonly haloHorizontal = new Float32Array((CHUNK_SIZE / 2) * (CHUNK_SIZE / 2 + 4) * 3);
 
   /** Active bounding box of non-zero lighting/shadow pixels in the current frame. */
   dirtyBounds: { x0: number; y0: number; x1: number; y1: number; hasTerrain: boolean; hasBuilding: boolean } = {
@@ -1140,16 +1147,9 @@ export class LightingEngine {
       this.buildingLightU32 = new Uint32Array(count);
       this.haloW = Math.ceil(w / 2);
       this.haloH = Math.ceil(h / 2);
-      const haloCount = this.haloW * this.haloH;
-      this.haloR = new Float32Array(haloCount);
-      this.haloG = new Float32Array(haloCount);
-      this.haloB = new Float32Array(haloCount);
-      this.haloTmpR = new Float32Array(haloCount);
-      this.haloTmpG = new Float32Array(haloCount);
-      this.haloTmpB = new Float32Array(haloCount);
-      this.haloRevision = -1;
-      this.haloPresetKey = "";
-      this.haloBoundsKey = "";
+      this.halo = new Float32Array(this.haloW * this.haloH * 3);
+      this.buildingShadowCaches.clear();
+      this.shadowCaches.length = 0;
       this.lastPresetKey = "";
 
       const tileCount = chunksW * chunksH;
@@ -1157,9 +1157,8 @@ export class LightingEngine {
       this.tileLightsLo = new Uint32Array(tileCount);
       this.tileLightsHi = new Uint32Array(tileCount);
       this.tileVisited = new Uint8Array(tileCount);
-      this.tileActiveInFrame = new Uint8Array(tileCount);
       this.tileAmbientClean = new Uint8Array(tileCount);
-      this.tileHadPointLight = new Uint8Array(tileCount);
+      this.tileHaloClean = new Uint8Array(tileCount);
       this.prevActiveTiles.length = 0;
       this.curActiveTiles.length = 0;
 
@@ -1180,6 +1179,7 @@ export class LightingEngine {
     if (rebuildAll || !dirtyChunkFlags) {
       this.shadowTileRevision.fill(this.shadowRevision);
       this.tileAmbientClean.fill(0);
+      this.tileHaloClean.fill(0);
       this.bakeChunkNormalsAndElev(world, mode, 0, 0, w, h);
       return;
     }
@@ -1196,9 +1196,10 @@ export class LightingEngine {
         // Atlas cutaways depend on nearby columns and may project one tile above the footprint.
         const left = Math.max(0, cx - 1);
         const right = Math.min(chunksW, cx + 2);
-        for (let row = Math.max(0, cy - 1); row <= Math.min(chunksH - 1, cy + 1); row++) {
-          this.shadowTileRevision.fill(this.shadowRevision, row * chunksW + left, row * chunksW + right);
+        for (let row = Math.max(0, cy - 2); row <= Math.min(chunksH - 1, cy + 1); row++) {
+          if (row >= cy - 1) this.shadowTileRevision.fill(this.shadowRevision, row * chunksW + left, row * chunksW + right);
           this.tileAmbientClean.fill(0, row * chunksW + left, row * chunksW + right);
+          this.tileHaloClean.fill(0, row * chunksW + left, row * chunksW + right);
         }
       }
     }
@@ -1442,53 +1443,13 @@ export class LightingEngine {
     const qx = Math.round(light.x * 2);
     const qy = Math.round(light.y * 2);
     const qz = Math.round(light.z * 2);
-    let cache = this.shadowCaches[slot];
+    const id = light.buildingId;
+    let cache = id === undefined ? this.shadowCaches[slot] : this.buildingShadowCaches.get(id);
     const length = w * h;
     if (!cache || cache.visibility.length < length) {
-      for (let s = 0; s < this.shadowCaches.length; s++) {
-        const cand = this.shadowCaches[s];
-        if (
-          cand &&
-          cand.revision === revision &&
-          cand.x === qx &&
-          cand.y === qy &&
-          cand.z === qz &&
-          cand.x0 === x0 &&
-          cand.y0 === y0 &&
-          cand.w === w &&
-          cand.h === h
-        ) {
-          return cand;
-        }
-      }
       cache = { x: 0, y: 0, z: 0, x0: 0, y0: 0, w: 0, h: 0, revision: -1, visibility: new Uint8Array(length) };
-      this.shadowCaches[slot] = cache;
-    } else if (
-      cache.revision !== revision ||
-      cache.x !== qx ||
-      cache.y !== qy ||
-      cache.z !== qz ||
-      cache.x0 !== x0 ||
-      cache.y0 !== y0 ||
-      cache.w !== w ||
-      cache.h !== h
-    ) {
-      for (let s = 0; s < this.shadowCaches.length; s++) {
-        const cand = this.shadowCaches[s];
-        if (
-          cand &&
-          cand.revision === revision &&
-          cand.x === qx &&
-          cand.y === qy &&
-          cand.z === qz &&
-          cand.x0 === x0 &&
-          cand.y0 === y0 &&
-          cand.w === w &&
-          cand.h === h
-        ) {
-          return cand;
-        }
-      }
+      if (id === undefined) this.shadowCaches[slot] = cache;
+      else this.buildingShadowCaches.set(id, cache);
     }
     if (cache.revision !== revision || cache.x !== qx || cache.y !== qy || cache.z !== qz ||
         cache.x0 !== x0 || cache.y0 !== y0 || cache.w !== w || cache.h !== h) {
@@ -1505,6 +1466,49 @@ export class LightingEngine {
     return cache;
   }
 
+  private bakeHaloTile(cache: BuildingSpriteCache, x0: number, y0: number, x1: number, y1: number): void {
+    const { atlasColorU32, atlasSpec, atlasBldId } = cache;
+    const width = x1 - x0;
+    const height = y1 - y0;
+    const seedStride = (width + 4) * 3;
+    const lineStride = width * 3;
+    const seeds = this.haloSeeds;
+    const horizontal = this.haloHorizontal;
+    seeds.fill(0, 0, seedStride * (height + 4));
+
+    for (let y = 0; y < height + 4; y++) {
+      const py = Math.max(0, Math.min(this.haloH - 1, y0 + y - 2)) * 2;
+      for (let x = 0; x < width + 4; x++) {
+        const px = Math.max(0, Math.min(this.haloW - 1, x0 + x - 2)) * 2;
+        const dst = y * seedStride + x * 3;
+        for (let dy = 0; dy < 2 && py + dy < this.h; dy++) {
+          for (let dx = 0; dx < 2 && px + dx < this.w; dx++) {
+            const i = (py + dy) * this.w + px + dx;
+            if (atlasBldId[i] < 0 || atlasSpec[i] < 240) continue;
+            const color = atlasColorU32[i];
+            seeds[dst] = Math.max(seeds[dst], IS_LITTLE_ENDIAN ? color & 255 : color >>> 24);
+            seeds[dst + 1] = Math.max(seeds[dst + 1], (color >>> (IS_LITTLE_ENDIAN ? 8 : 16)) & 255);
+            seeds[dst + 2] = Math.max(seeds[dst + 2], (color >>> (IS_LITTLE_ENDIAN ? 16 : 8)) & 255);
+          }
+        }
+      }
+      for (let x = 0; x < lineStride; x++) {
+        const i = y * seedStride + x + 6;
+        horizontal[y * lineStride + x] = seeds[i] * 0.42 +
+          (seeds[i - 3] + seeds[i + 3]) * 0.24 + (seeds[i - 6] + seeds[i + 6]) * 0.12;
+      }
+    }
+    for (let y = 0; y < height; y++) {
+      const dst = ((y0 + y) * this.haloW + x0) * 3;
+      for (let x = 0; x < lineStride; x++) {
+        const i = (y + 2) * lineStride + x;
+        this.halo[dst + x] = horizontal[i] * 0.42 +
+          (horizontal[i - lineStride] + horizontal[i + lineStride]) * 0.24 +
+          (horizontal[i - lineStride * 2] + horizontal[i + lineStride * 2]) * 0.12;
+      }
+    }
+  }
+
   /** Evaluates tiled 2.5D bump-mapped lighting, TimeOfDay global illumination, low-res emissive halo spill,
    * and dynamic building/unit cast shadows across visible or active light tiles, updating `terrainLightU32` and `buildingLightU32`. */
   renderLighting(
@@ -1515,6 +1519,7 @@ export class LightingEngine {
     preset?: TimeOfDayPreset,
     viewBounds?: { x0: number; y0: number; x1: number; y1: number },
     groundShadowMap?: Uint8Array,
+    blending = false,
   ): void {
     const { w, h, chunksW, chunksH } = world.grid;
     const {
@@ -1527,28 +1532,33 @@ export class LightingEngine {
       tileLightsLo,
       tileLightsHi,
       tileVisited,
-      tileActiveInFrame,
       prevActiveTiles,
       curActiveTiles,
     } = this;
 
-    let pKey = "";
     if (preset) {
       this.activePreset = preset;
-      pKey = `${preset.id}:${preset.sunIntensity.toFixed(2)}:${preset.neonIntensity.toFixed(2)}:${preset.shadowReachScale.toFixed(2)}`;
-      if (pKey !== this.lastPresetKey) {
-        this.lastPresetKey = pKey;
+      const key = [preset.id, ...preset.sunDir, preset.sunHeight, ...preset.sunColor,
+        preset.sunIntensity, ...preset.ambientColor, ...preset.voidAmbientColor,
+        preset.neonIntensity, preset.hazeAmount, preset.shadowReachScale, preset.shadowStrengthScale].join(",");
+      if (blending || key !== this.lastPresetKey || groundShadowMap !== this.lastGroundShadows) {
+        this.lastPresetKey = key;
+        this.lastGroundShadows = groundShadowMap;
         this.roofSunShadow.fill(255);
         this.tileAmbientClean.fill(0);
       }
     } else if (this.lastPresetKey !== "") {
       this.lastPresetKey = "";
       this.tileAmbientClean.fill(0);
+      this.roofSunShadow.fill(255);
+      terrainLightU32.fill(0);
+      buildingLightU32.fill(0);
+      this.terrainCtx?.clearRect(0, 0, w, h);
+      this.buildingCtx?.clearRect(0, 0, w, h);
+      prevActiveTiles.length = 0;
     }
 
-    // 1. When point-light-only mode (!preset) runs, clear tiles that were lit in the previous frame.
-    //    When preset mode runs, every active tile in curActiveTiles will overwrite every non-VOID terrain
-    //    and building pixel in place, so we only clear tiles from prevActiveTiles that are no longer active!
+    // Only the point-light debug overlay clears its previous tiles before drawing.
     if (!preset && prevActiveTiles.length > 0) {
       let cMinX = w;
       let cMinY = h;
@@ -1587,6 +1597,19 @@ export class LightingEngine {
     compiled.length = lightCount;
     if (lightCount === 0 && !preset) return;
 
+    // When a TimeOfDayPreset is active, include all visible tiles in the camera frustum so
+    // directional sunlight, deep tinted blue/purple ambient darkness, and emissive halo spill cover the entire frame
+    let vtx0 = 0;
+    let vty0 = 0;
+    let vtx1 = chunksW - 1;
+    let vty1 = chunksH - 1;
+    if (preset && viewBounds) {
+      vtx0 = Math.max(0, Math.floor((viewBounds.x0 - 2) / CHUNK_SIZE));
+      vty0 = Math.max(0, Math.floor((viewBounds.y0 - MAX_ELEVATION_PX - 2) / CHUNK_SIZE));
+      vtx1 = Math.min(chunksW - 1, Math.floor((viewBounds.x1 + 2) / CHUNK_SIZE));
+      vty1 = Math.min(chunksH - 1, Math.floor((viewBounds.y1 + 2) / CHUNK_SIZE));
+    }
+
     // 2. Compile lights and bin them into 16x16 tiles via 64-bit bitmasks
     curActiveTiles.length = 0;
 
@@ -1614,13 +1637,12 @@ export class LightingEngine {
       const isHi = k >= 32;
       const bit = 1 << (k & 31);
 
-      for (let ty = ty0; ty <= ty1; ty++) {
+      for (let ty = Math.max(ty0, vty0); ty <= Math.min(ty1, vty1); ty++) {
         const tRow = ty * chunksW;
-        for (let tx = tx0; tx <= tx1; tx++) {
+        for (let tx = Math.max(tx0, vtx0); tx <= Math.min(tx1, vtx1); tx++) {
           const tileIdx = tRow + tx;
           if (!tileVisited[tileIdx]) {
             tileVisited[tileIdx] = 1;
-            tileActiveInFrame[tileIdx] = 1;
             curActiveTiles.push(tileIdx);
           }
           if (isHi) tileLightsHi[tileIdx] |= bit;
@@ -1629,46 +1651,18 @@ export class LightingEngine {
       }
     }
 
-    // When a TimeOfDayPreset is active, include all visible tiles in the camera frustum so
-    // directional sunlight, deep tinted blue/purple ambient darkness, and emissive halo spill cover the entire frame
-    let vtx0 = 0;
-    let vty0 = 0;
-    let vtx1 = chunksW - 1;
-    let vty1 = chunksH - 1;
     if (preset) {
-      if (viewBounds) {
-        vtx0 = Math.max(0, Math.floor((viewBounds.x0 - 2) / CHUNK_SIZE));
-        vty0 = Math.max(0, Math.floor((viewBounds.y0 - MAX_ELEVATION_PX - 2) / CHUNK_SIZE));
-        vtx1 = Math.min(chunksW - 1, Math.floor((viewBounds.x1 + 2) / CHUNK_SIZE));
-        vty1 = Math.min(chunksH - 1, Math.floor((viewBounds.y1 + 2) / CHUNK_SIZE));
-      }
       for (let ty = vty0; ty <= vty1; ty++) {
         const tRow = ty * chunksW;
         for (let tx = vtx0; tx <= vtx1; tx++) {
           const tileIdx = tRow + tx;
           if (!tileVisited[tileIdx]) {
             tileVisited[tileIdx] = 1;
-            tileActiveInFrame[tileIdx] = 1;
             curActiveTiles.push(tileIdx);
           }
         }
       }
-      // Clear only previously active tiles that are NOT active in this frame (e.g. after camera pan)
-      for (let t = 0; t < prevActiveTiles.length; t++) {
-        const tileIdx = prevActiveTiles[t];
-        if (tileActiveInFrame[tileIdx]) continue;
-        const tx = tileIdx % chunksW;
-        const ty = (tileIdx / chunksW) | 0;
-        const x0 = tx * CHUNK_SIZE;
-        const y0 = ty * CHUNK_SIZE;
-        const x1 = Math.min(w, x0 + CHUNK_SIZE);
-        const y1 = Math.min(h, y0 + CHUNK_SIZE);
-        for (let y = y0; y < y1; y++) {
-          const row = y * w;
-          terrainLightU32.fill(0, row + x0, row + x1);
-          buildingLightU32.fill(0, row + x0, row + x1);
-        }
-      }
+      // Both rasters use fixed world coordinates. Preserve cached pixels outside the viewport.
       prevActiveTiles.length = 0;
     }
 
@@ -1684,125 +1678,9 @@ export class LightingEngine {
     const { material, streetTier } = world;
     const localLights: CompiledLight[] = [];
 
-    // 2b. Compute 1/2-res emissive halo spill buffer around emissive building neon strips & Void rim
-    //     (cached across frames until building geometry, preset neonIntensity, or camera tile bounds change)
+    const haloBoost = preset ? preset.neonIntensity * (0.46 / 255) : 0;
     const useHalo = Boolean(preset && preset.neonIntensity > 0.25 && this.haloW > 0);
-    const { haloW, haloR, haloG, haloB, haloTmpR, haloTmpG, haloTmpB } = this;
-    if (useHalo && preset) {
-      const hx0 = Math.max(0, (vtx0 * CHUNK_SIZE) >> 1);
-      const hy0 = Math.max(0, (vty0 * CHUNK_SIZE) >> 1);
-      const hx1 = Math.min(haloW - 1, ((vtx1 + 1) * CHUNK_SIZE) >> 1);
-      const hy1 = Math.min(this.haloH - 1, ((vty1 + 1) * CHUNK_SIZE) >> 1);
-      const bKey = `${hx0},${hy0},${hx1},${hy1}`;
-      if (
-        this.haloRevision !== this.geometryRevision ||
-        this.haloPresetKey !== pKey ||
-        this.haloBoundsKey !== bKey
-      ) {
-        this.haloRevision = this.geometryRevision;
-        this.haloPresetKey = pKey;
-        this.haloBoundsKey = bKey;
-        const neonBoost = preset.neonIntensity * 0.46;
-
-        for (let hy = hy0; hy <= hy1; hy++) {
-          const hRow = hy * haloW;
-          const sy0Row = (hy << 1) * w;
-          const sy1Row = Math.min(h - 1, (hy << 1) + 1) * w;
-          for (let hx = hx0; hx <= hx1; hx++) {
-            const sx0 = hx << 1;
-            const sx1 = Math.min(w - 1, sx0 + 1);
-            let er = 0;
-            let eg = 0;
-            let eb = 0;
-            const c0 = sy0Row + sx0;
-            const c1 = sy0Row + sx1;
-            const c2 = sy1Row + sx0;
-            const c3 = sy1Row + sx1;
-            if (atlasSpec[c0] >= 240 && atlasColorU32[c0] !== 0) {
-              const abgr = atlasColorU32[c0];
-              er = (IS_LITTLE_ENDIAN ? abgr & 255 : abgr >>> 24) * (1 / 255);
-              eg = ((abgr >>> (IS_LITTLE_ENDIAN ? 8 : 16)) & 255) * (1 / 255);
-              eb = ((abgr >>> (IS_LITTLE_ENDIAN ? 16 : 8)) & 255) * (1 / 255);
-            }
-            if (atlasSpec[c1] >= 240 && atlasColorU32[c1] !== 0) {
-              const abgr = atlasColorU32[c1];
-              const r = (IS_LITTLE_ENDIAN ? abgr & 255 : abgr >>> 24) * (1 / 255);
-              const g = ((abgr >>> (IS_LITTLE_ENDIAN ? 8 : 16)) & 255) * (1 / 255);
-              const b = ((abgr >>> (IS_LITTLE_ENDIAN ? 16 : 8)) & 255) * (1 / 255);
-              if (r > er) er = r;
-              if (g > eg) eg = g;
-              if (b > eb) eb = b;
-            }
-            if (atlasSpec[c2] >= 240 && atlasColorU32[c2] !== 0) {
-              const abgr = atlasColorU32[c2];
-              const r = (IS_LITTLE_ENDIAN ? abgr & 255 : abgr >>> 24) * (1 / 255);
-              const g = ((abgr >>> (IS_LITTLE_ENDIAN ? 8 : 16)) & 255) * (1 / 255);
-              const b = ((abgr >>> (IS_LITTLE_ENDIAN ? 16 : 8)) & 255) * (1 / 255);
-              if (r > er) er = r;
-              if (g > eg) eg = g;
-              if (b > eb) eb = b;
-            }
-            if (atlasSpec[c3] >= 240 && atlasColorU32[c3] !== 0) {
-              const abgr = atlasColorU32[c3];
-              const r = (IS_LITTLE_ENDIAN ? abgr & 255 : abgr >>> 24) * (1 / 255);
-              const g = ((abgr >>> (IS_LITTLE_ENDIAN ? 8 : 16)) & 255) * (1 / 255);
-              const b = ((abgr >>> (IS_LITTLE_ENDIAN ? 16 : 8)) & 255) * (1 / 255);
-              if (r > er) er = r;
-              if (g > eg) eg = g;
-              if (b > eb) eb = b;
-            }
-            const hi = hRow + hx;
-            haloTmpR[hi] = er * neonBoost;
-            haloTmpG[hi] = eg * neonBoost;
-            haloTmpB[hi] = eb * neonBoost;
-          }
-        }
-        // Separable 5-tap horizontal + vertical halo spread in the 1/2-res buffer (~4..5 world px spill radius)
-        for (let hy = hy0; hy <= hy1; hy++) {
-          const hRow = hy * haloW;
-          for (let hx = hx0; hx <= hx1; hx++) {
-            const xm2 = Math.max(hx0, hx - 2);
-            const xm1 = Math.max(hx0, hx - 1);
-            const xp1 = Math.min(hx1, hx + 1);
-            const xp2 = Math.min(hx1, hx + 2);
-            const hi = hRow + hx;
-            haloR[hi] =
-              haloTmpR[hi] * 0.42 +
-              (haloTmpR[hRow + xm1] + haloTmpR[hRow + xp1]) * 0.24 +
-              (haloTmpR[hRow + xm2] + haloTmpR[hRow + xp2]) * 0.12;
-            haloG[hi] =
-              haloTmpG[hi] * 0.42 +
-              (haloTmpG[hRow + xm1] + haloTmpG[hRow + xp1]) * 0.24 +
-              (haloTmpG[hRow + xm2] + haloTmpG[hRow + xp2]) * 0.12;
-            haloB[hi] =
-              haloTmpB[hi] * 0.42 +
-              (haloTmpB[hRow + xm1] + haloTmpB[hRow + xp1]) * 0.24 +
-              (haloTmpB[hRow + xm2] + haloTmpB[hRow + xp2]) * 0.12;
-          }
-        }
-        for (let hy = hy0; hy <= hy1; hy++) {
-          const ym2 = Math.max(hy0, hy - 2) * haloW;
-          const ym1 = Math.max(hy0, hy - 1) * haloW;
-          const y0Row = hy * haloW;
-          const yp1 = Math.min(hy1, hy + 1) * haloW;
-          const yp2 = Math.min(hy1, hy + 2) * haloW;
-          for (let hx = hx0; hx <= hx1; hx++) {
-            haloTmpR[y0Row + hx] =
-              haloR[y0Row + hx] * 0.42 +
-              (haloR[ym1 + hx] + haloR[yp1 + hx]) * 0.24 +
-              (haloR[ym2 + hx] + haloR[yp2 + hx]) * 0.12;
-            haloTmpG[y0Row + hx] =
-              haloG[y0Row + hx] * 0.42 +
-              (haloG[ym1 + hx] + haloG[yp1 + hx]) * 0.24 +
-              (haloG[ym2 + hx] + haloG[yp2 + hx]) * 0.12;
-            haloTmpB[y0Row + hx] =
-              haloB[y0Row + hx] * 0.42 +
-              (haloB[ym1 + hx] + haloB[yp1 + hx]) * 0.24 +
-              (haloB[ym2 + hx] + haloB[yp2 + hx]) * 0.12;
-          }
-        }
-      }
-    }
+    const { haloW, halo } = this;
 
     let minX = w;
     let minY = h;
@@ -1827,8 +1705,7 @@ export class LightingEngine {
       tileLightsLo[tileIdx] = 0;
       tileLightsHi[tileIdx] = 0;
       tileVisited[tileIdx] = 0;
-      tileActiveInFrame[tileIdx] = 0;
-      prevActiveTiles.push(tileIdx);
+      if (!preset) prevActiveTiles.push(tileIdx);
 
       localLights.length = 0;
       while (maskLo !== 0) {
@@ -1844,7 +1721,7 @@ export class LightingEngine {
       const nLocal = localLights.length;
       if (nLocal === 0 && !preset) continue;
       if (preset && nLocal === 0) {
-        if (this.tileAmbientClean[tileIdx] && !this.tileHadPointLight[tileIdx]) {
+        if (this.tileAmbientClean[tileIdx]) {
           const tx = tileIdx % chunksW;
           const ty = (tileIdx / chunksW) | 0;
           const x0 = tx * CHUNK_SIZE;
@@ -1860,9 +1737,7 @@ export class LightingEngine {
           continue;
         }
         this.tileAmbientClean[tileIdx] = 1;
-        this.tileHadPointLight[tileIdx] = 0;
       } else if (preset) {
-        this.tileHadPointLight[tileIdx] = 1;
         this.tileAmbientClean[tileIdx] = 0;
       }
 
@@ -1872,6 +1747,11 @@ export class LightingEngine {
       const y0 = ty * CHUNK_SIZE;
       const x1 = Math.min(w, x0 + CHUNK_SIZE);
       const y1 = Math.min(h, y0 + CHUNK_SIZE);
+
+      if (useHalo && !this.tileHaloClean[tileIdx]) {
+        this.bakeHaloTile(spriteCache, x0 >> 1, y0 >> 1, Math.ceil(x1 / 2), Math.ceil(y1 / 2));
+        this.tileHaloClean[tileIdx] = 1;
+      }
 
       if (x0 < minX) minX = x0;
       if (y0 < minY) minY = y0;
@@ -1901,7 +1781,11 @@ export class LightingEngine {
           }
 
           const baseAbgr = isBuilding ? bldAbgr : terrainU32[i];
-          if (baseAbgr === 0) continue;
+          if (baseAbgr === 0) {
+            terrainLightU32[i] = 0;
+            buildingLightU32[i] = 0;
+            continue;
+          }
 
           const isEmissive = isBuilding && atlasSpec[i] >= 240;
           const wz = isBuilding ? atlasElev[i] : terrainElev[i];
@@ -1978,10 +1862,10 @@ export class LightingEngine {
 
           // Add low-res emissive halo light spill around neon signs/canopies/roofs
           if (useHalo) {
-            const hi = hRow + (sx >> 1);
-            const hSpillR = haloTmpR[hi];
-            const hSpillG = haloTmpG[hi];
-            const hSpillB = haloTmpB[hi];
+            const hi = (hRow + (sx >> 1)) * 3;
+            const hSpillR = halo[hi] * haloBoost;
+            const hSpillG = halo[hi + 1] * haloBoost;
+            const hSpillB = halo[hi + 2] * haloBoost;
             ptR += hSpillR;
             ptG += hSpillG;
             ptB += hSpillB;
@@ -2046,10 +1930,10 @@ export class LightingEngine {
       if (putMaxX > putMinX && putMaxY > putMinY) {
         const dw = putMaxX - putMinX;
         const dh = putMaxY - putMinY;
-        if (hasTerrain && this.terrainCtx && this.terrainImageData) {
+        if (this.terrainCtx && this.terrainImageData) {
           this.terrainCtx.putImageData(this.terrainImageData, 0, 0, putMinX, putMinY, dw, dh);
         }
-        if (hasBuilding && this.buildingCtx && this.buildingImageData) {
+        if (this.buildingCtx && this.buildingImageData) {
           this.buildingCtx.putImageData(this.buildingImageData, 0, 0, putMinX, putMinY, dw, dh);
         }
       }
@@ -2095,6 +1979,7 @@ export class LightingEngine {
             visible = packed / 254;
           }
         }
+        if (light.shadowMix !== undefined) visible = 1 - (1 - visible) * light.shadowMix;
         shadow = Math.min(0.62, shadow + (1 - visible) * falloff * light.shadowStrength);
         if (visible === 0) continue;
       }

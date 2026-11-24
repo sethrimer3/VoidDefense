@@ -37,9 +37,10 @@ All world surfaces—terrain, buildings, placed towers, and infantry—generate 
   - Urban buildings replace scattered 1-px window speckles with larger, readable emissive features: wide 3–5 px ground-floor storefront canopies, upper-cornice neon bars, full-height vertical neon sign strips, and 2-row horizontal neon signs / warm amber window bays.
   - All emissive building pixels are tagged in `specMap` / `atlasSpec` with values `>= 240` (`242..250`).
   - Building point lights are offset `0.8 px` south of the south facade (`b.y + b.h + 0.8`, radius `18..23 px`) so storefront canopies cast wide pools of Tron blue (and occasional warm amber) light across the street without self-occlusion.
-- **Low-Res (`1/2` Res) Emissive Halo Spill Buffer (`haloR`, `haloG`, `haloB` in `LightingEngine`):**
+- **Low-Res (`1/2` Res) Emissive Halo Spill Buffer (`halo` in `LightingEngine`):**
   - Extracts `atlasSpec >= 240` emissive pixels into a half-resolution (`(w/2) × (h/2)`) world light buffer and runs a separable 5-tap horizontal + vertical pass (`~4..5 world px` spill radius).
-  - Adds a soft colored halo around neon signs, canopies, and rooftop beacons directly in the world-pixel light buffer while keeping every sprite edge 100% pixel-crisp (no post-scale screen bloom).
+  - The building atlas supplies emissive pixels and stable building IDs. Every surviving emissive fixture contributes unshadowed spill, including buildings outside the point-light budget. Each world-space halo tile samples a two-texel border so the kernel gives the same result at viewport and tile boundaries.
+  - The cache stores spill before the time-of-day multiplier. Terrain and atlas edits dirty nearby halo tiles, and the current preset scales the spill during shading. The effect stays at world-pixel scale.
 - **Tron-Style Neon Orange Tower Lights (`#ff7b18`–`#ff9e38`):**
   - Placed Resistance towers emit Tron neon orange point lights (`r: 1.38, g: 0.58, b: 0.11`, radius `19..24 px`) from their elevated housings, casting shadows and pooling warm orange light on the ground around them.
 - **Short-Lived Dynamic Lights (`falloffPower: 3`):**
@@ -52,7 +53,7 @@ All world surfaces—terrain, buildings, placed towers, and infantry—generate 
   - Checks both static caster heights (`groundElev`: surviving building `columnFloors`, walls, silos, and placed towers) and transient moving caster intervals (`casterTop`, `casterBottom`: infantry, mechs, airborne units, and falling 3D masonry chunks).
   - Grazing height clearance (`softness = 0.24 + (1 - entry) * 0.45`) and cell traversal coverage produce smooth penumbra shadow edges rather than hard binary stencils.
 - **Per-Light Shadow Visibility Cache (`ShadowCache`):**
-  - Visibility bytes (`0..254`) are cached per light slot and invalidated only when the light moves or a caster tile within the light's footprint increments `shadowTileRevision`.
+  - Building shadow visibility bytes (`0..254`) are keyed by world-local building ID. Other sources use separate slot caches. Motion and caster-tile revisions invalidate each cache within its world-space footprint.
 
 ## 5. Incremental Tiled Cache & Performance Budgets
 
@@ -60,7 +61,9 @@ All world surfaces—terrain, buildings, placed towers, and infantry—generate 
   - `LightingEngine.syncChunks` and `BuildingSpriteCache.syncAtlasGbuffer` rebuild terrain normals, heights, occluder elevations, roof sun shadows, and building G-buffer rects **only** for dirtied 16×16 chunks (with a 2-pixel Sobel seam border).
   - `LightingEngine.syncMovingCasters` clears and restamps only the sparse cells occupied by moving units and falling chunks.
 - **64-Bit Tile Light Binning:**
-  - Point lights are culled against the camera viewport (`viewBounds` + radius margin), prioritized, and binned into 16×16 tiles using 64-bit bitmasks (`tileLightsLo`, `tileLightsHi`). Only tiles with active lights are shaded and cleared on the next frame.
+  - Point lights are culled only once their influence clears the viewport margin. They are binned into visible 16×16 tiles using 64-bit bitmasks (`tileLightsLo`, `tileLightsHi`).
+  - Ambient tiles retain both their CPU pixels and canvas pixels when they leave the viewport. Tiles shade before first use, after terrain or projected atlas edits, and after point lights leave their tile. Exact preset parameters invalidate all ambient validity flags, and each blend frame invalidates them again. The viewport controls which world tiles are needed and leaves their pixel mapping intact.
+  - Building point lights use a seeded, spatially spaced ordering established once per world. Low, Medium, and High use fixed prefixes of up to 4, 7, and 10 building point lights, and a tier change fades the point-light contribution through the cutoff. Combat-light priorities cannot evict a building fixture. The emissive halo stays independent of both budgets.
 - **Lighting Quality Tiers & Auto-Drop (`lightingQuality` in `src/settings.ts`):**
   - Configurable in Command Settings (`High`: 34 lights / 12 shadow casters; `Medium`: 24 lights / 9 shadow casters; `Low`: 16 lights / 5 shadow casters). Lights beyond the shadow cap smoothly fade their `shadowStrength` to unshadowed surface glow.
   - `VoidRenderer` monitors `lastTimings.lighting` and automatically drops `effectiveLightingQuality` one tier after sustained slow frames (`> 11.5 ms`), recovering when frame times drop (`< 4.5 ms`).

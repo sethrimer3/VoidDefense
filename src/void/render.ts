@@ -32,6 +32,7 @@ import {
 } from "./elevation.ts";
 import {
   blendTimeOfDayPresets,
+  BUILDING_LIGHT_BUDGET,
   collectSceneLights,
   INFANTRY_SOBEL_NORMALS,
   LightingEngine,
@@ -377,6 +378,7 @@ export class VoidRenderer {
   private fromPreset: TimeOfDayPreset = TIME_OF_DAY_PRESETS.night;
   private toPreset: TimeOfDayPreset = TIME_OF_DAY_PRESETS.night;
   private presetBlendT = 1;
+  private buildingLightBudget?: number;
   /** Per-building elevated roof & south-facade sprite cache. */
   readonly spriteCache = new BuildingSpriteCache();
   /** Tiled 2.5D bump-mapped surface lighting, surface glows and dynamic cast shadows. */
@@ -1470,6 +1472,12 @@ export class VoidRenderer {
     ) {
       this.effectiveLightingQuality = "low";
     }
+    const targetBudget = BUILDING_LIGHT_BUDGET[this.effectiveLightingQuality];
+    const previousBudget = this.buildingLightBudget ?? targetBudget;
+    const budgetDelta = targetBudget - previousBudget;
+    // Fade toward the new tier's fixed ranks over several draws, including automatic tier changes.
+    this.buildingLightBudget = this.reduceEffects ? targetBudget : previousBudget +
+      Math.sign(budgetDelta) * Math.min(Math.abs(budgetDelta), Math.max(0, dt) * 36);
     const sceneLights = collectSceneLights(
       sim,
       animTime,
@@ -1478,6 +1486,7 @@ export class VoidRenderer {
       this.effectiveLightingQuality,
       viewBounds,
       activePreset,
+      this.buildingLightBudget,
     );
     this.lighting.syncMovingCasters(combat.agents, this.reduceEffects ? [] : physics.fallingChunks, sim.tick);
     this.lighting.renderLighting(
@@ -1488,6 +1497,7 @@ export class VoidRenderer {
       activePreset,
       viewBounds,
       this.shadowMap,
+      this.presetBlendT < 1,
     );
     lap("lighting");
 
