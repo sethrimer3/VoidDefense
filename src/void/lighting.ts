@@ -1298,6 +1298,7 @@ export class LightingEngine {
       this.terrainNz = new Int8Array(count);
       this.terrainElev = new Uint8Array(count);
       this.terrainSurface = new Uint8Array(count);
+      this.terrainLane = new Uint8Array(count);
       this.groundElev = new Uint8Array(count);
       this.terrainRelief = new Float32Array(count);
       this.roofSunShadow = new Uint8Array(count).fill(255);
@@ -1438,6 +1439,18 @@ export class LightingEngine {
             : SurfaceMaterial.WET_SHEEN;
         }
         this.terrainSurface[idx] = surface;
+        const stTier = world.streetTier[idx];
+        this.terrainLane[idx] =
+          mat === CellMaterial.STREET && (stTier === 1 || stTier === 2)
+            ? isBoulevardOrAvenueLaneAt(world, x, y)
+              ? 2
+              : isBoulevardOrAvenueLaneAt(world, x - 1, y) ||
+                  isBoulevardOrAvenueLaneAt(world, x + 1, y) ||
+                  isBoulevardOrAvenueLaneAt(world, x, y - 1) ||
+                  isBoulevardOrAvenueLaneAt(world, x, y + 1)
+                ? 1
+                : 0
+            : 0;
         const tGround =
           mat === CellMaterial.VOID || mat === CellMaterial.EMPTY ? 0 :
           mat === CellMaterial.WALL || mat === CellMaterial.BARRIER || cover === LandCover.SILO
@@ -2159,19 +2172,14 @@ export class LightingEngine {
           }
 
           // Faint glowing orange lane markings on boulevards & avenues, slightly lighting the wet street in rain
-          if (!isBuilding && preset.neonIntensity > 0.2 && (streetTier[i] === 1 || streetTier[i] === 2)) {
-            if (isBoulevardOrAvenueLaneAt(world, sx, sy)) {
+          const lane = isBuilding ? 0 : this.terrainLane[i];
+          if (lane > 0 && preset.neonIntensity > 0.2) {
+            if (lane === 2) {
               const laneGlow = preset.neonIntensity * (0.14 + localWet * 0.08);
               ptR += laneGlow;
               ptG += laneGlow * 0.45;
               ptB += laneGlow * 0.08;
-            } else if (
-              localWet > 0.05 &&
-              (isBoulevardOrAvenueLaneAt(world, sx - 1, sy) ||
-                isBoulevardOrAvenueLaneAt(world, sx + 1, sy) ||
-                isBoulevardOrAvenueLaneAt(world, sx, sy - 1) ||
-                isBoulevardOrAvenueLaneAt(world, sx, sy + 1))
-            ) {
+            } else if (localWet > 0.05) {
               const wetLaneSpill = localWet * preset.neonIntensity * 0.09;
               ptR += wetLaneSpill;
               ptG += wetLaneSpill * 0.44;
