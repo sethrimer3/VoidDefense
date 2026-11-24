@@ -258,10 +258,10 @@ export class VoidSim {
         wallResistanceMultiplier: this.tech.wallResistanceMultiplier,
         perimeterResonanceBonus: this.tech.perimeterResonanceBonus,
         gravityAnchorMask: this.combat.gravityAnchorMask,
-        shieldAbsorptionAt: (cIdx, work) =>
+        shieldAbsorptionAt: this.combat.shieldPools.size === 0 ? undefined : (cIdx, work) =>
           this.combat.absorbWorkWithShields(this.world, cIdx, work, this.tech),
-        prisms: this.combat.prismStates.values(),
-        siphons: this.combat.siphonStates.values(),
+        prisms: this.combat.prismStates.size > 0 ? this.combat.prismStates.values() : undefined,
+        siphons: this.combat.siphonStates.size > 0 ? this.combat.siphonStates.values() : undefined,
         siphonIntakeCap: this.tech.siphonIntakeCap,
       },
     );

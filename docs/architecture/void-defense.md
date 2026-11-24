@@ -35,6 +35,11 @@ Void Defense is the sole game in this repository, built as a clean, self-contain
 | `src/void/render.ts` & `ui.ts` | `VoidRenderer` (dirty-chunk offscreen layer + multi-scale LOD + `Loupe` integration) and `VoidApp` shell. See "Rendering the concept composition" below. |
 | `src/void/save.ts` & `main.ts` | Defensive `voiddefense.v1` persistence and sole-game bootstrap entrypoint with graceful non-destructive adoption of legacy player callsigns and visual settings. |
 
+Fixed-step erosion keeps the frontier in row-major order. Rebuilt frontiers publish a
+membership revision for rendering, and erosion reuses its per-frontier work buffers.
+The immediate defeat check exits as soon as it finds a surviving baseline cell.
+The full preserved-score calculation is used for scoring and display.
+
 ## Simulation pixels
 
 A **Void pixel** and a simulation cell are the same unit. Each former cell is split

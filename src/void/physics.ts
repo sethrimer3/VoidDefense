@@ -215,9 +215,13 @@ export function moltenGlowColorAtHeat(heat: number, alphaScale = 1): string {
 }
 
 export const MAX_DEBRIS = 8192;
+const DEBRIS_FUSION_THRESHOLD = 640;
+const DEBRIS_BIN_SIZE = 4;
+const MAX_MERGED_GRAINS = 16;
 
 export class VoidPhysics {
   readonly debris: DebrisFragment[] = [];
+  private fusionBins = new Int32Array(0);
   readonly shockwaves: ShockwaveEffect[] = [];
   readonly recentCellLosses: {
     cellIdx: number;
@@ -914,35 +918,40 @@ export class VoidPhysics {
         const pieceCount = Math.min(3, Math.max(2, Math.round(d.size)));
         d.intact = false;
         d.size = 1.0;
-        const ux = rx / distToPortal;
-        const uy = ry / distToPortal;
-        const tx = -uy;
-        const ty = ux;
-        for (let k = 1; k <= pieceCount && this.debris.length < MAX_DEBRIS; k++) {
-          const radOff = (k - 1.5) * 0.65;
-          const tanOff = ((k & 1) === 0 ? 1 : -1) * 0.75;
-          const sx = d.x + ux * radOff + tx * tanOff;
-          const sy = d.y + uy * radOff + ty * tanOff;
-          const sDist = dist(sx - d.portalX, sy - d.portalY);
-          if (sDist <= coreR) continue;
-          this.debris.push({
-            x: sx,
-            y: sy,
-            px: sx,
-            py: sy,
-            vx: d.vx,
-            vy: d.vy,
-            portalX: d.portalX,
-            portalY: d.portalY,
-            color: k === 1 && d.accentColor ? d.accentColor : d.color,
-            glowColor: "rgba(0, 0, 0, 0)",
-            size: 1.0,
-            life: d.life,
-            maxLife: d.maxLife,
-            startDist: d.startDist,
-            coreRadius: coreR,
-            intact: false,
-          });
+        if (initialDebrisCount >= DEBRIS_FUSION_THRESHOLD) {
+          d.mergedGrains = pieceCount + 1;
+          d.size = Math.sqrt(d.mergedGrains);
+        } else {
+          const ux = rx / distToPortal;
+          const uy = ry / distToPortal;
+          const tx = -uy;
+          const ty = ux;
+          for (let k = 1; k <= pieceCount && this.debris.length < MAX_DEBRIS; k++) {
+            const radOff = (k - 1.5) * 0.65;
+            const tanOff = ((k & 1) === 0 ? 1 : -1) * 0.75;
+            const sx = d.x + ux * radOff + tx * tanOff;
+            const sy = d.y + uy * radOff + ty * tanOff;
+            const sDist = dist(sx - d.portalX, sy - d.portalY);
+            if (sDist <= coreR) continue;
+            this.debris.push({
+              x: sx,
+              y: sy,
+              px: sx,
+              py: sy,
+              vx: d.vx,
+              vy: d.vy,
+              portalX: d.portalX,
+              portalY: d.portalY,
+              color: k === 1 && d.accentColor ? d.accentColor : d.color,
+              glowColor: "rgba(0, 0, 0, 0)",
+              size: 1.0,
+              life: d.life,
+              maxLife: d.maxLife,
+              startDist: d.startDist,
+              coreRadius: coreR,
+              intact: false,
+            });
+          }
         }
       }
 
@@ -973,6 +982,9 @@ export class VoidPhysics {
       this.debris[survivingDebrisCount++] = this.debris[i];
     }
     this.debris.length = survivingDebrisCount;
+    if (survivingDebrisCount >= DEBRIS_FUSION_THRESHOLD && this.supportTick % 3 === 0) {
+      this.fuseDebris(world);
+    }
 
     // Advance expanding shockwaves
     for (let i = this.shockwaves.length - 1; i >= 0; i--) {
@@ -985,6 +997,51 @@ export class VoidPhysics {
 
     // Advance pooled 3D falling chunks (semi-implicit Euler under gravity g = 60 px/s²)
     this.stepFallingChunks(world, dt);
+  }
+
+  /** Fuse compatible grains in spatial bins. The oldest piece carries the combined material inward. */
+  private fuseDebris(world: VoidWorld): void {
+    const cols = Math.ceil(world.grid.w / DEBRIS_BIN_SIZE);
+    const rows = Math.ceil(world.grid.h / DEBRIS_BIN_SIZE);
+    // Two slots allow neighboring portal streams to share a bin without merging across targets.
+    if (this.fusionBins.length !== cols * rows * 2) this.fusionBins = new Int32Array(cols * rows * 2);
+    this.fusionBins.fill(-1);
+    const debris = this.debris;
+    let kept = 0;
+    for (let i = 0; i < debris.length; i++) {
+      const d = debris[i];
+      const core = d.coreRadius ?? 0;
+      if (d.intact || core <= 0 ||
+          (d.x - d.portalX) ** 2 + (d.y - d.portalY) ** 2 < (core + 5) ** 2 ||
+          d.x < 0 || d.y < 0 || d.x >= world.grid.w || d.y >= world.grid.h) {
+        debris[kept++] = d;
+        continue;
+      }
+      let bin = (Math.floor(d.y / DEBRIS_BIN_SIZE) * cols + Math.floor(d.x / DEBRIS_BIN_SIZE)) * 2;
+      const primary = debris[this.fusionBins[bin]];
+      if (primary && (primary.portalX !== d.portalX || primary.portalY !== d.portalY)) bin++;
+      const first = debris[this.fusionBins[bin]];
+      const mass = d.mergedGrains ?? 1;
+      const combined = (first?.mergedGrains ?? 1) + mass;
+      if (first && combined <= MAX_MERGED_GRAINS && first.coreRadius === core &&
+          first.portalX === d.portalX && first.portalY === d.portalY &&
+          (first.x - d.x) ** 2 + (first.y - d.y) ** 2 <= DEBRIS_BIN_SIZE ** 2) {
+        const share = mass / combined;
+        const dx = (d.x - first.x) * share;
+        const dy = (d.y - first.y) * share;
+        first.x += dx;
+        first.y += dy;
+        first.px += dx;
+        first.py += dy;
+        first.maxLife = Math.max(first.maxLife, first.life + d.maxLife - d.life);
+        first.mergedGrains = combined;
+        first.size = Math.sqrt(combined);
+      } else {
+        this.fusionBins[bin] = kept;
+        debris[kept++] = d;
+      }
+    }
+    debris.length = kept;
   }
 
   /** Steps all active 3D falling chunks for `dt` seconds.

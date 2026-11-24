@@ -520,7 +520,9 @@ test("Saturated whirlpool debris keeps existing fragments and resumes emission w
   physics.consumeCellIntoVoid(world, site);
   const first = physics.debris[0];
   assert.ok(first);
+  // Impact sparks can fill the shared pool but cannot fuse into meteors.
   first.intact = false;
+  first.coreRadius = 0;
 
   while (physics.debris.length < MAX_DEBRIS) physics.debris.push({ ...first });
   const existing = physics.debris.slice();
@@ -540,6 +542,29 @@ test("Saturated whirlpool debris keeps existing fragments and resumes emission w
   assert.equal(physics.debris.length, MAX_DEBRIS);
   assert.equal(physics.debris[0], existing[1]);
   assert.equal(physics.debris.at(-1)?.life, 0);
+});
+
+test("Dense vortex streams fuse into meteors without losing grain mass or mixing targets", () => {
+  const { world, physics } = new VoidSim("tutorialBreach", "underSiege", emptyTechWallet());
+  const portal = world.portals[0];
+  const x = portal.x + 50;
+  const y = portal.y;
+  for (let i = 0; i < 720; i++) {
+    physics.debris.push({
+      x, y, px: x, py: y, vx: 0, vy: 0, color: "#a45c39", glowColor: "", size: 1,
+      portalX: portal.x - (i % 2) * 6, portalY: portal.y, coreRadius: portal.radius * 0.42,
+      startDist: 50 + (i % 2) * 6, life: 0, maxLife: 30, intact: false,
+    });
+  }
+  for (let i = 0; i < 3; i++) physics.stepStructuralSupport(world, 1 / 30);
+  assert.ok(physics.debris.length < 200);
+  assert.ok(physics.debris.some((d) => (d.mergedGrains ?? 0) > 1 && d.size > 1));
+  for (const tx of [portal.x, portal.x - 6]) {
+    const grains = physics.debris.filter((d) => d.portalX === tx)
+      .reduce((sum, d) => sum + (d.mergedGrains ?? 1), 0);
+    assert.equal(grains, 360);
+  }
+  assert.ok(physics.debris.every((d) => Math.hypot(d.x - d.portalX, d.y - d.portalY) > d.coreRadius!));
 });
 
 test("Street lights resolve single-pixel infantry, tower and airborne debris shadows", () => {

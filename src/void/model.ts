@@ -181,6 +181,8 @@ export type DebrisFragment = {
   accentColor?: string;
   glowColor: string;
   size: number;
+  /** Number of grains represented by a fused meteor. */
+  mergedGrains?: number;
   life: number;
   maxLife: number;
   /** Initial distance to the target portal when detached, used for smooth molten heating near the core. */

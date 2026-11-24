@@ -648,3 +648,23 @@ test("Portal markers precede the breach on solid ground in both play styles", ()
     assert.equal(later.active, false);
   }
 });
+
+test("Frontier membership changes invalidate cliffs even at the same perimeter length", () => {
+  const scenario = getScenario("tutorialBreach");
+  const world = new VoidWorld(scenario);
+  world.material.fill(CellMaterial.STREET);
+  const first = world.grid.index(12, 12);
+  const next = world.grid.index(13, 12);
+  world.material[first] = CellMaterial.VOID;
+  const field = new VoidField(world, scenario);
+  const revision = field.frontierRevision;
+  const old = field.frontierCells.slice();
+  field.rebuildFrontier(world);
+  assert.equal(field.frontierRevision, revision);
+  world.material[first] = CellMaterial.STREET;
+  world.material[next] = CellMaterial.VOID;
+  field.rebuildFrontier(world);
+  assert.equal(field.frontierCells.length, old.length);
+  assert.notDeepEqual(field.frontierCells, old);
+  assert.ok(field.frontierRevision > revision);
+});

@@ -61,6 +61,7 @@ import { hash, hash01 } from "./grid.ts";
 import {
   CellMaterial,
   type Civilian,
+  type DebrisFragment,
   type FallingChunk,
   LandCover,
   type MetroBuilding,
@@ -88,6 +89,11 @@ const debrisGlowColors = Array.from({ length: DEBRIS_HEAT_STEPS + 1 }, (_, i) =>
   moltenGlowColorAtHeat(i / DEBRIS_HEAT_STEPS),
 );
 
+function fragmentHeat(fragment: DebrisFragment, distance: number, coreRadius: number): number {
+  return computeDebrisHeat(distance, fragment.startDist ?? 24, coreRadius > 0 ? coreRadius : 5,
+    fragment.life / Math.max(0.01, fragment.maxLife));
+}
+
 /** Side of the local window a chunk's distance-to-Void transform runs on (chunk plus margin). */
 const DIST_WINDOW = CHUNK_SIZE + CORRUPTION_REACH * 2;
 /** Padded stride (1-cell CHAMFER_INF border on all sides so inner loops need no bounds checks). */
@@ -106,23 +112,24 @@ const CORRUPTION_ALPHAS: readonly number[] = (() => {
   return out;
 })();
 
-/** Quantized frontier corona tints (32 steps from alpha 0.10 to 0.38). */
-const FRONTIER_TINTS: readonly string[] = (() => {
-  const out: string[] = [];
-  for (let i = 0; i < 32; i++) {
-    out.push(`rgba(178, 62, 232, ${(0.1 + 0.28 * (i / 31)).toFixed(3)})`);
-  }
-  return out;
-})();
-
 const IS_LITTLE_ENDIAN = new Uint8Array(new Uint32Array([0x01020304]).buffer)[0] === 0x04;
 const hexAbgrCache = new Map<string, number>();
 
-function packAbgr(r: number, g: number, b: number): number {
+function packAbgr(r: number, g: number, b: number, alpha = 255): number {
   return IS_LITTLE_ENDIAN
-    ? (0xff000000 | (b << 16) | (g << 8) | r) >>> 0
-    : ((r << 24) | (g << 16) | (b << 8) | 0xff) >>> 0;
+    ? ((alpha << 24) | (b << 16) | (g << 8) | r) >>> 0
+    : ((r << 24) | (g << 16) | (b << 8) | alpha) >>> 0;
 }
+
+/** Quantized frontier corona tints in world-raster RGBA format. */
+const FRONTIER_TINTS = Uint32Array.from({ length: 32 }, (_, i) =>
+  packAbgr(178, 62, 232, Math.round((0.1 + 0.28 * i / 31) * 255)),
+);
+const METEOR_SPRITE_CENTER = 14;
+const METEOR_DIRECTIONS = [
+  [1, 0], [0.707, 0.707], [0, 1], [-0.707, 0.707],
+  [-1, 0], [-0.707, -0.707], [0, -1], [0.707, -0.707],
+] as const;
 
 function hexToAbgr(hex: string): number {
   let v = hexAbgrCache.get(hex);
@@ -236,10 +243,20 @@ export class VoidRenderer {
   private readonly ledgeLayer: HTMLCanvasElement;
   private readonly ledgeCtx: CanvasRenderingContext2D;
   private ledgeDirty = true;
-  private lastFrontierLen = -1;
+  private ledgeFrontierRevision = -1;
+  private ledgeImage: ImageData | null = null;
+  private readonly frontierLayer: HTMLCanvasElement;
+  private readonly frontierCtx: CanvasRenderingContext2D;
+  private frontierImage: ImageData | null = null;
+  private frontierRaster = new Uint32Array(0);
+  private readonly frontierPainted: number[] = [];
+  private readonly frontierSparks: number[] = [];
+  private readonly meteorTrails: ({ image: HTMLCanvasElement; x0: number; y0: number } | undefined)[] = [];
   private terrainImageData: ImageData | null = null;
   private terrainU32 = new Uint32Array(0);
   private shadowMap = new Uint8Array(0);
+  private shadowQueued = new Uint8Array(0);
+  private readonly shadowUpdates: number[] = [];
   private prevBuildingAt = new Int32Array(0);
   private prevColumnFloors = new Uint8Array(0);
   private prevTowerAt = new Int32Array(0);
@@ -378,6 +395,8 @@ export class VoidRenderer {
     this.tctx = this.terrainLayer.getContext("2d", { alpha: false })!;
     this.ledgeLayer = document.createElement("canvas");
     this.ledgeCtx = this.ledgeLayer.getContext("2d")!;
+    this.frontierLayer = document.createElement("canvas");
+    this.frontierCtx = this.frontierLayer.getContext("2d")!;
   }
 
   resize(worldW: number, worldH: number): void {
@@ -777,12 +796,29 @@ export class VoidRenderer {
               this.prevBuildingAt[idx] = cur;
               this.prevColumnFloors[idx] = curFloors;
               this.prevTowerAt[idx] = curTower;
-              this.refreshShadowAround(world, x, y, dirtyChunks, chunksW);
+              this.queueShadowsAround(world, x, y);
             }
           }
         }
       }
     }
+
+    // A collapse can change many neighboring columns. Recompute each receiver once.
+    const { buildings } = world;
+    for (const idx of this.shadowUpdates) {
+      this.shadowQueued[idx] = 0;
+      const x = idx % w;
+      const y = (idx / w) | 0;
+      const bId = buildingAt[idx];
+      const selfHeight = bId >= 0 ? (buildings[bId]?.height ?? 0) : 0;
+      const selfElev = bId >= 0 ? (this.buildingElevs[bId] ?? 0) : 0;
+      const next = Math.round(this.computeShadowAt(world, x, y, selfHeight, selfElev) * 100);
+      if (this.shadowMap[idx] !== next) {
+        this.shadowMap[idx] = next;
+        dirtyChunks[world.grid.chunkIndexAtCell(x, y)] = 1;
+      }
+    }
+    this.shadowUpdates.length = 0;
 
     if (this.lastDirtyChunks.length !== dirtyChunks.length) {
       this.lastDirtyChunks = new Uint8Array(dirtyChunks.length);
@@ -814,7 +850,6 @@ export class VoidRenderer {
 
     if (maxX > minX && maxY > minY) {
       this.tctx.putImageData(this.terrainImageData, 0, 0, minX, minY, maxX - minX, maxY - minY);
-      this.ledgeDirty = true;
     }
 
     world.grid.clearDirtyFlags();
@@ -828,6 +863,8 @@ export class VoidRenderer {
       this.buildingElevs[i] = elevationOf(world.buildings[i], mode);
     }
     this.shadowMap = new Uint8Array(count);
+    this.shadowQueued = new Uint8Array(count);
+    this.shadowUpdates.length = 0;
     this.prevBuildingAt = new Int32Array(world.buildingAt);
     this.prevColumnFloors = world.columnFloors
       ? new Uint8Array(world.columnFloors)
@@ -847,25 +884,14 @@ export class VoidRenderer {
     }
   }
 
-  private refreshShadowAround(
-    world: VoidWorld,
-    x: number,
-    y: number,
-    dirtyChunks: Uint8Array,
-    chunksW: number,
-  ): void {
+  private queueShadowsAround(world: VoidWorld, x: number, y: number): void {
     const { w, h } = world.grid;
-    const { buildingAt, buildings } = world;
     const updateAt = (tx: number, ty: number): void => {
       if (tx < 0 || tx >= w || ty < 0 || ty >= h) return;
       const idx = ty * w + tx;
-      const bId = buildingAt[idx];
-      const selfHeight = bId >= 0 ? (buildings[bId]?.height ?? 0) : 0;
-      const selfElev = bId >= 0 ? (this.buildingElevs[bId] ?? 0) : 0;
-      const next = Math.round(this.computeShadowAt(world, tx, ty, selfHeight, selfElev) * 100);
-      if (this.shadowMap[idx] !== next) {
-        this.shadowMap[idx] = next;
-        dirtyChunks[((ty / CHUNK_SIZE) | 0) * chunksW + ((tx / CHUNK_SIZE) | 0)] = 1;
+      if (!this.shadowQueued[idx]) {
+        this.shadowQueued[idx] = 1;
+        this.shadowUpdates.push(idx);
       }
     };
     updateAt(x, y);
@@ -966,6 +992,56 @@ export class VoidRenderer {
       }
     }
     return maxShade;
+  }
+
+  private meteorTrail(direction: number, bright: boolean): { image: HTMLCanvasElement; x0: number; y0: number } {
+    const key = direction + (bright ? 8 : 0);
+    const existing = this.meteorTrails[key];
+    if (existing) return existing;
+    const image = document.createElement("canvas");
+    const [dx, dy] = METEOR_DIRECTIONS[direction];
+    const reach = bright ? 12 : 8;
+    const endX = Math.round(-dx * reach);
+    const endY = Math.round(-dy * reach);
+    const x0 = Math.min(0, endX) - 1;
+    const y0 = Math.min(0, endY) - 1;
+    image.width = Math.abs(endX) + 3;
+    image.height = Math.abs(endY) + 3;
+    const ctx = image.getContext("2d")!;
+    for (let step = reach; step >= 1; step--) {
+      const x = Math.round(-dx * step) - x0;
+      const y = Math.round(-dy * step) - y0;
+      const opacity = (1 - step / (reach + 1)) * (bright ? 0.82 : 0.55);
+      const wide = step <= 4;
+      ctx.fillStyle = `rgba(233, 66, 32, ${opacity * 0.5})`;
+      if (wide) ctx.fillRect(x - 1, y - 1, 3, 3);
+      ctx.fillStyle = `rgba(255, ${bright ? 184 : 102}, 35, ${opacity})`;
+      ctx.fillRect(x, y, 1, 1);
+    }
+    const sprite = { image, x0, y0 };
+    this.meteorTrails[key] = sprite;
+    return sprite;
+  }
+
+  private syncLedgeRaster(world: VoidWorld, frontier: readonly number[], revision: number): void {
+    const { w, h } = world.grid;
+    if (this.ledgeLayer.width !== w || this.ledgeLayer.height !== h || !this.ledgeImage) {
+      this.ledgeLayer.width = w;
+      this.ledgeLayer.height = h;
+      this.ledgeImage = this.ledgeCtx.createImageData(w, h);
+      this.ledgeDirty = true;
+    }
+    if (!this.ledgeDirty && this.ledgeFrontierRevision === revision) return;
+    const pixels = new Uint32Array(this.ledgeImage.data.buffer);
+    pixels.fill(0);
+    let packed = 0;
+    paintVoidLedge({
+      set fillStyle(color: string) { packed = hexToAbgr(color); },
+      fillRect(x, y) { pixels[y * w + x] = packed; },
+    }, world, frontier);
+    this.ledgeCtx.putImageData(this.ledgeImage, 0, 0);
+    this.ledgeDirty = false;
+    this.ledgeFrontierRevision = revision;
   }
 
   private readonly debrisPalettes = new Map<string, string[]>();
@@ -1084,7 +1160,10 @@ export class VoidRenderer {
         if (n3 >= 0 && buildingAt[n3] === bId) sameBuilding += 8;
         factor *= 256;
         neighbors += sameBuilding * factor;
-        if (this.paintedPixels[idx] === signature && this.paintedNeighbors[idx] === neighbors) continue;
+        const previous = this.paintedPixels[idx];
+        if (previous === signature && this.paintedNeighbors[idx] === neighbors) continue;
+        // Low bits hold material and land cover. HP and shadow changes leave the cut unchanged.
+        if ((previous & 255) !== (signature & 255)) this.ledgeDirty = true;
         this.paintCell(world, x, y, nearVoid, shadowRaw);
         this.paintedPixels[idx] = signature;
         this.paintedNeighbors[idx] = neighbors;
@@ -1573,25 +1652,51 @@ export class VoidRenderer {
     let vy0 = h;
     let vx1 = 0;
     let vy1 = 0;
-    for (let i = 0; i < voidField.frontierCells.length; i++) {
-      const cIdx = voidField.frontierCells[i];
-      const fx = world.grid.xOf(cIdx);
-      const fy = world.grid.yOf(cIdx);
-      if (fx < vx0) vx0 = fx;
-      if (fy < vy0) vy0 = fy;
-      if (fx > vx1) vx1 = fx;
-      if (fy > vy1) vy1 = fy;
-      const micro = voidField.cellMicroWork[cIdx];
-      const intensity = Math.min(1, 0.25 + micro * PIXEL_AREA / 450);
-
-      rawScene.fillStyle = FRONTIER_TINTS[Math.min(31, (intensity * pulse * 31) | 0)];
-      rawScene.fillRect(fx, fy, 1, 1);
-
-      // Subtle localized purple frontier spark on actively eroding cells
-      if (intensity > 0.55 && ((fx * 7 + fy * 13 + Math.floor(animTime * 6)) & 15) === 0) {
-        rawScene.fillStyle = "#e08aff";
-        rawScene.fillRect(fx, fy, 1, 1);
-      }
+    if (!this.frontierImage || this.frontierLayer.width !== w || this.frontierLayer.height !== h) {
+      this.frontierLayer.width = w;
+      this.frontierLayer.height = h;
+      this.frontierImage = this.frontierCtx.createImageData(w, h);
+      this.frontierRaster = new Uint32Array(this.frontierImage.data.buffer);
+      this.frontierPainted.length = 0;
+    }
+    const raster = this.frontierRaster;
+    const painted = this.frontierPainted;
+    const sparks = this.frontierSparks;
+    for (const idx of painted) raster[idx] = 0;
+    painted.length = 0;
+    sparks.length = 0;
+    let glowX0 = w;
+    let glowY0 = h;
+    let glowX1 = 0;
+    let glowY1 = 0;
+    // Keep the loupe and camera shake within the rendered margin.
+    const margin = 16;
+    const sparkTick = Math.floor(animTime * 6);
+    for (const idx of voidField.frontierCells) {
+      const fx = idx % w;
+      const fy = (idx / w) | 0;
+      vx0 = Math.min(vx0, fx);
+      vy0 = Math.min(vy0, fy);
+      vx1 = Math.max(vx1, fx);
+      vy1 = Math.max(vy1, fy);
+      if (fx < viewBounds.x0 - margin || fx > viewBounds.x1 + margin ||
+          fy < viewBounds.y0 - margin || fy > viewBounds.y1 + margin) continue;
+      glowX0 = Math.min(glowX0, fx);
+      glowY0 = Math.min(glowY0, fy);
+      glowX1 = Math.max(glowX1, fx);
+      glowY1 = Math.max(glowY1, fy);
+      const intensity = Math.min(1, 0.25 + voidField.cellMicroWork[idx] * PIXEL_AREA / 450);
+      raster[idx] = FRONTIER_TINTS[Math.min(31, (intensity * pulse * 31) | 0)];
+      painted.push(idx);
+      if (intensity > 0.55 && ((fx * 7 + fy * 13 + sparkTick) & 15) === 0) sparks.push(idx);
+    }
+    if (painted.length > 0) {
+      const gw = glowX1 - glowX0 + 1;
+      const gh = glowY1 - glowY0 + 1;
+      this.frontierCtx.putImageData(this.frontierImage, 0, 0, glowX0, glowY0, gw, gh);
+      rawScene.drawImage(this.frontierLayer, glowX0, glowY0, gw, gh, glowX0, glowY0, gw, gh);
+      rawScene.fillStyle = "#e08aff";
+      for (const idx of sparks) rawScene.fillRect(idx % w, (idx / w) | 0, 1, 1);
     }
 
     // Contested pixels: neon orange fading back to dark Void color over contestHoldTicks (1s / voidDifficulty)
@@ -1759,23 +1864,49 @@ export class VoidRenderer {
 
     lap("portals");
 
-    // Exposed strata and undercuts sit in front of the nebula and interior wisps, below the ground lip.
-    if (
-      this.ledgeDirty ||
-      this.lastFrontierLen !== voidField.frontierCells.length ||
-      this.ledgeLayer.width !== w ||
-      this.ledgeLayer.height !== h
-    ) {
-      if (this.ledgeLayer.width !== w || this.ledgeLayer.height !== h) {
-        this.ledgeLayer.width = w;
-        this.ledgeLayer.height = h;
-      } else {
-        this.ledgeCtx.clearRect(0, 0, w, h);
+    const swallowPortals = activePortals.map((p) => {
+      const coreR = Math.max(3.6, p.radius * 0.42);
+      return { x: p.x, y: p.y, r2: coreR * coreR };
+    });
+    const swallowCount = swallowPortals.length;
+
+    const isInsideInnerCircle = (px: number, py: number): boolean => {
+      for (let j = 0; j < swallowCount; j++) {
+        const sp = swallowPortals[j];
+        const dx = px - sp.x;
+        const dy = py - sp.y;
+        if (dx * dx + dy * dy <= sp.r2) return true;
       }
-      paintVoidLedge(this.ledgeCtx, world, voidField.frontierCells);
-      this.ledgeDirty = false;
-      this.lastFrontierLen = voidField.frontierCells.length;
+      return false;
+    };
+
+    // Meteor plumes pass behind the exposed cliff faces and elevated structures.
+    for (const meteor of physics.debris) {
+      if (!meteor.mergedGrains) continue;
+      const { x, y, vx, vy } = meteor;
+      const pad = METEOR_SPRITE_CENTER;
+      if (x + pad < viewBounds.x0 || x - pad > viewBounds.x1 ||
+          y + pad < viewBounds.y0 || y - pad > viewBounds.y1 ||
+          isInsideInnerCircle(x, y)) continue;
+      const distance = dist(x - meteor.portalX, y - meteor.portalY);
+      const coreRadius = meteor.coreRadius ?? 5;
+      if (distance <= coreRadius) continue;
+      const heat = fragmentHeat(meteor, distance, coreRadius);
+      const px = Math.floor(x);
+      const py = Math.floor(y);
+      if (!this.reduceEffects && (vx !== 0 || vy !== 0)) {
+        const direction = Math.round(Math.atan2(vy, vx) / (Math.PI / 4)) & 7;
+        const trail = this.meteorTrail(direction, heat >= 0.48);
+        rawScene.drawImage(trail.image, px + trail.x0, py + trail.y0);
+      }
+      const size = Math.min(4, Math.round(meteor.size), Math.max(1, Math.floor(distance - coreRadius)));
+      rawScene.fillStyle = this.debrisColor(meteor.color, Math.round(heat * DEBRIS_HEAT_STEPS));
+      rawScene.fillRect(px - (size >> 1), py - (size >> 1), size, size);
     }
+    lap("meteors");
+
+    // Exposed strata occlude the interior. Only topology and ground changes invalidate this raster.
+    this.syncLedgeRaster(world, voidField.frontierCells, voidField.frontierRevision);
     rawScene.drawImage(this.ledgeLayer, 0, 0);
 
     // Step cosmetic fleeing civilians and draw beneath-ground falling chunks/civilians (`z < 0`),
@@ -2834,22 +2965,7 @@ export class VoidRenderer {
     //     - Disintegrate into individual 1x1 pixels closer to the black hole, accelerating via
     //       spaghettification, heating into molten hues with a smooth slight glow, and disappearing
     //       upon touching the Void's inner black circle (`coreR`).
-    const swallowPortals = activePortals.map((p) => {
-      const coreR = Math.max(3.6, p.radius * 0.42);
-      return { x: p.x, y: p.y, r2: coreR * coreR };
-    });
-    const swallowCount = swallowPortals.length;
     let lastRawFill = "";
-
-    const isInsideInnerCircle = (px: number, py: number): boolean => {
-      for (let j = 0; j < swallowCount; j++) {
-        const sp = swallowPortals[j];
-        const dx = px - sp.x;
-        const dy = py - sp.y;
-        if (dx * dx + dy * dy <= sp.r2) return true;
-      }
-      return false;
-    };
 
     // At high densities the particles themselves provide the texture. Skip their extra overlays.
     const detailedDebris = !this.reduceEffects && physics.debris.length <= 1500;
@@ -2859,6 +2975,7 @@ export class VoidRenderer {
     const viewBottom = (this.canvas.height - this.cam.y) / scale;
     for (let i = 0; i < physics.debris.length; i++) {
       const d = physics.debris[i];
+      if (d.mergedGrains) continue;
       const padding = (d.intact ? d.size * 0.5 : 0) + 3;
       if (Math.max(d.x, d.px) + padding < viewLeft || Math.min(d.x, d.px) - padding > viewRight ||
           Math.max(d.y, d.py) + padding < viewTop || Math.min(d.y, d.py) - padding > viewBottom) continue;
@@ -2868,13 +2985,7 @@ export class VoidRenderer {
       const coreR = d.coreRadius ?? 5;
       if (coreR > 0 && distToPortal <= coreR) continue;
 
-      const lifeRatio = d.life / Math.max(0.01, d.maxLife);
-      const heat = computeDebrisHeat(
-        distToPortal,
-        d.startDist ?? 24,
-        coreR > 0 ? coreR : 5,
-        lifeRatio,
-      );
+      const heat = fragmentHeat(d, distToPortal, coreR);
       const heatStep = Math.round(heat * DEBRIS_HEAT_STEPS);
       const bodyColor = this.debrisColor(d.color, heatStep);
 

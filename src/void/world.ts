@@ -946,6 +946,17 @@ export class VoidWorld {
     return Math.max(1, total);
   }
 
+  /** The loss check only needs one surviving baseline cell. */
+  hasPreservedBaseline(): boolean {
+    const { material, hp, isBaselineCell, baselineCellValue } = this;
+    for (let i = 0; i < material.length; i++) {
+      const mat = material[i];
+      if (isBaselineCell[i] && baselineCellValue[i] > 0 && hp[i] > 0 &&
+          mat !== CellMaterial.VOID && mat !== CellMaterial.UNCLAIMED && mat !== CellMaterial.EMPTY) return true;
+    }
+    return false;
+  }
+
   /** Calculates current preserved scorable baseline value (never exceeding `totalBaselineValue`). */
   computePreservedBaseline(): {
     preservedValue: number;

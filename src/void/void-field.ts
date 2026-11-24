@@ -66,6 +66,10 @@ export class VoidField {
   private remainderMicroWork = 0;
   /** Active frontier non-Void cell indices that are orthogonally adjacent to at least one Void cell. */
   readonly frontierCells: number[] = [];
+  /** Changes when the row-major set of exposed cells changes. */
+  frontierRevision = 0;
+  private frontierWeights = new Float64Array(0);
+  private frontierShares = new Float64Array(0);
   /** Number of Void neighbors (1..4) for each cell in `frontierCells`. */
   readonly frontierContactCount: Uint8Array;
   /** Total Void cells currently on the map. */
@@ -357,34 +361,53 @@ export class VoidField {
 
   /** Scans the grid to rebuild `frontierCells`, `frontierContactCount`, and `voidCellCount`. */
   rebuildFrontier(world: VoidWorld): void {
-    this.frontierCells.length = 0;
+    const frontier = this.frontierCells;
+    const previousLength = frontier.length;
+    let nextLength = 0;
+    let changed = false;
     this.frontierContactCount.fill(0);
     let vCount = 0;
-    const { w, h, count } = world.grid;
+    const { w, h } = world.grid;
     const mat = world.material;
     const hasSeals = this.quarantineSeals.length > 0;
     const hasFrozen = this.frozenVoidCells.size > 0;
+    const hasRestrictions = hasSeals || hasFrozen;
 
-    for (let i = 0; i < count; i++) {
-      if (mat[i] === CellMaterial.VOID) {
-        vCount++;
-        continue;
-      }
-      const x = i % w;
-      const y = (i / w) | 0;
-      const cx = x + 0.5;
-      const cy = y + 0.5;
-      let contacts = 0;
-      if (x > 0 && mat[i - 1] === CellMaterial.VOID && (!hasFrozen || !this.frozenVoidCells.has(i - 1)) && (!hasSeals || !this.isEdgeBlockedBySeal(cx, cy, cx - 1, cy))) contacts++;
-      if (x + 1 < w && mat[i + 1] === CellMaterial.VOID && (!hasFrozen || !this.frozenVoidCells.has(i + 1)) && (!hasSeals || !this.isEdgeBlockedBySeal(cx, cy, cx + 1, cy))) contacts++;
-      if (y > 0 && mat[i - w] === CellMaterial.VOID && (!hasFrozen || !this.frozenVoidCells.has(i - w)) && (!hasSeals || !this.isEdgeBlockedBySeal(cx, cy, cx, cy - 1))) contacts++;
-      if (y + 1 < h && mat[i + w] === CellMaterial.VOID && (!hasFrozen || !this.frozenVoidCells.has(i + w)) && (!hasSeals || !this.isEdgeBlockedBySeal(cx, cy, cx, cy + 1))) contacts++;
-
-      if (contacts > 0) {
+    for (let y = 0; y < h; y++) {
+      const row = y * w;
+      for (let x = 0; x < w; x++) {
+        const i = row + x;
+        if (mat[i] === CellMaterial.VOID) {
+          vCount++;
+          continue;
+        }
+        const west = x > 0 && mat[i - 1] === CellMaterial.VOID;
+        const east = x + 1 < w && mat[i + 1] === CellMaterial.VOID;
+        const north = y > 0 && mat[i - w] === CellMaterial.VOID;
+        const south = y + 1 < h && mat[i + w] === CellMaterial.VOID;
+        if (!west && !east && !north && !south) continue;
+        let contacts = 0;
+        if (hasRestrictions) {
+          const cx = x + 0.5;
+          const cy = y + 0.5;
+          if (west && (!hasFrozen || !this.frozenVoidCells.has(i - 1)) && (!hasSeals || !this.isEdgeBlockedBySeal(cx, cy, cx - 1, cy))) contacts++;
+          if (east && (!hasFrozen || !this.frozenVoidCells.has(i + 1)) && (!hasSeals || !this.isEdgeBlockedBySeal(cx, cy, cx + 1, cy))) contacts++;
+          if (north && (!hasFrozen || !this.frozenVoidCells.has(i - w)) && (!hasSeals || !this.isEdgeBlockedBySeal(cx, cy, cx, cy - 1))) contacts++;
+          if (south && (!hasFrozen || !this.frozenVoidCells.has(i + w)) && (!hasSeals || !this.isEdgeBlockedBySeal(cx, cy, cx, cy + 1))) contacts++;
+        } else {
+          contacts = Number(west) + Number(east) + Number(north) + Number(south);
+        }
+        if (contacts === 0) continue;
         this.frontierContactCount[i] = contacts;
-        this.frontierCells.push(i);
+        if (frontier[nextLength] !== i) {
+          changed = true;
+          frontier[nextLength] = i;
+        }
+        nextLength++;
       }
     }
+    frontier.length = nextLength;
+    if (changed || nextLength !== previousLength) this.frontierRevision++;
     this.voidCellCount = vCount;
   }
 
@@ -647,8 +670,7 @@ export class VoidField {
     this.rebuildFrontier(world);
 
     // 2. Check immediate victory/defeat or zero-contact conditions
-    const preserved = world.computePreservedBaseline();
-    if (preserved.preservedValue <= 0) {
+    if (!world.hasPreservedBaseline()) {
       return "cityConsumedDefeat";
     }
 
@@ -741,7 +763,13 @@ export class VoidField {
     // Calculate weighted perimeter so sacrificial land islands with `perimeterResonanceBonus`
     // or cells near Void Nodes draw proportional shares of the fixed `workAvailable` budget.
     let totalWeightedEdges = 0;
-    const weights = new Float64Array(this.frontierCells.length);
+    const nFront = this.frontierCells.length;
+    if (this.frontierWeights.length < nFront) {
+      const capacity = Math.max(nFront, this.frontierWeights.length * 2);
+      this.frontierWeights = new Float64Array(capacity);
+      this.frontierShares = new Float64Array(capacity);
+    }
+    const weights = this.frontierWeights;
 
     for (let i = 0; i < this.frontierCells.length; i++) {
       const cIdx = this.frontierCells[i];
@@ -789,13 +817,9 @@ export class VoidField {
 
     const totalMicroWork = Math.round(workAvailable * PIXEL_WORK_SCALE) + this.remainderMicroWork;
     let spentMicroWork = 0;
-    const nFront = this.frontierCells.length;
-    const cellMicroShares = new Float64Array(nFront);
-    const cellIndexToSlot = new Map<number, number>();
+    const cellMicroShares = this.frontierShares;
 
     for (let i = 0; i < nFront; i++) {
-      const cIdx = this.frontierCells[i];
-      cellIndexToSlot.set(cIdx, i);
       const share = Math.floor((totalMicroWork * weights[i]) / totalWeightedEdges);
       cellMicroShares[i] = share;
       spentMicroWork += share;
@@ -804,7 +828,7 @@ export class VoidField {
     // 5a. Boundary Prism conservative directional pressure redirection (order-independent, combined per-source cap)
     if (opts.prisms) {
       const COMBINED_PRISM_REDIRECT_CAP = 0.45;
-      const origShares = new Int32Array(cellMicroShares);
+      const origShares = new Int32Array(cellMicroShares.subarray(0, nFront));
       const totalWant = new Int32Array(nFront);
       const redirectedAdd = new Int32Array(nFront);
       const prismEntries: { receivers: number[]; wantByCell: Map<number, number> }[] = [];
