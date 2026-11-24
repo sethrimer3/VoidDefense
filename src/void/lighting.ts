@@ -1553,6 +1553,7 @@ export class LightingEngine {
     let r = 82 + preset.ambientColor[0] * 115 + preset.sunIntensity * preset.sunColor[0] * 85;
     let g = 104 + preset.ambientColor[1] * 125 + preset.sunIntensity * preset.sunColor[1] * 85;
     let b = 148 + preset.ambientColor[2] * 140 + preset.sunIntensity * preset.sunColor[2] * 90;
+    let lightEnergy = 0;
     const lights = this.compiledLights;
     for (let i = 0; i < lights.length; i++) {
       const l = lights[i];
@@ -1567,6 +1568,7 @@ export class LightingEngine {
       r += l.r * atten * gain;
       g += l.g * atten * gain;
       b += l.b * atten * gain;
+      lightEnergy += (l.r + l.g + l.b) * atten;
     }
     if (this.haloW > 0 && preset.neonIntensity > 0.2) {
       const hx = Math.max(0, Math.min(this.haloW - 1, x >> 1));
@@ -1576,9 +1578,11 @@ export class LightingEngine {
       r += this.halo[hi] * hBoost;
       g += this.halo[hi + 1] * hBoost;
       b += this.halo[hi + 2] * hBoost;
+      lightEnergy += (this.halo[hi] + this.halo[hi + 1] + this.halo[hi + 2]) * (hBoost / 255);
     }
     const q = (v: number) => Math.min(255, Math.max(40, Math.round(v / 8) * 8));
-    const alpha = splash ? "0.82" : "0.66";
+    const glint = Math.min(1, lightEnergy * 0.45);
+    const alpha = (splash ? 0.16 + glint * 0.12 : 0.11 + glint * 0.11).toFixed(2);
     return `rgba(${q(r)}, ${q(g)}, ${q(b)}, ${alpha})`;
   }
 

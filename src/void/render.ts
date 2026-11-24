@@ -556,8 +556,8 @@ export class VoidRenderer {
     return null;
   }
 
-  /** Paints deterministic slanted whole-pixel rain streaks (2–3 per 16x16 tile) and tiny impact splash pixels,
-   * shaded by nearby point lights and neon halos so raindrops glint near bright fixtures. */
+  /** Paints deterministic slanted whole-pixel rain droplets (1–2 per 16x16 tile) and tiny impact splash pixels,
+   * shaded by nearby point lights and neon halos so raindrops glint softly near bright fixtures. */
   private paintRainPass(
     rawScene: CanvasRenderingContext2D,
     world: VoidWorld,
@@ -569,8 +569,8 @@ export class VoidRenderer {
     const ty0 = Math.max(0, Math.floor(viewBounds.y0 / CHUNK_SIZE));
     const tx1 = Math.min(chunksW - 1, Math.floor(viewBounds.x1 / CHUNK_SIZE));
     const ty1 = Math.min(chunksH - 1, Math.floor(viewBounds.y1 / CHUNK_SIZE));
-    const dropsPerTile = this.effectiveLightingQuality === "low" ? 2 : 3;
-    const period = 0.42;
+    const dropsPerTile = this.effectiveLightingQuality === "low" ? 1 : 2;
+    const period = 0.14;
     const { material } = world;
     const { atlasElev } = this.spriteCache;
 
@@ -588,34 +588,29 @@ export class VoidRenderer {
           const ly = (sHash >>> 4) & 15;
           const gx = ix + lx;
           const gy = iy + ly;
-          if (gx < 1 || gx >= w - 1 || gy < 3 || gy >= h - 1) continue;
+          if (gx < 2 || gx >= w - 1 || gy < 16 || gy >= h - 1) continue;
           const idx = gy * w + gx;
           if (material[idx] === CellMaterial.VOID) continue;
           const roofZ = atlasElev[idx];
 
-          if (u < 0.76) {
-            const f = u / 0.76;
-            const altitude = Math.round((1 - f) * 5);
-            const sx = gx - Math.round((1 - f) * 2);
+          if (u < 0.82) {
+            const f = u / 0.82;
+            const altitude = Math.round((1 - f) * 14);
+            const sx = gx - (altitude >> 2);
             const sy = gy - roofZ - altitude;
-            if (sx < 0 || sx >= w - 1 || sy < 2 || sy >= h) continue;
+            if (sx < 0 || sx >= w - 1 || sy < 1 || sy >= h) continue;
             rawScene.fillStyle = this.lighting.rainGlintStyle(gx, gy, roofZ + altitude + 1, false);
-            // Thin slanted whole-pixel streak (1 px step right per 2 px step down)
-            rawScene.fillRect(sx, sy - 2, 1, 1);
-            rawScene.fillRect(sx, sy - 1, 1, 1);
-            rawScene.fillRect(sx + 1, sy, 1, 1);
+            // Tiny fast-falling 1-px droplet (with a fainter 1-px upper tail at close zoom)
+            rawScene.fillRect(sx, sy, 1, 1);
+            if (this.cam.s >= 2.5 && ((sx + sy) & 1) === 0) {
+              rawScene.fillRect(sx, sy - 1, 1, 1);
+            }
           } else {
             // Tiny 1-pixel impact splash on ground or roof
-            const splashAge = (u - 0.76) / 0.24;
             const sy = gy - roofZ;
             if (sy < 1 || sy >= h) continue;
             rawScene.fillStyle = this.lighting.rainGlintStyle(gx, gy, roofZ + 0.5, true);
-            if (splashAge < 0.45) {
-              rawScene.fillRect(gx, sy, 1, 1);
-            } else {
-              if (gx > 0) rawScene.fillRect(gx - 1, sy, 1, 1);
-              if (gx + 1 < w) rawScene.fillRect(gx + 1, sy, 1, 1);
-            }
+            rawScene.fillRect(gx, sy, 1, 1);
           }
         }
       }
