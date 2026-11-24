@@ -802,7 +802,7 @@ export function collectSceneLights(
       if (world.material[byFloor * w + bxFloor] === CellMaterial.VOID) continue;
       inViewBuildings.push(b);
     }
-    const targetBldLights = quality === "low" ? 6 : quality === "medium" ? 12 : 18;
+    const targetBldLights = quality === "low" ? 5 : quality === "medium" ? 9 : 14;
     const bStride = Math.max(1, Math.floor(inViewBuildings.length / targetBldLights));
     for (let i = 0; i < inViewBuildings.length; i += bStride) {
       const b = inViewBuildings[i];
@@ -810,7 +810,7 @@ export function collectSceneLights(
       // neon canopy visibly pools saturated cyan/blue light onto the street and casts long shadows!
       const bx = b.x + b.w * 0.5;
       const by = Math.min(h - 1.5, b.y + b.h + 0.8);
-      const radius = b.isSkyscraper ? 23 : 18;
+      const radius = b.isSkyscraper ? 21 : 17;
       const bElev = elevationOf(b, buildingHeight);
       const hum = (reduceEffects ? 0.94 : 0.88 + 0.12 * Math.sin(animTime * 3.8 + b.id)) * neonMult;
       const isWarmStorefront = ((b.id * 7 + b.variant * 3) & 7) === 3;
@@ -1071,15 +1071,21 @@ export class LightingEngine {
   private tileLightsLo = new Uint32Array(0);
   private tileLightsHi = new Uint32Array(0);
   private tileVisited = new Uint8Array(0);
+  private tileActiveInFrame = new Uint8Array(0);
+  private tileAmbientClean = new Uint8Array(0);
+  private tileHadPointLight = new Uint8Array(0);
   private prevActiveTiles: number[] = [];
   private curActiveTiles: number[] = [];
 
   /** Current active TimeOfDayPreset used for global shading when `timeOfDayActive` is true. */
   activePreset: TimeOfDayPreset = TIME_OF_DAY_PRESETS.night;
   private lastPresetKey = "";
-  /** Low-res (`w/2 x h/2`) emissive halo spill buffers (light spill around emissive pixels, not screen bloom). */
+  /** Cached 1/2-res (`w/2 x h/2`) emissive halo spill buffers (rebuilt only when geometry or preset changes). */
   private haloW = 0;
   private haloH = 0;
+  private haloRevision = -1;
+  private haloPresetKey = "";
+  private haloBoundsKey = "";
   private haloR = new Float32Array(0);
   private haloG = new Float32Array(0);
   private haloB = new Float32Array(0);
@@ -1141,6 +1147,9 @@ export class LightingEngine {
       this.haloTmpR = new Float32Array(haloCount);
       this.haloTmpG = new Float32Array(haloCount);
       this.haloTmpB = new Float32Array(haloCount);
+      this.haloRevision = -1;
+      this.haloPresetKey = "";
+      this.haloBoundsKey = "";
       this.lastPresetKey = "";
 
       const tileCount = chunksW * chunksH;
@@ -1148,6 +1157,9 @@ export class LightingEngine {
       this.tileLightsLo = new Uint32Array(tileCount);
       this.tileLightsHi = new Uint32Array(tileCount);
       this.tileVisited = new Uint8Array(tileCount);
+      this.tileActiveInFrame = new Uint8Array(tileCount);
+      this.tileAmbientClean = new Uint8Array(tileCount);
+      this.tileHadPointLight = new Uint8Array(tileCount);
       this.prevActiveTiles.length = 0;
       this.curActiveTiles.length = 0;
 
@@ -1167,12 +1179,15 @@ export class LightingEngine {
     this.geometryRevision = ++this.shadowRevision;
     if (rebuildAll || !dirtyChunkFlags) {
       this.shadowTileRevision.fill(this.shadowRevision);
+      this.tileAmbientClean.fill(0);
       this.bakeChunkNormalsAndElev(world, mode, 0, 0, w, h);
       return;
     }
+    let anyDirty = false;
     for (let cy = 0; cy < chunksH; cy++) {
       for (let cx = 0; cx < chunksW; cx++) {
         if (!dirtyChunkFlags[cy * chunksW + cx]) continue;
+        anyDirty = true;
         const x0 = cx * CHUNK_SIZE;
         const y0 = cy * CHUNK_SIZE;
         const x1 = Math.min(w, x0 + CHUNK_SIZE);
@@ -1183,8 +1198,13 @@ export class LightingEngine {
         const right = Math.min(chunksW, cx + 2);
         for (let row = Math.max(0, cy - 1); row <= Math.min(chunksH - 1, cy + 1); row++) {
           this.shadowTileRevision.fill(this.shadowRevision, row * chunksW + left, row * chunksW + right);
+          this.tileAmbientClean.fill(0, row * chunksW + left, row * chunksW + right);
         }
       }
+    }
+    if (!anyDirty) {
+      this.shadowRevision--;
+      this.geometryRevision = this.shadowRevision;
     }
   }
 
@@ -1462,21 +1482,29 @@ export class LightingEngine {
       tileLightsLo,
       tileLightsHi,
       tileVisited,
+      tileActiveInFrame,
       prevActiveTiles,
       curActiveTiles,
     } = this;
 
+    let pKey = "";
     if (preset) {
       this.activePreset = preset;
-      const pKey = `${preset.id}:${preset.shadowReachScale.toFixed(2)}:${preset.shadowStrengthScale.toFixed(2)}`;
+      pKey = `${preset.id}:${preset.sunIntensity.toFixed(2)}:${preset.neonIntensity.toFixed(2)}:${preset.shadowReachScale.toFixed(2)}`;
       if (pKey !== this.lastPresetKey) {
         this.lastPresetKey = pKey;
         this.roofSunShadow.fill(255);
+        this.tileAmbientClean.fill(0);
       }
+    } else if (this.lastPresetKey !== "") {
+      this.lastPresetKey = "";
+      this.tileAmbientClean.fill(0);
     }
 
-    // 1. Clear only tiles that were lit in the previous frame
-    if (prevActiveTiles.length > 0) {
+    // 1. When point-light-only mode (!preset) runs, clear tiles that were lit in the previous frame.
+    //    When preset mode runs, every active tile in curActiveTiles will overwrite every non-VOID terrain
+    //    and building pixel in place, so we only clear tiles from prevActiveTiles that are no longer active!
+    if (!preset && prevActiveTiles.length > 0) {
       let cMinX = w;
       let cMinY = h;
       let cMaxX = 0;
@@ -1547,6 +1575,7 @@ export class LightingEngine {
           const tileIdx = tRow + tx;
           if (!tileVisited[tileIdx]) {
             tileVisited[tileIdx] = 1;
+            tileActiveInFrame[tileIdx] = 1;
             curActiveTiles.push(tileIdx);
           }
           if (isHi) tileLightsHi[tileIdx] |= bit;
@@ -1574,10 +1603,28 @@ export class LightingEngine {
           const tileIdx = tRow + tx;
           if (!tileVisited[tileIdx]) {
             tileVisited[tileIdx] = 1;
+            tileActiveInFrame[tileIdx] = 1;
             curActiveTiles.push(tileIdx);
           }
         }
       }
+      // Clear only previously active tiles that are NOT active in this frame (e.g. after camera pan)
+      for (let t = 0; t < prevActiveTiles.length; t++) {
+        const tileIdx = prevActiveTiles[t];
+        if (tileActiveInFrame[tileIdx]) continue;
+        const tx = tileIdx % chunksW;
+        const ty = (tileIdx / chunksW) | 0;
+        const x0 = tx * CHUNK_SIZE;
+        const y0 = ty * CHUNK_SIZE;
+        const x1 = Math.min(w, x0 + CHUNK_SIZE);
+        const y1 = Math.min(h, y0 + CHUNK_SIZE);
+        for (let y = y0; y < y1; y++) {
+          const row = y * w;
+          terrainLightU32.fill(0, row + x0, row + x1);
+          buildingLightU32.fill(0, row + x0, row + x1);
+        }
+      }
+      prevActiveTiles.length = 0;
     }
 
     const {
@@ -1593,35 +1640,47 @@ export class LightingEngine {
     const localLights: CompiledLight[] = [];
 
     // 2b. Compute 1/2-res emissive halo spill buffer around emissive building neon strips & Void rim
+    //     (cached across frames until building geometry, preset neonIntensity, or camera tile bounds change)
     const useHalo = Boolean(preset && preset.neonIntensity > 0.25 && this.haloW > 0);
-    const { haloW, haloH, haloR, haloG, haloB, haloTmpR, haloTmpG, haloTmpB } = this;
+    const { haloW, haloR, haloG, haloB, haloTmpR, haloTmpG, haloTmpB } = this;
     if (useHalo && preset) {
       const hx0 = Math.max(0, (vtx0 * CHUNK_SIZE) >> 1);
       const hy0 = Math.max(0, (vty0 * CHUNK_SIZE) >> 1);
       const hx1 = Math.min(haloW - 1, ((vtx1 + 1) * CHUNK_SIZE) >> 1);
-      const hy1 = Math.min(haloH - 1, ((vty1 + 1) * CHUNK_SIZE) >> 1);
-      const neonBoost = preset.neonIntensity * 0.46;
+      const hy1 = Math.min(this.haloH - 1, ((vty1 + 1) * CHUNK_SIZE) >> 1);
+      const bKey = `${hx0},${hy0},${hx1},${hy1}`;
+      if (
+        this.haloRevision !== this.geometryRevision ||
+        this.haloPresetKey !== pKey ||
+        this.haloBoundsKey !== bKey
+      ) {
+        this.haloRevision = this.geometryRevision;
+        this.haloPresetKey = pKey;
+        this.haloBoundsKey = bKey;
+        const neonBoost = preset.neonIntensity * 0.46;
 
-      for (let hy = hy0; hy <= hy1; hy++) {
-        const hRow = hy * haloW;
-        const sy0 = hy << 1;
-        const sy1 = Math.min(h - 1, sy0 + 1);
-        for (let hx = hx0; hx <= hx1; hx++) {
-          const sx0 = hx << 1;
-          const sx1 = Math.min(w - 1, sx0 + 1);
-          let er = 0;
-          let eg = 0;
-          let eb = 0;
-          const coords = [
-            sy0 * w + sx0,
-            sy0 * w + sx1,
-            sy1 * w + sx0,
-            sy1 * w + sx1,
-          ];
-          for (let c = 0; c < 4; c++) {
-            const ci = coords[c];
-            if (atlasSpec[ci] >= 240 && atlasColorU32[ci] !== 0) {
-              const abgr = atlasColorU32[ci];
+        for (let hy = hy0; hy <= hy1; hy++) {
+          const hRow = hy * haloW;
+          const sy0Row = (hy << 1) * w;
+          const sy1Row = Math.min(h - 1, (hy << 1) + 1) * w;
+          for (let hx = hx0; hx <= hx1; hx++) {
+            const sx0 = hx << 1;
+            const sx1 = Math.min(w - 1, sx0 + 1);
+            let er = 0;
+            let eg = 0;
+            let eb = 0;
+            const c0 = sy0Row + sx0;
+            const c1 = sy0Row + sx1;
+            const c2 = sy1Row + sx0;
+            const c3 = sy1Row + sx1;
+            if (atlasSpec[c0] >= 240 && atlasColorU32[c0] !== 0) {
+              const abgr = atlasColorU32[c0];
+              er = (IS_LITTLE_ENDIAN ? abgr & 255 : abgr >>> 24) * (1 / 255);
+              eg = ((abgr >>> (IS_LITTLE_ENDIAN ? 8 : 16)) & 255) * (1 / 255);
+              eb = ((abgr >>> (IS_LITTLE_ENDIAN ? 16 : 8)) & 255) * (1 / 255);
+            }
+            if (atlasSpec[c1] >= 240 && atlasColorU32[c1] !== 0) {
+              const abgr = atlasColorU32[c1];
               const r = (IS_LITTLE_ENDIAN ? abgr & 255 : abgr >>> 24) * (1 / 255);
               const g = ((abgr >>> (IS_LITTLE_ENDIAN ? 8 : 16)) & 255) * (1 / 255);
               const b = ((abgr >>> (IS_LITTLE_ENDIAN ? 16 : 8)) & 255) * (1 / 255);
@@ -1629,55 +1688,73 @@ export class LightingEngine {
               if (g > eg) eg = g;
               if (b > eb) eb = b;
             }
+            if (atlasSpec[c2] >= 240 && atlasColorU32[c2] !== 0) {
+              const abgr = atlasColorU32[c2];
+              const r = (IS_LITTLE_ENDIAN ? abgr & 255 : abgr >>> 24) * (1 / 255);
+              const g = ((abgr >>> (IS_LITTLE_ENDIAN ? 8 : 16)) & 255) * (1 / 255);
+              const b = ((abgr >>> (IS_LITTLE_ENDIAN ? 16 : 8)) & 255) * (1 / 255);
+              if (r > er) er = r;
+              if (g > eg) eg = g;
+              if (b > eb) eb = b;
+            }
+            if (atlasSpec[c3] >= 240 && atlasColorU32[c3] !== 0) {
+              const abgr = atlasColorU32[c3];
+              const r = (IS_LITTLE_ENDIAN ? abgr & 255 : abgr >>> 24) * (1 / 255);
+              const g = ((abgr >>> (IS_LITTLE_ENDIAN ? 8 : 16)) & 255) * (1 / 255);
+              const b = ((abgr >>> (IS_LITTLE_ENDIAN ? 16 : 8)) & 255) * (1 / 255);
+              if (r > er) er = r;
+              if (g > eg) eg = g;
+              if (b > eb) eb = b;
+            }
+            const hi = hRow + hx;
+            haloTmpR[hi] = er * neonBoost;
+            haloTmpG[hi] = eg * neonBoost;
+            haloTmpB[hi] = eb * neonBoost;
           }
-          const hi = hRow + hx;
-          haloTmpR[hi] = er * neonBoost;
-          haloTmpG[hi] = eg * neonBoost;
-          haloTmpB[hi] = eb * neonBoost;
         }
-      }
-      // Separable 5-tap horizontal + vertical halo spread in the 1/2-res buffer (~4..5 world px spill radius)
-      for (let hy = hy0; hy <= hy1; hy++) {
-        const hRow = hy * haloW;
-        for (let hx = hx0; hx <= hx1; hx++) {
-          const xm2 = Math.max(hx0, hx - 2);
-          const xm1 = Math.max(hx0, hx - 1);
-          const xp1 = Math.min(hx1, hx + 1);
-          const xp2 = Math.min(hx1, hx + 2);
-          const hi = hRow + hx;
-          haloR[hi] =
-            haloTmpR[hi] * 0.42 +
-            (haloTmpR[hRow + xm1] + haloTmpR[hRow + xp1]) * 0.24 +
-            (haloTmpR[hRow + xm2] + haloTmpR[hRow + xp2]) * 0.12;
-          haloG[hi] =
-            haloTmpG[hi] * 0.42 +
-            (haloTmpG[hRow + xm1] + haloTmpG[hRow + xp1]) * 0.24 +
-            (haloTmpG[hRow + xm2] + haloTmpG[hRow + xp2]) * 0.12;
-          haloB[hi] =
-            haloTmpB[hi] * 0.42 +
-            (haloTmpB[hRow + xm1] + haloTmpB[hRow + xp1]) * 0.24 +
-            (haloTmpB[hRow + xm2] + haloTmpB[hRow + xp2]) * 0.12;
+        // Separable 5-tap horizontal + vertical halo spread in the 1/2-res buffer (~4..5 world px spill radius)
+        for (let hy = hy0; hy <= hy1; hy++) {
+          const hRow = hy * haloW;
+          for (let hx = hx0; hx <= hx1; hx++) {
+            const xm2 = Math.max(hx0, hx - 2);
+            const xm1 = Math.max(hx0, hx - 1);
+            const xp1 = Math.min(hx1, hx + 1);
+            const xp2 = Math.min(hx1, hx + 2);
+            const hi = hRow + hx;
+            haloR[hi] =
+              haloTmpR[hi] * 0.42 +
+              (haloTmpR[hRow + xm1] + haloTmpR[hRow + xp1]) * 0.24 +
+              (haloTmpR[hRow + xm2] + haloTmpR[hRow + xp2]) * 0.12;
+            haloG[hi] =
+              haloTmpG[hi] * 0.42 +
+              (haloTmpG[hRow + xm1] + haloTmpG[hRow + xp1]) * 0.24 +
+              (haloTmpG[hRow + xm2] + haloTmpG[hRow + xp2]) * 0.12;
+            haloB[hi] =
+              haloTmpB[hi] * 0.42 +
+              (haloTmpB[hRow + xm1] + haloTmpB[hRow + xp1]) * 0.24 +
+              (haloTmpB[hRow + xm2] + haloTmpB[hRow + xp2]) * 0.12;
+          }
         }
-      }
-      for (let hy = hy0; hy <= hy1; hy++) {
-        const ym2 = Math.max(hy0, hy - 2) * haloW;
-        const ym1 = Math.max(hy0, hy - 1) * haloW;
-        const y0Row = hy * haloW;
-        const yp1 = Math.min(hy1, hy + 1) * haloW;
-        const yp2 = Math.min(hy1, hy + 2) * haloW;
-        for (let hx = hx0; hx <= hx1; hx++) {
-          haloTmpR[y0Row + hx] =
-            haloR[y0Row + hx] * 0.42 +
-            (haloR[ym1 + hx] + haloR[yp1 + hx]) * 0.24 +
-            (haloR[ym2 + hx] + haloR[yp2 + hx]) * 0.12;
-          haloTmpG[y0Row + hx] =
-            haloG[y0Row + hx] * 0.42 +
-            (haloG[ym1 + hx] + haloG[yp1 + hx]) * 0.24 +
-            (haloG[ym2 + hx] + haloG[yp2 + hx]) * 0.12;
-          haloTmpB[y0Row + hx] =
-            haloB[y0Row + hx] * 0.42 +
-            (haloB[ym1 + hx] + haloB[yp1 + hx]) * 0.24 +
-            (haloB[ym2 + hx] + haloB[yp2 + hx]) * 0.12;
+        for (let hy = hy0; hy <= hy1; hy++) {
+          const ym2 = Math.max(hy0, hy - 2) * haloW;
+          const ym1 = Math.max(hy0, hy - 1) * haloW;
+          const y0Row = hy * haloW;
+          const yp1 = Math.min(hy1, hy + 1) * haloW;
+          const yp2 = Math.min(hy1, hy + 2) * haloW;
+          for (let hx = hx0; hx <= hx1; hx++) {
+            haloTmpR[y0Row + hx] =
+              haloR[y0Row + hx] * 0.42 +
+              (haloR[ym1 + hx] + haloR[yp1 + hx]) * 0.24 +
+              (haloR[ym2 + hx] + haloR[yp2 + hx]) * 0.12;
+            haloTmpG[y0Row + hx] =
+              haloG[y0Row + hx] * 0.42 +
+              (haloG[ym1 + hx] + haloG[yp1 + hx]) * 0.24 +
+              (haloG[ym2 + hx] + haloG[yp2 + hx]) * 0.12;
+            haloTmpB[y0Row + hx] =
+              haloB[y0Row + hx] * 0.42 +
+              (haloB[ym1 + hx] + haloB[yp1 + hx]) * 0.24 +
+              (haloB[ym2 + hx] + haloB[yp2 + hx]) * 0.12;
+          }
         }
       }
     }
@@ -1686,6 +1763,10 @@ export class LightingEngine {
     let minY = h;
     let maxX = 0;
     let maxY = 0;
+    let putMinX = w;
+    let putMinY = h;
+    let putMaxX = 0;
+    let putMaxY = 0;
     let hasTerrain = false;
     let hasBuilding = false;
 
@@ -1701,6 +1782,7 @@ export class LightingEngine {
       tileLightsLo[tileIdx] = 0;
       tileLightsHi[tileIdx] = 0;
       tileVisited[tileIdx] = 0;
+      tileActiveInFrame[tileIdx] = 0;
       prevActiveTiles.push(tileIdx);
 
       localLights.length = 0;
@@ -1716,6 +1798,28 @@ export class LightingEngine {
       }
       const nLocal = localLights.length;
       if (nLocal === 0 && !preset) continue;
+      if (preset && nLocal === 0) {
+        if (this.tileAmbientClean[tileIdx] && !this.tileHadPointLight[tileIdx]) {
+          const tx = tileIdx % chunksW;
+          const ty = (tileIdx / chunksW) | 0;
+          const x0 = tx * CHUNK_SIZE;
+          const y0 = ty * CHUNK_SIZE;
+          const x1 = Math.min(w, x0 + CHUNK_SIZE);
+          const y1 = Math.min(h, y0 + CHUNK_SIZE);
+          if (x0 < minX) minX = x0;
+          if (y0 < minY) minY = y0;
+          if (x1 > maxX) maxX = x1;
+          if (y1 > maxY) maxY = y1;
+          hasTerrain = true;
+          hasBuilding = true;
+          continue;
+        }
+        this.tileAmbientClean[tileIdx] = 1;
+        this.tileHadPointLight[tileIdx] = 0;
+      } else if (preset) {
+        this.tileHadPointLight[tileIdx] = 1;
+        this.tileAmbientClean[tileIdx] = 0;
+      }
 
       const tx = tileIdx % chunksW;
       const ty = (tileIdx / chunksW) | 0;
@@ -1728,6 +1832,10 @@ export class LightingEngine {
       if (y0 < minY) minY = y0;
       if (x1 > maxX) maxX = x1;
       if (y1 > maxY) maxY = y1;
+      if (x0 < putMinX) putMinX = x0;
+      if (y0 < putMinY) putMinY = y0;
+      if (x1 > putMaxX) putMaxX = x1;
+      if (y1 > putMaxY) putMaxY = y1;
 
       for (let sy = y0; sy < y1; sy++) {
         const row = sy * w;
@@ -1737,8 +1845,14 @@ export class LightingEngine {
           const bldAbgr = atlasColorU32[i];
           const isBuilding = bldAbgr !== 0;
 
-          if (!isBuilding && material[i] === CellMaterial.VOID) {
-            continue;
+          if (!isBuilding) {
+            buildingLightU32[i] = 0;
+            if (material[i] === CellMaterial.VOID) {
+              terrainLightU32[i] = 0;
+              continue;
+            }
+          } else {
+            terrainLightU32[i] = 0;
           }
 
           const baseAbgr = isBuilding ? bldAbgr : terrainU32[i];
@@ -1884,13 +1998,15 @@ export class LightingEngine {
 
     if (maxX > minX && maxY > minY) {
       this.dirtyBounds = { x0: minX, y0: minY, x1: maxX, y1: maxY, hasTerrain, hasBuilding };
-      const dw = maxX - minX;
-      const dh = maxY - minY;
-      if (hasTerrain && this.terrainCtx && this.terrainImageData) {
-        this.terrainCtx.putImageData(this.terrainImageData, 0, 0, minX, minY, dw, dh);
-      }
-      if (hasBuilding && this.buildingCtx && this.buildingImageData) {
-        this.buildingCtx.putImageData(this.buildingImageData, 0, 0, minX, minY, dw, dh);
+      if (putMaxX > putMinX && putMaxY > putMinY) {
+        const dw = putMaxX - putMinX;
+        const dh = putMaxY - putMinY;
+        if (hasTerrain && this.terrainCtx && this.terrainImageData) {
+          this.terrainCtx.putImageData(this.terrainImageData, 0, 0, putMinX, putMinY, dw, dh);
+        }
+        if (hasBuilding && this.buildingCtx && this.buildingImageData) {
+          this.buildingCtx.putImageData(this.buildingImageData, 0, 0, putMinX, putMinY, dw, dh);
+        }
       }
     }
   }
