@@ -358,8 +358,13 @@ export function roofColorAt(
       else if (dx === 0 && dy === 0) color = pal.litEdge;
       else if (Math.abs(dx) <= 1 && Math.abs(dy) <= 1 && (lx + ly) % 2 === 0) color = pal.roofAccent;
     }
-    // Restrained rooftop beacon/mechanical accent on developed towers
-    if (b.development > 1.05 && lx === 1 && ly === 1) color = pal.neonCore;
+    // Coherent rooftop neon strips / beacons on skyscrapers & developed buildings
+    const hasRoofNeonStrip = (b.isSkyscraper || b.development > 1.05 || (b.id & 3) === 0) && b.w >= 4;
+    if (hasRoofNeonStrip && ly === b.h - 2 && lx >= 1 && lx <= b.w - 2) {
+      color = lx === 1 || lx === b.w - 2 ? pal.neonEdge : pal.neonCore;
+    } else if (b.isSkyscraper && b.h >= 5 && lx === 1 && ly >= 1 && ly <= b.h - 2 && (b.id & 1) === 0) {
+      color = ly === 1 || ly === b.h - 2 ? pal.neonEdge : pal.neonCore;
+    }
   }
 
   if (hp < 0.4) color = r < 0.18 ? "#8c38d4" : "#221a24";
@@ -389,24 +394,68 @@ export function facadeColorAt(
   if (b.archStyle === "homestead" || b.archStyle === "barn") {
     const lx = x - b.x;
     if (lx === Math.floor(b.w / 2) && fRow === 0) return "#503a2b";
-    if (lx % 3 === 1) return hpRatio > 0.35 ? "#f7d58c" : "#4a3327";
+    if (lx % 3 === 1 && fRow <= 1) return hpRatio > 0.35 ? "#ffd884" : "#4a3327";
     return b.archStyle === "barn" ? (lx % 2 === 0 ? "#a04b38" : "#803b2e") : "#ddc8a0";
   }
-  // Base lobby / awning row at ground level
-  if (fRow === 0) {
-    return (x + b.variant) % 5 === 0 && hpRatio > 0.35 ? pal.neonEdge : pal.shadeEdge;
-  }
-  // Subtle cornice band right under a setback terrace or crown
-  if (fRow === elev - 1 && (b.archStyle === "cyberArcology" || b.archStyle === "artDecoSetback")) {
-    return pal.litEdge;
-  }
-  // Window columns every 2 px
   const lx = x - b.x;
+  const midX = Math.floor(b.w * 0.5);
+  const feat = (b.id * 7 + b.variant * 3) & 3;
+
+  // 1. Wide glowing ground-floor storefront / lobby neon canopy (3..5 px wide contiguous strip)
+  if (fRow === 0 && hpRatio > 0.35 && b.w >= 4) {
+    const span = Math.max(1, Math.min(2, Math.floor((b.w - 2) * 0.38)));
+    if (Math.abs(lx - midX) <= span) {
+      return Math.abs(lx - midX) === span ? pal.neonEdge : pal.neonCore;
+    }
+    return pal.shadeEdge;
+  }
+
+  // 2. Crown / upper cornice neon strip on skyscrapers or cyber arcologies
+  if (
+    fRow === elev - 1 &&
+    hpRatio > 0.35 &&
+    (b.isSkyscraper || b.archStyle === "cyberArcology" || feat === 0) &&
+    lx >= 1 &&
+    lx <= b.w - 2
+  ) {
+    return lx === 1 || lx === b.w - 2 ? pal.neonEdge : pal.neonCore;
+  }
+
+  // 3. Vertical neon sign / strip down a primary facade column (feat 0 or 1 on taller buildings)
+  if (
+    elev >= 3 &&
+    hpRatio > 0.35 &&
+    (feat === 1 || (b.isSkyscraper && feat === 2)) &&
+    lx === (b.id & 1 ? 1 : Math.max(1, b.w - 2)) &&
+    fRow >= 1 &&
+    fRow <= elev - 1
+  ) {
+    return fRow === 1 || fRow === elev - 1 ? pal.neonEdge : pal.neonCore;
+  }
+
+  // 4. Horizontal neon sign or 2x2 lit window bay (feat 2 or 3)
+  if (elev >= 3 && hpRatio > 0.35) {
+    const signRow = Math.max(1, Math.min(elev - 2, Math.floor(elev * 0.55)));
+    if (
+      (feat === 2 || feat === 3) &&
+      (fRow === signRow || (elev >= 5 && fRow === signRow + 1)) &&
+      lx >= 1 &&
+      lx <= Math.min(b.w - 2, 4)
+    ) {
+      // Warm amber vs Tron cyan window/sign contrast on feat === 3
+      if (feat === 3 && (b.id & 1) === 1) {
+        return fRow === signRow ? "#ffd166" : "#ff9e38";
+      }
+      return lx === 1 ? pal.neonEdge : pal.neonCore;
+    }
+  }
+
+  // 5. Recessed structural window columns (mostly dark glass so large neon features pop with high contrast)
   const isWindowCol = lx % 2 === 1;
   if (isWindowCol) {
-    const litRoll = hash01(world.seed, 965, b.id, lx, fRow);
-    if (litRoll < 0.24 && hpRatio > 0.3) {
-      return litRoll < 0.08 ? pal.neonCore : pal.litEdge;
+    const bandRoll = hash01(world.seed, 965, b.id, Math.floor(fRow / 2), 0);
+    if (bandRoll < 0.14 && hpRatio > 0.35 && lx >= 1 && lx <= b.w - 2) {
+      return (b.id + fRow) % 3 === 0 ? "#ffd166" : pal.litEdge;
     }
     return pal.shadeEdge;
   }
@@ -641,20 +690,20 @@ export function buildBuildingSprite(
               nx += ((cx * 7 + f * 13) & 2) === 0 ? -0.38 : 0.38;
               ny = 0.88;
               nz = 0.28;
-              spec = fCol === "#48e5ff" ? 180 : 65;
+              spec = fCol === "#48e5ff" || fCol === pal.neonCore ? 245 : 65;
               partRelief -= 0.22;
             }
           } else if (rustic) {
             // Timber & clapboard siding bevels
             ny += (f & 1) === 0 ? 0.08 : -0.08;
             nz += (f & 1) === 0 ? -0.06 : 0.14;
-            spec = lx % 3 === 1 ? 120 : 35;
+            spec = fCol === "#ffd884" ? 242 : lx % 3 === 1 ? 120 : 35;
             partRelief += (f & 1) === 0 ? 0.12 : -0.08;
           } else if (f === 0 || f === elev - 1) {
             // Ground lobby awning or upper cornice band
             ny = 0.62;
             nz = 0.78;
-            spec = 95;
+            spec = fCol === pal.neonCore || fCol === pal.neonEdge ? 250 : 95;
             partRelief += 0.24;
           } else if (lx % 2 === 1) {
             // Window column: smooth recessed glass panes with horizontal floor spandrels
@@ -666,15 +715,19 @@ export function buildBuildingSprite(
             } else {
               ny = 0.94;
               nz = 0.34;
-              spec = isGlassStyle ? 220 : 165;
+              spec = isGlassStyle ? 200 : 155;
               partRelief -= 0.18;
             }
+            if (fCol === pal.neonCore || fCol === pal.neonEdge) spec = 250;
+            else if (fCol === "#ffd166" || fCol === "#ff9e38") spec = 242;
           } else {
             // Vertical structural pilaster / mullion rib
             nx += lx < b.w * 0.5 ? -0.26 : 0.26;
             ny = 0.82;
             nz = 0.50;
             partRelief += 0.22;
+            if (fCol === pal.neonCore || fCol === pal.neonEdge) spec = 250;
+            else if (fCol === "#ffd166" || fCol === "#ff9e38") spec = 242;
           }
           baseNx[pIdx] = nx;
           baseNy[pIdx] = ny;
@@ -786,7 +839,7 @@ export function buildBuildingSprite(
         baseNy[pIdx] = ny;
         baseNz[pIdx] = nz;
         microHeight[pIdx] = elev * 0.22 + partRelief;
-        specMap[pIdx] = spec;
+        specMap[pIdx] = rCol === pal.neonCore || rCol === pal.neonEdge ? 250 : spec;
       }
     }
   }

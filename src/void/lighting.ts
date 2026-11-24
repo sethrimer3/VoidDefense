@@ -19,6 +19,118 @@ import type { VoidWorld } from "./world.ts";
 export const MAX_DYNAMIC_LIGHTS = 48;
 
 export type LightingQualityMode = "low" | "medium" | "high";
+export type VoidTimeOfDay = "day" | "sunset" | "night";
+
+export type TimeOfDayPreset = {
+  id: VoidTimeOfDay;
+  /** Unit sun direction vector `(x, y, z)` pointing toward the sun. */
+  sunDir: readonly [number, number, number];
+  /** Sun elevation factor (`0.1..1.0`): high in Day (short shadows), low in Sunset (long dramatic shadows). */
+  sunHeight: number;
+  /** Linear RGB directional sun color. */
+  sunColor: readonly [number, number, number];
+  /** Directional sun intensity multiplier. */
+  sunIntensity: number;
+  /** Base ambient fill linear RGB (deep tinted blue/purple in Sunset & Night, never flat grey/black). */
+  ambientColor: readonly [number, number, number];
+  /** Ambient fill near the Void anomaly (deep cosmic indigo/purple). */
+  voidAmbientColor: readonly [number, number, number];
+  /** Multiplier for neon building, tower, and streetlight emission (`0.35` in Day, `1.0` in Sunset, `1.65` in Night). */
+  neonIntensity: number;
+  /** Atmospheric haze/fog amount catching light near bright sources (`0..0.45`). */
+  hazeAmount: number;
+  /** Shadow reach multiplier (`0.48` short crisp in Day, `1.18` long dramatic in Sunset, `0.95` in Night). */
+  shadowReachScale: number;
+  /** Shadow darkness multiplier (`0.85` in Day, `1.22` in Sunset, `1.15` in Night). */
+  shadowStrengthScale: number;
+};
+
+function norm3(x: number, y: number, z: number): readonly [number, number, number] {
+  const inv = 1 / (Math.hypot(x, y, z) || 1);
+  return [x * inv, y * inv, z * inv] as const;
+}
+
+export const TIME_OF_DAY_PRESETS: Record<VoidTimeOfDay, TimeOfDayPreset> = {
+  day: {
+    id: "day",
+    sunDir: norm3(-0.36, -0.36, 0.86),
+    sunHeight: 0.86,
+    sunColor: [1.02, 0.96, 0.86],
+    sunIntensity: 0.42,
+    ambientColor: [0.84, 0.89, 0.98],
+    voidAmbientColor: [0.76, 0.72, 0.94],
+    neonIntensity: 0.42,
+    hazeAmount: 0.08,
+    shadowReachScale: 0.52,
+    shadowStrengthScale: 0.88,
+  },
+  sunset: {
+    id: "sunset",
+    sunDir: norm3(-0.66, -0.58, 0.48),
+    sunHeight: 0.48,
+    sunColor: [1.38, 0.68, 0.24],
+    sunIntensity: 0.72,
+    ambientColor: [0.36, 0.34, 0.64],
+    voidAmbientColor: [0.42, 0.26, 0.68],
+    neonIntensity: 1.05,
+    hazeAmount: 0.24,
+    shadowReachScale: 1.18,
+    shadowStrengthScale: 1.22,
+  },
+  night: {
+    id: "night",
+    sunDir: norm3(-0.48, -0.52, 0.71),
+    sunHeight: 0.32,
+    sunColor: [0.22, 0.34, 0.62],
+    sunIntensity: 0.14,
+    ambientColor: [0.17, 0.22, 0.44],
+    voidAmbientColor: [0.24, 0.14, 0.48],
+    neonIntensity: 1.65,
+    hazeAmount: 0.34,
+    shadowReachScale: 0.95,
+    shadowStrengthScale: 1.18,
+  },
+};
+
+export function normalizeVoidTimeOfDay(raw: unknown): VoidTimeOfDay {
+  if (raw === "day" || raw === "dawn") return "day";
+  if (raw === "sunset" || raw === "dusk") return "sunset";
+  if (raw === "night" || raw === "twilight") return "night";
+  return "night";
+}
+
+/** Linearly blends two TimeOfDayPresets by `t` (`0..1`) for smooth transitions when switching modes. */
+export function blendTimeOfDayPresets(
+  a: TimeOfDayPreset,
+  b: TimeOfDayPreset,
+  t: number,
+): TimeOfDayPreset {
+  if (t <= 0 || a === b) return a;
+  if (t >= 1) return b;
+  const k = t * t * (3 - 2 * t);
+  const lerp = (u: number, v: number) => u + (v - u) * k;
+  const lerp3 = (
+    u: readonly [number, number, number],
+    v: readonly [number, number, number],
+  ): readonly [number, number, number] => [lerp(u[0], v[0]), lerp(u[1], v[1]), lerp(u[2], v[2])];
+  return {
+    id: k < 0.5 ? a.id : b.id,
+    sunDir: norm3(
+      lerp(a.sunDir[0], b.sunDir[0]),
+      lerp(a.sunDir[1], b.sunDir[1]),
+      lerp(a.sunDir[2], b.sunDir[2]),
+    ),
+    sunHeight: lerp(a.sunHeight, b.sunHeight),
+    sunColor: lerp3(a.sunColor, b.sunColor),
+    sunIntensity: lerp(a.sunIntensity, b.sunIntensity),
+    ambientColor: lerp3(a.ambientColor, b.ambientColor),
+    voidAmbientColor: lerp3(a.voidAmbientColor, b.voidAmbientColor),
+    neonIntensity: lerp(a.neonIntensity, b.neonIntensity),
+    hazeAmount: lerp(a.hazeAmount, b.hazeAmount),
+    shadowReachScale: lerp(a.shadowReachScale, b.shadowReachScale),
+    shadowStrengthScale: lerp(a.shadowStrengthScale, b.shadowStrengthScale),
+  };
+}
 
 export const LIGHTING_QUALITY_CAPS: Record<
   LightingQualityMode,
@@ -32,11 +144,8 @@ export const LIGHTING_QUALITY_CAPS: Record<
 /** Warm directional sunlight vector `(lx, ly, lz)` coming from the North-West so south/east
  * surfaces and long soft SE shadows read cleanly, paired with a cooler sky/Void ambient fill. */
 export const SUN_DIRECTION = (() => {
-  const rx = -0.52;
-  const ry = -0.52;
-  const rz = 0.68;
-  const inv = 1 / Math.hypot(rx, ry, rz);
-  return { x: rx * inv, y: ry * inv, z: rz * inv } as const;
+  const [x, y, z] = TIME_OF_DAY_PRESETS.sunset.sunDir;
+  return { x, y, z } as const;
 })();
 export const SUN_WARM_COLOR = [0.22, 0.17, 0.09] as const;
 export const AMBIENT_COOL_FILL = [0.05, 0.09, 0.16] as const;
@@ -89,8 +198,35 @@ type ShadowCache = {
 
 function unlitColor(color: string): string { return color; }
 
+/** Tone-mapped per-channel surface shading:
+ * - Multiplies base albedo by shaded ambient/diffuse and adds colored light spill (`diffuse * 56`)
+ *   so saturated neon blue, neon orange, and explosion light pools visibly bleed onto dark streets, walls, and roofs.
+ * - Soft shoulder compression above 185 prevents bright cores from clipping flat white while preserving dark detail. */
+function toneMapChannel(raw: number): number {
+  if (raw <= 0) return 0;
+  if (raw <= 185) return Math.round(raw);
+  const excess = (raw - 185) / 145;
+  return Math.min(255, Math.round(185 + 70 * (excess / (1 + excess * 0.85))));
+}
+
 function litChannel(base: number, diffuse: number, specular: number, shadow: number): number {
-  return Math.min(255, Math.max(0, Math.round(base * (1 - shadow + diffuse * 1.15) + diffuse * 18 + specular)));
+  const shaded = base * Math.max(0.08, 1 - shadow + diffuse * 1.35) + diffuse * 54 + specular;
+  return toneMapChannel(shaded);
+}
+
+/** Shades a base channel `[0..255]` under global TimeOfDay ambient + sun + point-light diffuse + specular + haze. */
+export function shadeTimeOfDayChannel(
+  base: number,
+  ambAndSun: number,
+  pointDiffuse: number,
+  specular: number,
+  hazeColor: number,
+  shadow: number,
+): number {
+  const shadowFactor = Math.max(0.14, 1 - shadow);
+  const direct = base * (ambAndSun * shadowFactor + pointDiffuse * 1.42);
+  const colorSpill = pointDiffuse * 64 + hazeColor * 44;
+  return toneMapChannel(direct + colorSpill + specular);
 }
 
 const IS_LITTLE_ENDIAN = new Uint8Array(new Uint32Array([0x01020304]).buffer)[0] === 0x04;
@@ -365,6 +501,7 @@ export function collectSceneLights(
   buildingHeight: BuildingHeightMode = "full",
   quality: LightingQualityMode = "high",
   viewBounds?: { x0: number; y0: number; x1: number; y1: number },
+  preset: TimeOfDayPreset = TIME_OF_DAY_PRESETS.night,
 ): PointLight[] {
   const { world, voidField, combat, physics } = sim;
   const { w, h } = world.grid;
@@ -373,6 +510,8 @@ export function collectSceneLights(
     buildingHeight === "flat" ? 0 : buildingHeight === "low" ? 1 : TOWER_ELEVATION_PX;
   const lights: PointLight[] = [];
   const caps = LIGHTING_QUALITY_CAPS[quality] ?? LIGHTING_QUALITY_CAPS.high;
+  const neonMult = preset.neonIntensity;
+  const shadowScale = preset.shadowStrengthScale;
 
   const inView = (lx: number, ly: number, radius: number): boolean => {
     if (!viewBounds) return true;
@@ -385,30 +524,30 @@ export function collectSceneLights(
     );
   };
 
-  // 1. Explosions & expanding impact/strike shockwaves (highest priority, fast falloff, flicker, strong moving shadows)
+  // 1. Explosions & expanding impact/strike shockwaves (highest priority, big bright flash, fast falloff, flicker, strong moving shadows)
   for (let i = 0; i < physics.shockwaves.length; i++) {
     const s = physics.shockwaves[i];
     const t = Math.min(1, Math.max(0, s.life / Math.max(0.01, s.maxLife)));
-    const flash = Math.pow(1 - t, 0.85);
+    const flash = Math.pow(1 - t, 0.78);
     if (flash <= 0.04) continue;
-    const radius = Math.min(44, Math.max(12, s.maxRadius * (1.45 + t * 0.85)));
+    const radius = Math.min(54, Math.max(18, s.maxRadius * (2.0 + t * 0.95)));
     if (!inView(s.x, s.y, radius)) continue;
     const [cr, cg, cb] = parseColorRgb01(s.color);
     const [sr, sg, sb] = parseColorRgb01(s.secondaryColor || s.color);
     const flicker = reduceEffects ? 1 : 0.84 + 0.16 * Math.sin(animTime * 42 + i * 7.3);
-    const boost = 1.95 * flash * flicker;
+    const boost = 2.65 * flash * flicker;
     lights.push({
       x: s.x,
       y: s.y,
-      z: 1.5 + Math.min(1.2, s.maxRadius * 0.06) * (1 - t * 0.4),
+      z: 2.2 + Math.min(1.8, s.maxRadius * 0.08) * (1 - t * 0.4),
       r: (cr * 0.65 + sr * 0.35) * boost,
       g: (cg * 0.65 + sg * 0.35) * boost,
       b: (cb * 0.65 + sb * 0.35) * boost,
       radius,
-      specular: 0.95,
+      specular: 0.98,
       castsShadows: true,
-      shadowStrength: 0.54 * flash,
-      priority: 100 + radius,
+      shadowStrength: Math.min(0.68, 0.56 * flash * shadowScale),
+      priority: 110 + radius,
       falloffPower: 3,
     });
   }
@@ -607,7 +746,7 @@ export function collectSceneLights(
   }
 
   // 8. Placed Resistance Towers: every tower emits Tron-style neon orange light (#ff8c1a / #ff6b18),
-  //    casts shadows, and lights nearby surfaces through the normal maps; muzzle flashes boost intensity
+  //    casts shadows, and pools warm orange light onto the ground around it; muzzle flashes boost intensity
   for (let i = 0; i < combat.towers.length; i++) {
     const t = combat.towers[i];
     const cx = t.x + t.w * 0.5;
@@ -619,35 +758,37 @@ export function collectSceneLights(
       : justFired
         ? 0.85 + 0.15 * Math.sin(animTime * 50 + t.uid)
         : 0.93 + 0.07 * Math.sin(animTime * 6.5 + t.uid);
-    const boost = (justFired ? 1.45 : 1.0) * flick;
-    const radius = t.type === "countervoidHeart" ? 18 : justFired ? 16 : 14;
+    const towerMult = Math.max(0.68, neonMult * 1.12);
+    const boost = (justFired ? 1.65 : 1.18) * flick * towerMult;
+    const radius = t.type === "countervoidHeart" ? 24 : justFired ? 22 : 19;
     if (!inView(cx, cy, radius)) continue;
 
     lights.push({
       x: cx,
       y: cy,
-      z: tElev + 3.4,
-      r: 1.22 * boost,
-      g: 0.54 * boost,
-      b: 0.12 * boost,
+      z: tElev + 3.2,
+      r: 1.38 * boost,
+      g: 0.58 * boost,
+      b: 0.11 * boost,
       radius,
-      specular: 0.78,
+      specular: 0.86,
       castsShadows: true,
-      shadowStrength: justFired ? 0.32 : 0.24,
-      priority: justFired ? 81 : t.type === "countervoidHeart" ? 78 : 74,
+      shadowStrength: Math.min(0.6, (justFired ? 0.42 : 0.34) * shadowScale),
+      priority: justFired ? 85 : t.type === "countervoidHeart" ? 80 : 76,
       falloffPower: justFired ? 3 : 2,
     });
   }
 
-  // 8b. Metropolitan buildings: Tron-style neon blue lights (#00d8ff / #18e5ff) that emit light,
-  //     cast shadows, and illuminate nearby surfaces and facades through the normal maps
-  if (world.buildings.length > 0) {
-    const bCount = world.buildings.length;
-    const targetBldLights = quality === "low" ? 4 : quality === "medium" ? 8 : 10;
-    const bStride = Math.max(1, Math.floor(bCount / targetBldLights));
-    for (let i = 0; i < bCount; i += bStride) {
+  // 8b. Metropolitan buildings & streetlamps: Tron-style neon blue lights (#00d8ff / #18e5ff) and warm
+  //     street-corner pools that emit light, cast shadows, and spill colored light across streets and facades
+  if (world.buildings.length > 0 && neonMult > 0.15) {
+    const inViewBuildings = [];
+    for (let i = 0; i < world.buildings.length; i++) {
       const b = world.buildings[i];
       if (b.archStyle === "homestead" || b.archStyle === "barn" || b.cells.length === 0) continue;
+      const bx = b.x + b.w * 0.5;
+      const by = b.y + b.h + 0.5;
+      if (!inView(bx, by, 24)) continue;
       let intactCells = 0;
       for (let c = 0; c < b.cells.length; c++) {
         const cIdx = b.cells[c];
@@ -656,27 +797,35 @@ export function collectSceneLights(
         }
       }
       if (intactCells === 0) continue;
-      const bx = b.x + b.w * 0.5;
-      const by = b.y + b.h - 0.5;
       const bxFloor = Math.min(w - 1, Math.max(0, Math.floor(bx)));
-      const byFloor = Math.min(h - 1, Math.max(0, Math.floor(by)));
+      const byFloor = Math.min(h - 1, Math.max(0, Math.floor(b.y + b.h - 0.5)));
       if (world.material[byFloor * w + bxFloor] === CellMaterial.VOID) continue;
-      const radius = b.isSkyscraper ? 16 : 13;
-      if (!inView(bx, by, radius)) continue;
+      inViewBuildings.push(b);
+    }
+    const targetBldLights = quality === "low" ? 6 : quality === "medium" ? 12 : 18;
+    const bStride = Math.max(1, Math.floor(inViewBuildings.length / targetBldLights));
+    for (let i = 0; i < inViewBuildings.length; i += bStride) {
+      const b = inViewBuildings[i];
+      // Offset the light 0.8 px south of the building's south facade onto the street so the storefront
+      // neon canopy visibly pools saturated cyan/blue light onto the street and casts long shadows!
+      const bx = b.x + b.w * 0.5;
+      const by = Math.min(h - 1.5, b.y + b.h + 0.8);
+      const radius = b.isSkyscraper ? 23 : 18;
       const bElev = elevationOf(b, buildingHeight);
-      const hum = reduceEffects ? 0.92 : 0.86 + 0.14 * Math.sin(animTime * 3.8 + b.id);
+      const hum = (reduceEffects ? 0.94 : 0.88 + 0.12 * Math.sin(animTime * 3.8 + b.id)) * neonMult;
+      const isWarmStorefront = ((b.id * 7 + b.variant * 3) & 7) === 3;
       lights.push({
         x: bx,
         y: by,
-        z: Math.max(2.5, Math.min(7.5, bElev * 0.55 + 1.5)),
-        r: 0.08 * hum,
-        g: 0.82 * hum,
-        b: 1.25 * hum,
+        z: Math.max(2.6, Math.min(7.0, bElev * 0.45 + 1.8)),
+        r: (isWarmStorefront ? 1.25 : 0.08) * hum,
+        g: (isWarmStorefront ? 0.68 : 0.92) * hum,
+        b: (isWarmStorefront ? 0.16 : 1.48) * hum,
         radius,
-        specular: 0.85,
+        specular: 0.92,
         castsShadows: true,
-        shadowStrength: 0.24,
-        priority: b.isSkyscraper ? 70 : 66,
+        shadowStrength: Math.min(0.58, 0.36 * shadowScale),
+        priority: b.isSkyscraper ? 73 : 69,
       });
     }
   }
@@ -925,6 +1074,19 @@ export class LightingEngine {
   private prevActiveTiles: number[] = [];
   private curActiveTiles: number[] = [];
 
+  /** Current active TimeOfDayPreset used for global shading when `timeOfDayActive` is true. */
+  activePreset: TimeOfDayPreset = TIME_OF_DAY_PRESETS.night;
+  private lastPresetKey = "";
+  /** Low-res (`w/2 x h/2`) emissive halo spill buffers (light spill around emissive pixels, not screen bloom). */
+  private haloW = 0;
+  private haloH = 0;
+  private haloR = new Float32Array(0);
+  private haloG = new Float32Array(0);
+  private haloB = new Float32Array(0);
+  private haloTmpR = new Float32Array(0);
+  private haloTmpG = new Float32Array(0);
+  private haloTmpB = new Float32Array(0);
+
   /** Active bounding box of non-zero lighting/shadow pixels in the current frame. */
   dirtyBounds: { x0: number; y0: number; x1: number; y1: number; hasTerrain: boolean; hasBuilding: boolean } = {
     x0: 0,
@@ -970,6 +1132,16 @@ export class LightingEngine {
       this.previousCasterCell = new Uint8Array(count);
       this.terrainLightU32 = new Uint32Array(count);
       this.buildingLightU32 = new Uint32Array(count);
+      this.haloW = Math.ceil(w / 2);
+      this.haloH = Math.ceil(h / 2);
+      const haloCount = this.haloW * this.haloH;
+      this.haloR = new Float32Array(haloCount);
+      this.haloG = new Float32Array(haloCount);
+      this.haloB = new Float32Array(haloCount);
+      this.haloTmpR = new Float32Array(haloCount);
+      this.haloTmpG = new Float32Array(haloCount);
+      this.haloTmpB = new Float32Array(haloCount);
+      this.lastPresetKey = "";
 
       const tileCount = chunksW * chunksH;
       this.shadowTileRevision = new Float64Array(tileCount);
@@ -1096,36 +1268,47 @@ export class LightingEngine {
     }
   }
 
-  private roofShadowAt(world: VoidWorld, index: number, x: number, y: number, z: number, self: number): number {
+  private roofShadowAt(
+    world: VoidWorld,
+    index: number,
+    x: number,
+    y: number,
+    z: number,
+    self: number,
+    reachScale = 1,
+    strengthScale = 1,
+  ): number {
     const cached = this.roofSunShadow[index];
     if (cached !== 255) return cached * 0.01;
     let shadow = 0;
-    const limit = Math.min(10, x, y);
+    const maxSteps = Math.max(4, Math.min(14, Math.round(10 * reachScale)));
+    const limit = Math.min(maxSteps, x, y);
     for (let step = 1; step <= limit; step++) {
       const caster = (y - step) * this.w + x - step;
       const building = world.buildingAt[caster];
       const tower = world.towerAt[caster];
       if ((building >= 0 && building !== self) || tower >= 0) {
-        const reach = Math.ceil((this.groundElev[caster] - z) * 0.72);
-        if (step <= reach) shadow = Math.max(shadow, 0.38 - (step - 1) * (0.24 / reach));
+        const reach = Math.ceil((this.groundElev[caster] - z) * 0.78 * reachScale);
+        if (step <= reach) shadow = Math.max(shadow, (0.44 - (step - 1) * (0.26 / Math.max(1, reach))) * strengthScale);
       }
       if (step >= 2) {
         // Soft penumbra flanks around the NW->SE sun ray
         const flank1 = (y - step + 1) * this.w + x - step;
         const b1 = world.buildingAt[flank1];
         if (b1 >= 0 && b1 !== self) {
-          const reach1 = Math.ceil((this.groundElev[flank1] - z) * 0.62);
-          if (step <= reach1) shadow = Math.max(shadow, 0.22 - (step - 1) * (0.15 / reach1));
+          const reach1 = Math.ceil((this.groundElev[flank1] - z) * 0.66 * reachScale);
+          if (step <= reach1) shadow = Math.max(shadow, (0.26 - (step - 1) * (0.16 / Math.max(1, reach1))) * strengthScale);
         }
         const flank2 = (y - step) * this.w + x - step + 1;
         const b2 = world.buildingAt[flank2];
         if (b2 >= 0 && b2 !== self) {
-          const reach2 = Math.ceil((this.groundElev[flank2] - z) * 0.62);
-          if (step <= reach2) shadow = Math.max(shadow, 0.22 - (step - 1) * (0.15 / reach2));
+          const reach2 = Math.ceil((this.groundElev[flank2] - z) * 0.66 * reachScale);
+          if (step <= reach2) shadow = Math.max(shadow, (0.26 - (step - 1) * (0.16 / Math.max(1, reach2))) * strengthScale);
         }
       }
     }
-    const rounded = Math.round(shadow * 100);
+    const clamped = Math.min(0.68, shadow);
+    const rounded = Math.round(clamped * 100);
     this.roofSunShadow[index] = rounded;
     return rounded * 0.01;
   }
@@ -1209,11 +1392,19 @@ export class LightingEngine {
     (color: string) => string {
     const world = this.world;
     if (!world) return unlitColor;
-    if (!this.illuminate(world, this.compiledLights, x, y, z, nx, ny, nz, 0.3, -1, tower, 0)) return unlitColor;
-    const [r, g, b, sr, sg, sb, shadow] = this.surfaceLight;
+    const hasPointLight = this.illuminate(world, this.compiledLights, x, y, z, nx, ny, nz, 0.3, -1, tower, 0);
+    const [pr, pg, pb, sr, sg, sb, shadow] = hasPointLight ? this.surfaceLight : [0, 0, 0, 0, 0, 0, 0];
+    const preset = this.activePreset;
+    const sunDot = Math.max(0, nx * preset.sunDir[0] + ny * preset.sunDir[1] + nz * preset.sunDir[2]);
+    const sunVis = Math.max(0.15, 1 - shadow * 0.9);
+    const ambR = preset.ambientColor[0] + preset.sunColor[0] * preset.sunIntensity * sunDot * sunVis;
+    const ambG = preset.ambientColor[1] + preset.sunColor[1] * preset.sunIntensity * sunDot * sunVis;
+    const ambB = preset.ambientColor[2] + preset.sunColor[2] * preset.sunIntensity * sunDot * sunVis;
+    if (!hasPointLight && preset.id === "day" && Math.abs(ambR - 1) < 0.15) return unlitColor;
+    const haze = preset.hazeAmount * 0.25;
     return (color) => {
       const [red, green, blue] = parseColorRgb01(color);
-      return `rgb(${litChannel(red * 255, r, sr, shadow)} ${litChannel(green * 255, g, sg, shadow)} ${litChannel(blue * 255, b, sb, shadow)})`;
+      return `rgb(${shadeTimeOfDayChannel(red * 255, ambR, pr, sr, pr * haze, shadow)} ${shadeTimeOfDayChannel(green * 255, ambG, pg, sg, pg * haze, shadow)} ${shadeTimeOfDayChannel(blue * 255, ambB, pb, sb, pb * haze, shadow)})`;
     };
   }
 
@@ -1249,13 +1440,16 @@ export class LightingEngine {
     return cache;
   }
 
-  /** Evaluates tiled 2.5D bump-mapped lighting and dynamic building cast shadows across
-   * all active light tiles, updating `terrainLightU32` and `buildingLightU32`. */
+  /** Evaluates tiled 2.5D bump-mapped lighting, TimeOfDay global illumination, low-res emissive halo spill,
+   * and dynamic building/unit cast shadows across visible or active light tiles, updating `terrainLightU32` and `buildingLightU32`. */
   renderLighting(
     world: VoidWorld,
     terrainU32: Uint32Array,
     spriteCache: BuildingSpriteCache,
     lights: readonly PointLight[],
+    preset?: TimeOfDayPreset,
+    viewBounds?: { x0: number; y0: number; x1: number; y1: number },
+    groundShadowMap?: Uint8Array,
   ): void {
     const { w, h, chunksW, chunksH } = world.grid;
     const {
@@ -1271,6 +1465,15 @@ export class LightingEngine {
       prevActiveTiles,
       curActiveTiles,
     } = this;
+
+    if (preset) {
+      this.activePreset = preset;
+      const pKey = `${preset.id}:${preset.shadowReachScale.toFixed(2)}:${preset.shadowStrengthScale.toFixed(2)}`;
+      if (pKey !== this.lastPresetKey) {
+        this.lastPresetKey = pKey;
+        this.roofSunShadow.fill(255);
+      }
+    }
 
     // 1. Clear only tiles that were lit in the previous frame
     if (prevActiveTiles.length > 0) {
@@ -1309,7 +1512,7 @@ export class LightingEngine {
     const lightCount = Math.min(MAX_DYNAMIC_LIGHTS, lights.length);
     const compiled = this.compiledLights;
     compiled.length = lightCount;
-    if (lightCount === 0) return;
+    if (lightCount === 0 && !preset) return;
 
     // 2. Compile lights and bin them into 16x16 tiles via 64-bit bitmasks
     curActiveTiles.length = 0;
@@ -1352,6 +1555,31 @@ export class LightingEngine {
       }
     }
 
+    // When a TimeOfDayPreset is active, include all visible tiles in the camera frustum so
+    // directional sunlight, deep tinted blue/purple ambient darkness, and emissive halo spill cover the entire frame
+    let vtx0 = 0;
+    let vty0 = 0;
+    let vtx1 = chunksW - 1;
+    let vty1 = chunksH - 1;
+    if (preset) {
+      if (viewBounds) {
+        vtx0 = Math.max(0, Math.floor((viewBounds.x0 - 2) / CHUNK_SIZE));
+        vty0 = Math.max(0, Math.floor((viewBounds.y0 - MAX_ELEVATION_PX - 2) / CHUNK_SIZE));
+        vtx1 = Math.min(chunksW - 1, Math.floor((viewBounds.x1 + 2) / CHUNK_SIZE));
+        vty1 = Math.min(chunksH - 1, Math.floor((viewBounds.y1 + 2) / CHUNK_SIZE));
+      }
+      for (let ty = vty0; ty <= vty1; ty++) {
+        const tRow = ty * chunksW;
+        for (let tx = vtx0; tx <= vtx1; tx++) {
+          const tileIdx = tRow + tx;
+          if (!tileVisited[tileIdx]) {
+            tileVisited[tileIdx] = 1;
+            curActiveTiles.push(tileIdx);
+          }
+        }
+      }
+    }
+
     const {
       atlasColorU32,
       atlasElev,
@@ -1361,8 +1589,98 @@ export class LightingEngine {
       atlasSpec,
       atlasBldId,
     } = spriteCache;
-    const { material } = world;
+    const { material, streetTier } = world;
     const localLights: CompiledLight[] = [];
+
+    // 2b. Compute 1/2-res emissive halo spill buffer around emissive building neon strips & Void rim
+    const useHalo = Boolean(preset && preset.neonIntensity > 0.25 && this.haloW > 0);
+    const { haloW, haloH, haloR, haloG, haloB, haloTmpR, haloTmpG, haloTmpB } = this;
+    if (useHalo && preset) {
+      const hx0 = Math.max(0, (vtx0 * CHUNK_SIZE) >> 1);
+      const hy0 = Math.max(0, (vty0 * CHUNK_SIZE) >> 1);
+      const hx1 = Math.min(haloW - 1, ((vtx1 + 1) * CHUNK_SIZE) >> 1);
+      const hy1 = Math.min(haloH - 1, ((vty1 + 1) * CHUNK_SIZE) >> 1);
+      const neonBoost = preset.neonIntensity * 0.46;
+
+      for (let hy = hy0; hy <= hy1; hy++) {
+        const hRow = hy * haloW;
+        const sy0 = hy << 1;
+        const sy1 = Math.min(h - 1, sy0 + 1);
+        for (let hx = hx0; hx <= hx1; hx++) {
+          const sx0 = hx << 1;
+          const sx1 = Math.min(w - 1, sx0 + 1);
+          let er = 0;
+          let eg = 0;
+          let eb = 0;
+          const coords = [
+            sy0 * w + sx0,
+            sy0 * w + sx1,
+            sy1 * w + sx0,
+            sy1 * w + sx1,
+          ];
+          for (let c = 0; c < 4; c++) {
+            const ci = coords[c];
+            if (atlasSpec[ci] >= 240 && atlasColorU32[ci] !== 0) {
+              const abgr = atlasColorU32[ci];
+              const r = (IS_LITTLE_ENDIAN ? abgr & 255 : abgr >>> 24) * (1 / 255);
+              const g = ((abgr >>> (IS_LITTLE_ENDIAN ? 8 : 16)) & 255) * (1 / 255);
+              const b = ((abgr >>> (IS_LITTLE_ENDIAN ? 16 : 8)) & 255) * (1 / 255);
+              if (r > er) er = r;
+              if (g > eg) eg = g;
+              if (b > eb) eb = b;
+            }
+          }
+          const hi = hRow + hx;
+          haloTmpR[hi] = er * neonBoost;
+          haloTmpG[hi] = eg * neonBoost;
+          haloTmpB[hi] = eb * neonBoost;
+        }
+      }
+      // Separable 5-tap horizontal + vertical halo spread in the 1/2-res buffer (~4..5 world px spill radius)
+      for (let hy = hy0; hy <= hy1; hy++) {
+        const hRow = hy * haloW;
+        for (let hx = hx0; hx <= hx1; hx++) {
+          const xm2 = Math.max(hx0, hx - 2);
+          const xm1 = Math.max(hx0, hx - 1);
+          const xp1 = Math.min(hx1, hx + 1);
+          const xp2 = Math.min(hx1, hx + 2);
+          const hi = hRow + hx;
+          haloR[hi] =
+            haloTmpR[hi] * 0.42 +
+            (haloTmpR[hRow + xm1] + haloTmpR[hRow + xp1]) * 0.24 +
+            (haloTmpR[hRow + xm2] + haloTmpR[hRow + xp2]) * 0.12;
+          haloG[hi] =
+            haloTmpG[hi] * 0.42 +
+            (haloTmpG[hRow + xm1] + haloTmpG[hRow + xp1]) * 0.24 +
+            (haloTmpG[hRow + xm2] + haloTmpG[hRow + xp2]) * 0.12;
+          haloB[hi] =
+            haloTmpB[hi] * 0.42 +
+            (haloTmpB[hRow + xm1] + haloTmpB[hRow + xp1]) * 0.24 +
+            (haloTmpB[hRow + xm2] + haloTmpB[hRow + xp2]) * 0.12;
+        }
+      }
+      for (let hy = hy0; hy <= hy1; hy++) {
+        const ym2 = Math.max(hy0, hy - 2) * haloW;
+        const ym1 = Math.max(hy0, hy - 1) * haloW;
+        const y0Row = hy * haloW;
+        const yp1 = Math.min(hy1, hy + 1) * haloW;
+        const yp2 = Math.min(hy1, hy + 2) * haloW;
+        for (let hx = hx0; hx <= hx1; hx++) {
+          haloTmpR[y0Row + hx] =
+            haloR[y0Row + hx] * 0.42 +
+            (haloR[ym1 + hx] + haloR[yp1 + hx]) * 0.24 +
+            (haloR[ym2 + hx] + haloR[yp2 + hx]) * 0.12;
+          haloTmpG[y0Row + hx] =
+            haloG[y0Row + hx] * 0.42 +
+            (haloG[ym1 + hx] + haloG[yp1 + hx]) * 0.24 +
+            (haloG[ym2 + hx] + haloG[yp2 + hx]) * 0.12;
+          haloTmpB[y0Row + hx] =
+            haloB[y0Row + hx] * 0.42 +
+            (haloB[ym1 + hx] + haloB[yp1 + hx]) * 0.24 +
+            (haloB[ym2 + hx] + haloB[yp2 + hx]) * 0.12;
+        }
+      }
+    }
 
     let minX = w;
     let minY = h;
@@ -1370,6 +1688,10 @@ export class LightingEngine {
     let maxY = 0;
     let hasTerrain = false;
     let hasBuilding = false;
+
+    const sunDir = preset ? preset.sunDir : [SUN_DIRECTION.x, SUN_DIRECTION.y, SUN_DIRECTION.z];
+    const reachScale = preset ? preset.shadowReachScale : 1;
+    const strengthScale = preset ? preset.shadowStrengthScale : 1;
 
     // 3. Shade active 16x16 tiles
     for (let t = 0; t < curActiveTiles.length; t++) {
@@ -1393,7 +1715,7 @@ export class LightingEngine {
         maskHi &= maskHi - 1;
       }
       const nLocal = localLights.length;
-      if (nLocal === 0) continue;
+      if (nLocal === 0 && !preset) continue;
 
       const tx = tileIdx % chunksW;
       const ty = (tileIdx / chunksW) | 0;
@@ -1409,6 +1731,7 @@ export class LightingEngine {
 
       for (let sy = y0; sy < y1; sy++) {
         const row = sy * w;
+        const hRow = (sy >> 1) * haloW;
         for (let sx = x0; sx < x1; sx++) {
           const i = row + sx;
           const bldAbgr = atlasColorU32[i];
@@ -1421,37 +1744,131 @@ export class LightingEngine {
           const baseAbgr = isBuilding ? bldAbgr : terrainU32[i];
           if (baseAbgr === 0) continue;
 
+          const isEmissive = isBuilding && atlasSpec[i] >= 240;
           const wz = isBuilding ? atlasElev[i] : terrainElev[i];
           const nx = (isBuilding ? atlasNx[i] : terrainNx[i]) * (1 / 127);
           const ny = (isBuilding ? atlasNy[i] : terrainNy[i]) * (1 / 127);
           const nz = (isBuilding ? atlasNz[i] : terrainNz[i]) * (1 / 127);
+          const isWetOrShinyGround =
+            !isBuilding &&
+            (material[i] === CellMaterial.UNCLAIMED ||
+              material[i] === CellMaterial.BARRIER ||
+              (material[i] === CellMaterial.STREET && streetTier[i] !== 8));
           const specWeight = isBuilding
             ? atlasSpec[i] * (1 / 255)
             : material[i] === CellMaterial.UNCLAIMED
-              ? 0.65
+              ? 0.78
               : material[i] === CellMaterial.BARRIER
-                ? 0.55
-                : 0.16;
+                ? 0.65
+                : isWetOrShinyGround
+                  ? preset && preset.id === "night"
+                    ? 0.46
+                    : 0.32
+                  : 0.16;
           const selfBldId = isBuilding ? atlasBldId[i] : -1;
 
           // Reconstruct 3D world ground position from oblique screen coordinate (sy = wy - wz)
           const wx = sx;
           const wy = isBuilding ? Math.min(h - 1, sy + wz) : sy;
 
-          const shadowDarken = isBuilding && wz > 0 ?
-            this.roofShadowAt(world, i, wx, wy, wz, selfBldId) : 0;
+          const sunShadow = isBuilding && wz > 0
+            ? this.roofShadowAt(world, i, wx, wy, wz, selfBldId, reachScale, strengthScale)
+            : groundShadowMap
+              ? Math.min(0.72, (groundShadowMap[i] * 0.01) * strengthScale)
+              : 0;
 
-          if (!this.illuminate(world, localLights, wx, wy, wz, nx, ny, nz, specWeight,
-            selfBldId, -1, shadowDarken, sy)) continue;
+          if (!preset) {
+            if (!this.illuminate(world, localLights, wx, wy, wz, nx, ny, nz, specWeight,
+              selfBldId, -1, sunShadow, sy)) continue;
 
+            const br = IS_LITTLE_ENDIAN ? baseAbgr & 255 : baseAbgr >>> 24;
+            const bg = (baseAbgr >>> (IS_LITTLE_ENDIAN ? 8 : 16)) & 255;
+            const bb = (baseAbgr >>> (IS_LITTLE_ENDIAN ? 16 : 8)) & 255;
+            const light = this.surfaceLight;
+            const packed = packRgba(
+              litChannel(br, light[0], light[3], light[6]),
+              litChannel(bg, light[1], light[4], light[6]),
+              litChannel(bb, light[2], light[5], light[6]),
+            );
+
+            if (isBuilding) {
+              buildingLightU32[i] = packed;
+              hasBuilding = true;
+            } else {
+              terrainLightU32[i] = packed;
+              hasTerrain = true;
+            }
+            continue;
+          }
+
+          // TimeOfDay full-scene shading (Day, Sunset, Night)
           const br = IS_LITTLE_ENDIAN ? baseAbgr & 255 : baseAbgr >>> 24;
           const bg = (baseAbgr >>> (IS_LITTLE_ENDIAN ? 8 : 16)) & 255;
           const bb = (baseAbgr >>> (IS_LITTLE_ENDIAN ? 16 : 8)) & 255;
+
+          const hasPt = nLocal > 0 && this.illuminate(world, localLights, wx, wy, wz, nx, ny, nz, specWeight,
+            selfBldId, -1, sunShadow, sy);
           const light = this.surfaceLight;
+          let ptR = hasPt ? light[0] : 0;
+          let ptG = hasPt ? light[1] : 0;
+          let ptB = hasPt ? light[2] : 0;
+          let spR = hasPt ? light[3] : 0;
+          let spG = hasPt ? light[4] : 0;
+          let spB = hasPt ? light[5] : 0;
+          const totalShadow = hasPt ? light[6] : sunShadow;
+
+          // Add low-res emissive halo light spill around neon signs/canopies/roofs
+          if (useHalo) {
+            const hi = hRow + (sx >> 1);
+            const hSpillR = haloTmpR[hi];
+            const hSpillG = haloTmpG[hi];
+            const hSpillB = haloTmpB[hi];
+            ptR += hSpillR;
+            ptG += hSpillG;
+            ptB += hSpillB;
+            // Subtle wet-street reflection sheen from nearby neon halos
+            if (isWetOrShinyGround && (hSpillR + hSpillG + hSpillB) > 0.04) {
+              const shimmer = ((sx * 7 + sy * 13) & 3) === 0 ? 34 : 18;
+              spR += hSpillR * shimmer;
+              spG += hSpillG * shimmer;
+              spB += hSpillB * shimmer;
+            }
+          }
+
+          // Emissive neon cores stay bright and saturated with a soft colored boost
+          if (isEmissive) {
+            const emBoost = 0.85 + preset.neonIntensity * 0.35;
+            const er = toneMapChannel(br * emBoost + ptR * 35 + 22);
+            const eg = toneMapChannel(bg * emBoost + ptG * 35 + 22);
+            const eb = toneMapChannel(bb * emBoost + ptB * 35 + 28);
+            buildingLightU32[i] = packRgba(er, eg, eb);
+            hasBuilding = true;
+            continue;
+          }
+
+          // Directional sunlight with normal-map volume relief (lit sides clearly brighter than shaded sides)
+          const sunFacing = nx * sunDir[0] + ny * sunDir[1] + nz * sunDir[2];
+          const normalRelief = Math.max(0.18, 0.42 + sunFacing * 0.82);
+          const sunVis = Math.max(0.06, 1 - sunShadow * 1.15);
+          const sunDirect = Math.max(0, sunFacing) * preset.sunIntensity * sunVis;
+
+          const gIdx = wy * w + wx;
+          const nearVoid =
+            material[gIdx] === CellMaterial.VOID ||
+            (gIdx > 0 && material[gIdx - 1] === CellMaterial.VOID) ||
+            (gIdx + 1 < material.length && material[gIdx + 1] === CellMaterial.VOID);
+          const amb = nearVoid ? preset.voidAmbientColor : preset.ambientColor;
+
+          const ambSunR = amb[0] * normalRelief + preset.sunColor[0] * sunDirect;
+          const ambSunG = amb[1] * normalRelief + preset.sunColor[1] * sunDirect;
+          const ambSunB = amb[2] * normalRelief + preset.sunColor[2] * sunDirect;
+
+          // Atmospheric haze catching colored light near bright sources
+          const hazeK = preset.hazeAmount * 0.36;
           const packed = packRgba(
-            litChannel(br, light[0], light[3], light[6]),
-            litChannel(bg, light[1], light[4], light[6]),
-            litChannel(bb, light[2], light[5], light[6]),
+            shadeTimeOfDayChannel(br, ambSunR, ptR, spR, ptR * hazeK, totalShadow),
+            shadeTimeOfDayChannel(bg, ambSunG, ptG, spG, ptG * hazeK, totalShadow),
+            shadeTimeOfDayChannel(bb, ambSunB, ptB, spB, ptB * hazeK, totalShadow),
           );
 
           if (isBuilding) {
