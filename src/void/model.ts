@@ -32,7 +32,14 @@ export type CellMaterialId = (typeof CellMaterial)[keyof typeof CellMaterial];
  * the metropolis and the Void (grass, meadow, forest, crop fields, orchards, dirt roads,
  * rivers and bridges) plus rural props. `NONE` means the plain urban surface. */
 /** Optical surface tags shared by the terrain and building G-buffers. */
-export const SurfaceMaterial = { OPAQUE: 0, WATER: 1, GLASS: 2 } as const;
+export const SurfaceMaterial = {
+  OPAQUE: 0,
+  WATER: 1,
+  GLASS: 2,
+  WET_PUDDLE: 3,
+  WET_SHEEN: 4,
+  WET_ROOF: 5,
+} as const;
 
 export const LandCover = {
   NONE: 0,

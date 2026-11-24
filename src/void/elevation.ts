@@ -848,8 +848,12 @@ export function buildBuildingSprite(
         microHeight[pIdx] = elev * 0.22 + partRelief;
         specMap[pIdx] = rCol === pal.neonCore || rCol === pal.neonEdge ? 250 : spec;
         const hasGlassRoof = (isGlassStyle && (rCol === pal.crown || rCol === pal.mid || rCol === pal.roofAccent)) || spec === 210;
+        const isFlatRoof = !spalledTop && !rustic && b.archStyle !== "civicDome" && specMap[pIdx] < 240 && nz >= 0.9;
         surfaceMap[pIdx] = !spalledTop && hpRatio >= 0.75 && hasGlassRoof && specMap[pIdx] < 240
-          ? SurfaceMaterial.GLASS : SurfaceMaterial.OPAQUE;
+          ? SurfaceMaterial.GLASS
+          : isFlatRoof
+            ? SurfaceMaterial.WET_ROOF
+            : SurfaceMaterial.OPAQUE;
       }
     }
   }

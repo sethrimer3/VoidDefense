@@ -21,6 +21,7 @@ export const SETTINGS = {
   dayNightCycle: { kind: "toggle", default: true, page: { id: "day-night-cycle", label: "Day/night cycle" } },
   fasterSunCatchup: { kind: "toggle", default: true, page: { id: "faster-sun-catchup", label: "Faster sun during catch-up" } },
   timeOfDay: { kind: "choice", default: "night", choices: [["day", "Day"], ["sunset", "Sunset"], ["dusk", "Dusk"], ["twilight", "Twilight"], ["night", "Night"], ["dawn", "Dawn"]], page: { id: "time-of-day", label: "Time of day" } },
+  weather: { kind: "choice", default: "clear", choices: [["clear", "Clear"], ["rain", "Rain"]], page: { id: "weather", label: "Weather" } },
   reduceMotion: { kind: "toggle", default: false, page: { id: "motion", label: "Reduce motion" } },
   /** The city's live dressing: wind-blown park grass, and drips, ripples
    * and reflections on the ponds. */
