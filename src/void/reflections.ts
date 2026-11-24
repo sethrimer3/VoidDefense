@@ -1,17 +1,30 @@
 import { CHUNK_SIZE } from "./config.ts";
 import { MAX_ELEVATION_PX, packElevAbgr, type BuildingSpriteCache } from "./elevation.ts";
-import type { LightingEngine, LightingQualityMode, PointLight, TimeOfDayPreset } from "./lighting.ts";
+import { hash } from "./grid.ts";
+import {
+  puddleWetnessFor,
+  type LightingEngine,
+  type LightingQualityMode,
+  type PointLight,
+  type TimeOfDayPreset,
+} from "./lighting.ts";
 import { CellMaterial, LandCover, SurfaceMaterial } from "./model.ts";
 import type { VoidWorld } from "./world.ts";
 
 type RGB = readonly [number, number, number];
 type Bounds = { x0: number; y0: number; x1: number; y1: number };
 type Atlas = Pick<BuildingSpriteCache, "atlasElev" | "atlasBldId" | "atlasNx" | "atlasNy" | "atlasNz">;
-type ReflectiveMaterial = typeof SurfaceMaterial.WATER | typeof SurfaceMaterial.GLASS;
+export type ReflectiveMaterial =
+  | typeof SurfaceMaterial.WATER
+  | typeof SurfaceMaterial.GLASS
+  | typeof SurfaceMaterial.WET_PUDDLE
+  | typeof SurfaceMaterial.WET_SHEEN;
 
 export const REFLECTION_MATERIALS = {
   [SurfaceMaterial.WATER]: { reflectivity: 0.74, fresnel: 0.75, roughness: 0, tint: [0.66, 0.85, 0.98], ripple: 1 },
   [SurfaceMaterial.GLASS]: { reflectivity: 0.32, fresnel: 0.85, roughness: 0.15, tint: [0.91, 0.96, 1.03], ripple: 0 },
+  [SurfaceMaterial.WET_PUDDLE]: { reflectivity: 0.36, fresnel: 0.65, roughness: 0.12, tint: [0.68, 0.86, 1.08], ripple: 1 },
+  [SurfaceMaterial.WET_SHEEN]: { reflectivity: 0.14, fresnel: 0.52, roughness: 0.58, tint: [0.62, 0.82, 1.06], ripple: 0 },
 } as const;
 
 const LITTLE_ENDIAN = new Uint8Array(new Uint32Array([1]).buffer)[0] === 1;
@@ -22,6 +35,35 @@ const GLASS_REACH = 12;
 
 export function reflectionColor(rgb: RGB): number {
   return packElevAbgr(Math.round(rgb[0]), Math.round(rgb[1]), Math.round(rgb[2]));
+}
+
+/** Deterministic raindrop ripple ring perturbation (`dx, dy` in `-2..2` whole pixels) for puddle reflections. */
+export function computePuddleRippleOffset(
+  seed: number,
+  x: number,
+  y: number,
+  time: number,
+): [number, number] {
+  const tx = x >> 3;
+  const ty = y >> 3;
+  const period = 0.85;
+  const slot = Math.floor(time / period);
+  const h = hash(seed, 941, tx, ty, slot);
+  const cx = (tx << 3) + (h & 7);
+  const cy = (ty << 3) + ((h >>> 3) & 7);
+  const phaseOffset = ((h >>> 6) & 15) / 16;
+  const age = (time / period - slot + phaseOffset) % 1;
+  const r = age * 4.5;
+  const dx = x - cx;
+  const dy = y - cy;
+  const dist = Math.hypot(dx, dy);
+  const delta = Math.abs(dist - r);
+  if (delta > 0.95 || dist < 0.25) return [0, 0];
+  const amp = age < 0.35 ? 2 : 1;
+  const sign = dist >= r ? 1 : -1;
+  const ox = Math.max(-2, Math.min(2, Math.round((dx / dist) * amp * sign)));
+  const oy = Math.max(-2, Math.min(2, Math.round((dy / dist) * amp * sign)));
+  return [ox, oy];
 }
 
 /** The orthographic ray crosses one Y boundary per elevation step. A real pixel at
@@ -87,18 +129,34 @@ function channel(color: number, shift: number): number {
   return (color >>> shift) & 255;
 }
 
+/** Quantizes a reflected/streak channel delta to whole-pixel palette steps so reflections preserve the crisp pixel-art look. */
+function quantizeDelta(delta: number, step = 4): number {
+  return Math.round(delta / step) * step;
+}
+
 /** Tint the reflected radiance and apply Schlick's grazing-angle term. */
 export function shadeReflection(
   material: ReflectiveMaterial, base: number, reflected: number, facing: number, glint = 0, streak = 0,
+  wetScale = 1,
 ): number {
   const settings = REFLECTION_MATERIALS[material];
   const edge = 1 - Math.min(1, Math.max(0, facing));
-  const strength = settings.reflectivity + (1 - settings.reflectivity) * settings.fresnel * edge ** 5;
+  const rawStrength = (settings.reflectivity + (1 - settings.reflectivity) * settings.fresnel * edge ** 5) * wetScale;
+  const strength = Math.max(0, Math.min(1, rawStrength));
   const softness = 1 - settings.roughness * 0.35;
-  const blend = (shift: number, tint: number) => Math.min(255, Math.round(
-    channel(base, shift) * (1 - strength) + channel(reflected, shift) * tint * strength * softness +
-    channel(glint, shift) + channel(streak, shift),
-  ));
+  const isWetGround = material === SurfaceMaterial.WET_PUDDLE || material === SurfaceMaterial.WET_SHEEN;
+  const blend = (shift: number, tint: number) => {
+    const baseC = channel(base, shift);
+    if (isWetGround) {
+      const refDelta = quantizeDelta((channel(reflected, shift) * tint * softness - baseC) * strength, 4);
+      const streakAdd = quantizeDelta((channel(glint, shift) + channel(streak, shift)) * wetScale, 4);
+      return Math.max(0, Math.min(255, baseC + refDelta + streakAdd));
+    }
+    return Math.min(255, Math.round(
+      baseC * (1 - strength) + channel(reflected, shift) * tint * strength * softness +
+      channel(glint, shift) + channel(streak, shift),
+    ));
+  };
   return packElevAbgr(blend(RED, settings.tint[0]), blend(GREEN, settings.tint[1]), blend(BLUE, settings.tint[2]));
 }
 
@@ -112,15 +170,32 @@ type Samples = {
   glints: Uint32Array;
 };
 
+type WetSamples = {
+  cells: number[];
+  hits: number[];
+  depths: Uint8Array;
+  isPuddle: Uint8Array;
+  facing: number[];
+  previousBase: Uint32Array;
+  previousRay: Uint32Array;
+  previousStreak: Uint32Array;
+  glints: Uint32Array;
+};
+
 type Tile = {
   water: Samples;
   glass: Samples;
+  wet?: WetSamples;
   glassSources: number[];
   geometry: LightingQualityMode;
+  wetGeometry?: LightingQualityMode;
   sky?: string;
+  wetSky?: string;
   waterRevision?: number;
   glassRevision?: number;
+  wetRevision?: number;
   hadStreak?: boolean;
+  hadWetStreak?: boolean;
 };
 
 function samples(cells: number[], hits: number[], facing: number[]): Samples {
@@ -131,26 +206,54 @@ function samples(cells: number[], hits: number[], facing: number[]): Samples {
   };
 }
 
+function wetSamples(
+  cells: number[],
+  hits: number[],
+  depths: Uint8Array,
+  isPuddle: Uint8Array,
+  facing: number[],
+): WetSamples {
+  return {
+    cells,
+    hits,
+    depths,
+    isPuddle,
+    facing,
+    previousBase: new Uint32Array(cells.length),
+    previousRay: new Uint32Array(cells.length),
+    previousStreak: new Uint32Array(cells.length),
+    glints: new Uint32Array(cells.length),
+  };
+}
+
 class ReflectionLayer {
-  private readonly canvas = document.createElement("canvas");
-  private readonly ctx = this.canvas.getContext("2d")!;
+  private readonly canvas =
+    typeof document !== "undefined" && typeof document.createElement === "function"
+      ? document.createElement("canvas")
+      : null;
+  private readonly ctx = this.canvas ? this.canvas.getContext("2d") : null;
   private image?: ImageData;
   pixels = new Uint32Array(0);
 
   resize(w: number, h: number): void {
-    this.canvas.width = w;
-    this.canvas.height = h;
-    this.image = this.ctx.createImageData(w, h);
-    this.pixels = new Uint32Array(this.image.data.buffer);
+    if (this.canvas && this.ctx) {
+      this.canvas.width = w;
+      this.canvas.height = h;
+      this.image = this.ctx.createImageData(w, h);
+      this.pixels = new Uint32Array(this.image.data.buffer);
+    } else {
+      this.pixels = new Uint32Array(w * h);
+    }
   }
 
   upload(bounds: Bounds): void {
-    if (bounds.x1 > bounds.x0 && bounds.y1 > bounds.y0 && this.image) {
+    if (bounds.x1 > bounds.x0 && bounds.y1 > bounds.y0 && this.image && this.ctx) {
       this.ctx.putImageData(this.image, 0, 0, bounds.x0, bounds.y0, bounds.x1 - bounds.x0, bounds.y1 - bounds.y0);
     }
   }
 
   draw(ctx: CanvasRenderingContext2D, bounds: Bounds): void {
+    if (!this.canvas) return;
     const w = bounds.x1 - bounds.x0;
     const h = bounds.y1 - bounds.y0;
     if (w > 0 && h > 0) ctx.drawImage(this.canvas, bounds.x0, bounds.y0, w, h, bounds.x0, bounds.y0, w, h);
@@ -168,9 +271,9 @@ const MATERIALS = [SurfaceMaterial.WATER, SurfaceMaterial.GLASS] as const;
 const HALF_TILE = CHUNK_SIZE / 2;
 
 export class SurfaceReflections {
-  private readonly water = new ReflectionLayer();
-  private readonly glass = new ReflectionLayer();
-  private readonly actorPixels = new Map<number, { lit: number; height: number }>();
+  readonly water = new ReflectionLayer();
+  readonly glass = new ReflectionLayer();
+  readonly actorPixels = new Map<number, { lit: number; height: number }>();
   private readonly streaks = new Map<number, number>();
   private readonly halfWaterHits = new Int32Array(HALF_TILE ** 2);
   private readonly halfGlassHits = new Int32Array(HALF_TILE ** 2);
@@ -182,6 +285,7 @@ export class SurfaceReflections {
   private bounds: Bounds = { x0: 0, y0: 0, x1: 0, y1: 0 };
   private waterBounds?: Bounds;
   private glassBounds?: Bounds;
+  private wasWet = false;
 
   begin(world: VoidWorld, dirtyChunks: Uint8Array, view: Bounds): void {
     const { w, h, chunksW, chunksH, chunkCount } = world.grid;
@@ -192,6 +296,7 @@ export class SurfaceReflections {
       this.tiles = new Array(chunkCount);
       this.dirty = new Uint8Array(chunkCount).fill(1);
       this.streakTiles = new Uint8Array(chunkCount);
+      this.wasWet = false;
     }
     // A roof can project 15 pixels north and reflect 15 south. Glass rays reach 12 sideways.
     for (let i = 0; i < dirtyChunks.length; i++) {
@@ -213,22 +318,35 @@ export class SurfaceReflections {
     this.streakTiles.fill(0);
   }
 
-  stampActor(surface: Uint8Array, x: number, y: number, width: number, height: number, color: () => number): void {
+  stampActor(
+    surface: Uint8Array,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    color: () => number,
+    wetActive = false,
+  ): void {
     const { w } = this.world!.grid;
     const projectedY = y + height;
     if (projectedY < this.bounds.y0 || projectedY >= this.bounds.y1) return;
     let stamp: { lit: number; height: number } | undefined;
     for (let px = Math.max(x, this.bounds.x0); px < Math.min(x + width, this.bounds.x1); px++) {
       const idx = projectedY * w + px;
-      if (surface[idx] !== SurfaceMaterial.WATER || (this.actorPixels.get(idx)?.height ?? Infinity) <= height) continue;
+      const s = surface[idx];
+      const matches = s === SurfaceMaterial.WATER ||
+        (wetActive && (s === SurfaceMaterial.WET_PUDDLE || s === SurfaceMaterial.WET_SHEEN));
+      if (!matches || (this.actorPixels.get(idx)?.height ?? Infinity) <= height) continue;
       stamp ??= { lit: color(), height };
       this.actorPixels.set(idx, stamp);
     }
   }
 
-  private stampLights(surface: Uint8Array, lights: readonly PointLight[], phase: number): void {
+  private stampLights(surface: Uint8Array, lights: readonly PointLight[], phase: number, wetness: number): void {
     const { w, chunksW } = this.world!.grid;
     const { x0, x1, y0, y1 } = this.bounds;
+    const wetActive = wetness > 0.001;
+    const puddleWet = wetActive ? puddleWetnessFor(wetness) : 0;
     for (const light of lights) {
       const lightX = Math.round(light.x);
       if (lightX + light.radius < x0 || lightX - light.radius >= x1 ||
@@ -243,28 +361,84 @@ export class SurfaceReflections {
       for (const dy of [0, -4, 4, 8]) {
         if (cy + dy < y0 || cy + dy >= y1) continue;
         for (let x = Math.max(x0, lightX - length); x <= Math.min(x1 - 1, lightX + length); x++) {
-          if (surface[(cy + dy) * w + x] !== SurfaceMaterial.WATER) continue;
+          const s = surface[(cy + dy) * w + x];
+          if (s !== SurfaceMaterial.WATER && (!wetActive || (s !== SurfaceMaterial.WET_PUDDLE && s !== SurfaceMaterial.WET_SHEEN))) continue;
           const distance = Math.abs(x - lightX) + Math.abs(dy) * 0.5;
           if (distance < best) { best = distance; cx = x; }
         }
       }
       const bankFalloff = Math.max(0.24, 1 - Math.abs(cx - lightX) / light.radius);
-      for (let y = Math.max(y0, cy - (length >> 1)); y < Math.min(y1, cy + length); y++) {
+      const streakLen = wetActive ? Math.max(length, Math.round(light.radius * 1.18)) : length;
+      for (let y = Math.max(y0, cy - (length >> 1)); y < Math.min(y1, cy + streakLen); y++) {
         const wave = phase > 0 ? ((y + phase + cx) >> 2) % 3 - 1 : 0;
-        const falloff = Math.max(0, 1 - Math.abs(y - cy) / length);
+        const falloff = Math.max(0, 1 - Math.abs(y - cy) / streakLen);
         for (let x = Math.max(x0, cx + wave - halfWidth); x <= Math.min(x1 - 1, cx + wave + halfWidth); x++) {
           const idx = y * w + x;
-          if (surface[idx] !== SurfaceMaterial.WATER) continue;
-          const energy = falloff * falloff * (1 - Math.abs(x - cx - wave) / (halfWidth + 1)) * 113 * bankFalloff;
-          if (energy < 3) continue;
-          this.streakTiles[((y / CHUNK_SIZE) | 0) * chunksW + ((x / CHUNK_SIZE) | 0)] = 1;
-          const old = this.streaks.get(idx) ?? 0;
-          this.streaks.set(idx, packElevAbgr(
-            Math.min(255, channel(old, RED) + Math.round(light.r * energy)),
-            Math.min(255, channel(old, GREEN) + Math.round(light.g * energy)),
-            Math.min(255, channel(old, BLUE) + Math.round(light.b * energy)),
-          ));
+          const s = surface[idx];
+          if (s === SurfaceMaterial.WATER) {
+            if (y >= cy + length) continue;
+            const wFalloff = Math.max(0, 1 - Math.abs(y - cy) / length);
+            const energy = wFalloff * wFalloff * (1 - Math.abs(x - cx - wave) / (halfWidth + 1)) * 113 * bankFalloff;
+            if (energy < 3) continue;
+            this.streakTiles[((y / CHUNK_SIZE) | 0) * chunksW + ((x / CHUNK_SIZE) | 0)] = 1;
+            const old = this.streaks.get(idx) ?? 0;
+            this.streaks.set(idx, packElevAbgr(
+              Math.min(255, channel(old, RED) + Math.round(light.r * energy)),
+              Math.min(255, channel(old, GREEN) + Math.round(light.g * energy)),
+              Math.min(255, channel(old, BLUE) + Math.round(light.b * energy)),
+            ));
+          } else if (wetActive && (s === SurfaceMaterial.WET_PUDDLE || s === SurfaceMaterial.WET_SHEEN)) {
+            // Wet ground streaks stretch south below the light source in screen space
+            if (y < cy - 2) continue;
+            const isPuddle = s === SurfaceMaterial.WET_PUDDLE;
+            const localWet = isPuddle ? puddleWet : wetness;
+            if (localWet <= 0.01) continue;
+            const shimmer = isPuddle ? wave : (phase > 0 && ((x + y + phase) & 3) === 0 ? 1 : 0);
+            const xDist = Math.abs(x - cx - shimmer);
+            if (xDist > halfWidth) continue;
+            const rawEnergy = falloff * falloff * (1 - xDist / (halfWidth + 1)) * (isPuddle ? 96 : 64) * bankFalloff * localWet;
+            const energy = Math.round(rawEnergy / 6) * 6;
+            if (energy < 4) continue;
+            this.streakTiles[((y / CHUNK_SIZE) | 0) * chunksW + ((x / CHUNK_SIZE) | 0)] = 1;
+            const old = this.streaks.get(idx) ?? 0;
+            this.streaks.set(idx, packElevAbgr(
+              Math.min(255, channel(old, RED) + Math.round(light.r * energy)),
+              Math.min(255, channel(old, GREEN) + Math.round(light.g * energy)),
+              Math.min(255, channel(old, BLUE) + Math.round(light.b * energy)),
+            ));
+          }
         }
+      }
+    }
+  }
+
+  private clearWetPixels(waterPut: Bounds): void {
+    const world = this.world;
+    if (!world) return;
+    const { w, h } = world.grid;
+    const localWater = this.water.pixels;
+    for (let idx = 0; idx < this.tiles.length; idx++) {
+      const tile = this.tiles[idx];
+      if (!tile?.wet || tile.wet.cells.length === 0) continue;
+      let cleared = false;
+      for (const cell of tile.wet.cells) {
+        if (localWater[cell] !== 0) {
+          localWater[cell] = 0;
+          cleared = true;
+        }
+      }
+      tile.wet.previousBase.fill(0);
+      tile.wet.previousRay.fill(0);
+      tile.wet.previousStreak.fill(0);
+      tile.wetSky = undefined;
+      tile.wetRevision = undefined;
+      tile.hadWetStreak = false;
+      if (cleared) {
+        const tx = idx % world.grid.chunksW;
+        const ty = (idx / world.grid.chunksW) | 0;
+        const ix = tx * CHUNK_SIZE;
+        const iy = ty * CHUNK_SIZE;
+        expand(waterPut, ix, iy, Math.min(w, ix + CHUNK_SIZE), Math.min(h, iy + CHUNK_SIZE));
       }
     }
   }
@@ -272,6 +446,7 @@ export class SurfaceReflections {
   paint(
     atlas: BuildingSpriteCache, lighting: LightingEngine, baseTerrain: Uint32Array,
     lights: readonly PointLight[], preset: TimeOfDayPreset, quality: LightingQualityMode, time: number,
+    wetness = 0,
   ): void {
     const world = this.world!;
     const { w, h, chunksW } = world.grid;
@@ -280,9 +455,13 @@ export class SurfaceReflections {
     if (x1 <= x0 || y1 <= y0) return;
     const { terrainSurface, terrainLightU32, buildingLightU32 } = lighting;
     const phase = Math.floor(time * 6);
-    this.stampLights(terrainSurface, lights, phase);
+    const wetActive = wetness > 0.001;
+    const qWet = wetActive ? Math.max(1 / 32, Math.round(Math.min(1, wetness) * 32) / 32) : 0;
+    const qPuddleWet = wetActive ? Math.max(1 / 32, Math.round(puddleWetnessFor(qWet) * 32) / 32) : 0;
+    this.stampLights(terrainSurface, lights, phase, qWet);
     const sky = reflectionColor(preset.skyColor);
     const skyKey = [preset.id, ...preset.skyColor, ...preset.sunDir, ...preset.sunColor, preset.sunIntensity].join(",");
+    const wetSkyKey = wetActive ? `${skyKey},${qWet}` : skyKey;
     const [sx, sy, sz] = preset.sunDir;
     const sunViewNorm = 127 * Math.hypot(sx, sy + Math.SQRT1_2, sz + Math.SQRT1_2);
     const medium = quality === "medium";
@@ -293,6 +472,13 @@ export class SurfaceReflections {
     const { atlasBldId, atlasColorU32, atlasElev, atlasSurface } = atlas;
     const localWater = this.water.pixels;
     const localGlass = this.glass.pixels;
+
+    if (!wetActive && this.wasWet) {
+      this.clearWetPixels(waterPut);
+      this.wasWet = false;
+    } else if (wetActive) {
+      this.wasWet = true;
+    }
 
     for (let ty = (y0 / CHUNK_SIZE) | 0; ty * CHUNK_SIZE < y1; ty++) {
       for (let tx = (x0 / CHUNK_SIZE) | 0; tx * CHUNK_SIZE < x1; tx++) {
@@ -346,6 +532,10 @@ export class SurfaceReflections {
           }
           if (oldTile?.water.cells.length) {
             for (const idx of oldTile.water.cells) localWater[idx] = 0;
+            expand(waterPut, ix, iy, ex, ey);
+          }
+          if (oldTile?.wet?.cells.length) {
+            for (const idx of oldTile.wet.cells) localWater[idx] = 0;
             expand(waterPut, ix, iy, ex, ey);
           }
           if (oldTile?.glass.cells.length) {
@@ -429,6 +619,147 @@ export class SurfaceReflections {
           }
           if (changed) expand(water ? waterPut : glassPut, ix, iy, ex, ey);
         }
+
+        // Wet ground reflection pass (skipped completely when dry: wetness === 0)
+        if (!wetActive) continue;
+
+        if (!tile.wet || tile.wetGeometry !== quality) {
+          const wetCells: number[] = [];
+          const wetHits: number[] = [];
+          const wetDepths: number[] = [];
+          const wetPuddle: number[] = [];
+          const wetFacing: number[] = [];
+          this.halfWaterHits.fill(-2);
+          for (let y = iy; y < ey; y++) {
+            for (let x = ix; x < ex; x++) {
+              const i = y * w + x;
+              const s = terrainSurface[i];
+              if (s !== SurfaceMaterial.WET_PUDDLE && s !== SurfaceMaterial.WET_SHEEN) continue;
+              if (atlasBldId[i] >= 0) continue; // occluded by projected building sprite
+              const isPuddle = s === SurfaceMaterial.WET_PUDDLE;
+              wetCells.push(i);
+              wetPuddle.push(isPuddle ? 1 : 0);
+              let hit = -1;
+              if (quality === "medium") {
+                // Medium tier: light streaks + puddle reflections (2x2 half-res ray sharing)
+                if (isPuddle) {
+                  const block = ((y - iy) >> 1) * HALF_TILE + ((x - ix) >> 1);
+                  if (this.halfWaterHits[block] === -2) this.halfWaterHits[block] = sampleWaterMirror(x, y, w, atlas);
+                  hit = this.halfWaterHits[block];
+                }
+              } else if (quality === "high") {
+                // High tier: puddles at 1:1 with foliage, wet sheen at half-res (2x2) for gentle blur & fast performance
+                if (isPuddle) {
+                  hit = sampleWaterMirror(x, y, w, atlas, world);
+                } else {
+                  const block = ((y - iy) >> 1) * HALF_TILE + ((x - ix) >> 1);
+                  if (this.halfWaterHits[block] === -2) this.halfWaterHits[block] = sampleWaterMirror(x, y, w, atlas);
+                  hit = this.halfWaterHits[block];
+                }
+              }
+              wetHits.push(hit);
+              const depth = hit >= 0 ? atlasElev[hit] : hit === -1 ? 0 : y - (((-2 - hit) / w) | 0);
+              wetDepths.push(depth);
+              const dirt = world.material[i] === CellMaterial.STREET && world.streetTier[i] === 8;
+              wetFacing.push(dirt ? 0.92 : isPuddle ? 0.65 : 0.78);
+            }
+          }
+          tile.wet = wetSamples(
+            wetCells,
+            wetHits,
+            Uint8Array.from(wetDepths),
+            Uint8Array.from(wetPuddle),
+            wetFacing,
+          );
+          tile.wetGeometry = quality;
+        }
+
+        const wetSample = tile.wet;
+        if (wetSample.cells.length === 0) continue;
+        expand(waterDraw, ix, iy, ex, ey);
+        const wetSkyChanged = tile.wetSky !== wetSkyKey;
+        tile.wetSky = wetSkyKey;
+        if (quality === "low") {
+          const streak = this.streakTiles[tileIndex] !== 0;
+          const remainsClean = !wetSkyChanged && !streak && !tile.hadWetStreak && tile.wetRevision === localRevision;
+          tile.hadWetStreak = streak;
+          tile.wetRevision = localRevision;
+          if (remainsClean) continue;
+        }
+
+        let wetChanged = false;
+        for (let k = 0; k < wetSample.cells.length; k++) {
+          const i = wetSample.cells[k];
+          const isPuddle = wetSample.isPuddle[k] === 1;
+          const mat: ReflectiveMaterial = isPuddle ? SurfaceMaterial.WET_PUDDLE : SurfaceMaterial.WET_SHEEN;
+          const localWet = isPuddle ? qPuddleWet : qWet;
+          let hit = quality === "low" ? -1 : wetSample.hits[k];
+          const x = i % w;
+          const y = (i / w) | 0;
+
+          if (quality === "high" && time > 0) {
+            if (isPuddle) {
+              const [rx, ry] = computePuddleRippleOffset(world.seed, x, y, time);
+              if ((rx !== 0 || ry !== 0) && hit >= 0) {
+                const hx = Math.max(0, Math.min(w - 1, (hit % w) + rx));
+                const hy = Math.max(0, Math.min(h - 1, ((hit / w) | 0) + ry));
+                const shifted = hy * w + hx;
+                if (atlasBldId[shifted] >= 0) hit = shifted;
+              }
+            } else if (hit >= 0) {
+              // Slight horizontal blur / faint shimmer outside puddles
+              const shimmer = (((x * 5 + y * 9 + phase) >> 2) % 3) - 1;
+              const shifted = hit + shimmer;
+              if ((shifted / w | 0) === (hit / w | 0) && atlasBldId[shifted] >= 0) hit = shifted;
+            }
+          } else if (hit >= 0 && !isPuddle) {
+            // Slight 1-px neighbor blur on wet sheen
+            const blurShift = ((x + y) & 1) === 0 ? 1 : -1;
+            const shifted = hit + blurShift;
+            if ((shifted / w | 0) === (hit / w | 0) && atlasBldId[shifted] >= 0) hit = shifted;
+          }
+
+          let ray = hit >= 0 ? buildingLightU32[hit] || atlasColorU32[hit]
+            : hit === -1 ? sky : terrainLightU32[-2 - hit] || baseTerrain[-2 - hit];
+          let mirrorDepth = wetSample.depths[k];
+          if (quality === "high" && this.actorPixels.size) {
+            const actor = this.actorPixels.get(i);
+            const curDepth = hit >= 0 ? mirrorDepth : Infinity;
+            if (actor && actor.height <= curDepth) {
+              ray = actor.lit;
+              mirrorDepth = actor.height;
+            }
+          }
+
+          // Distance fade from the reflected object so nearby buildings/units reflect strongest
+          const distFade = hit === -1 && mirrorDepth === 0
+            ? 1
+            : Math.max(0.22, 1 - mirrorDepth / (MAX_ELEVATION_PX + 3));
+          const base = terrainLightU32[i] || baseTerrain[i];
+          const streak = this.streaks.size ? this.streaks.get(i) ?? 0 : 0;
+          if (!wetSkyChanged && wetSample.previousBase[k] === base && wetSample.previousRay[k] === ray &&
+              wetSample.previousStreak[k] === streak && !(quality === "high" && isPuddle && time > 0)) continue;
+          wetSample.previousBase[k] = base;
+          wetSample.previousRay[k] = ray;
+          wetSample.previousStreak[k] = streak;
+          if (wetSkyChanged) {
+            const alignment = (-sy + sz) * Math.SQRT1_2 + (((x * 13 + y * 7) & 15) - 8) * 0.021;
+            const power = Math.min(1, Math.max(0, alignment)) ** (isPuddle ? 12 : 8) * preset.sunIntensity * (isPuddle ? 32 : 14);
+            const sun = preset.sunColor;
+            wetSample.glints[k] = packElevAbgr(Math.round(power * sun[0]), Math.round(power * sun[1]), Math.round(power * sun[2]));
+          }
+          localWater[i] = shadeReflection(
+            mat,
+            base,
+            ray,
+            wetSample.facing[k],
+            wetSample.glints[k],
+            streak,
+            localWet * distFade,
+          );
+          wetChanged = true;
+        }
+        if (wetChanged) expand(waterPut, ix, iy, ex, ey);
       }
     }
     this.waterBounds = waterDraw.x1 > waterDraw.x0 ? waterDraw : undefined;

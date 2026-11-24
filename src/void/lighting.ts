@@ -20,6 +20,82 @@ export const MAX_DYNAMIC_LIGHTS = 48;
 
 export type LightingQualityMode = "low" | "medium" | "high";
 export type VoidTimeOfDay = "day" | "sunset" | "night";
+export type VoidWeatherMode = "clear" | "rain";
+
+/** Wetness ramp constants: 20 s to reach full wetness when rain starts, 60 s to dry when rain stops. */
+export const WETNESS_RAMP_UP_SECONDS = 20;
+export const WETNESS_DRY_SECONDS = 60;
+
+export function normalizeVoidWeather(raw: unknown): VoidWeatherMode {
+  return raw === "rain" ? "rain" : "clear";
+}
+
+/** Advances global wetness (`0..1`) toward `weather`: ramps up over 20 s in rain and dries over 60 s when clear. */
+export function stepWetness(wetness: number, weather: VoidWeatherMode, dtSeconds: number): number {
+  const dt = Math.max(0, dtSeconds);
+  const next = weather === "rain"
+    ? wetness + dt / WETNESS_RAMP_UP_SECONDS
+    : wetness - dt / WETNESS_DRY_SECONDS;
+  return Math.max(0, Math.min(1, next));
+}
+
+/** Effective wetness on a puddle cell (`0..1`): puddles fill slightly ahead and dry last when rain stops. */
+export function puddleWetnessFor(wetness: number): number {
+  const w = Math.max(0, Math.min(1, wetness));
+  return w <= 0 ? 0 : Math.pow(w, 0.55);
+}
+
+/** Deterministic puddle depth (`0..1`) at cell `(x, y)` from seeded noise and low spots in elevation/curb data. */
+export function computePuddleDepthAt(world: VoidWorld, x: number, y: number, relief?: number): number {
+  const { w, h } = world.grid;
+  if (x < 0 || x >= w || y < 0 || y >= h) return 0;
+  const idx = y * w + x;
+  const mat = world.material[idx];
+  const cover = world.landCover[idx];
+  if (mat === CellMaterial.STREET && cover !== LandCover.BRIDGE) {
+    const isDirt = world.streetTier[idx] === 8 || cover === LandCover.DIRT_ROAD;
+    const rel = relief ?? terrainReliefAt(world, x, y);
+    const seedX = (world.seed & 127) * 0.73;
+    const seedY = ((world.seed >>> 7) & 127) * 0.61;
+    const n1 = valueNoise(x * 0.19 + seedX, y * 0.19 + seedY);
+    const n2 = valueNoise(x * 0.41 + seedY, y * 0.41 + seedX);
+    const lowSpot = isDirt ? Math.max(0, 0.22 - rel) * 1.4 : Math.max(0, 0.12 - rel) * 1.85;
+    const score = n1 * 0.64 + n2 * 0.36 + lowSpot;
+    const threshold = isDirt ? 0.64 : 0.52;
+    return score > threshold ? Math.min(1, (score - threshold) / (1 - threshold)) : 0;
+  }
+  if (mat === CellMaterial.PARK && cover === LandCover.NONE) {
+    const seedX = (world.seed & 127) * 0.53;
+    const seedY = ((world.seed >>> 7) & 127) * 0.79;
+    const n = valueNoise(x * 0.22 + seedX, y * 0.22 + seedY);
+    return n > 0.60 ? Math.min(1, (n - 0.60) / 0.40) : 0;
+  }
+  return 0;
+}
+
+/** Deterministic boolean puddle mask at cell `(x, y)`. */
+export function isPuddleCellAt(world: VoidWorld, x: number, y: number, relief?: number): boolean {
+  return computePuddleDepthAt(world, x, y, relief) > 0;
+}
+
+/** Darkens and saturates a base RGB channel triplet `[0..255]` by `wetAmt` (`0..1`) with a cool slate-blue wet shift. */
+export function applyWetAlbedo(
+  r: number,
+  g: number,
+  b: number,
+  wetAmt: number,
+  darkenScale = 0.28,
+  satScale = 0.24,
+): [number, number, number] {
+  if (wetAmt <= 0) return [r, g, b];
+  const dark = 1 - wetAmt * darkenScale;
+  const mean = (r + g + b) * (1 / 3);
+  const sat = 1 + wetAmt * satScale;
+  const wr = Math.max(0, Math.min(255, Math.round((mean + (r - mean) * sat) * dark)));
+  const wg = Math.max(0, Math.min(255, Math.round((mean + (g - mean) * sat) * (dark + wetAmt * 0.015))));
+  const wb = Math.max(0, Math.min(255, Math.round((mean + (b - mean) * sat) * (dark + wetAmt * 0.045))));
+  return [wr, wg, wb];
+}
 
 export type TimeOfDayPreset = {
   id: VoidTimeOfDay;
@@ -1291,8 +1367,19 @@ export class LightingEngine {
         this.terrainNz[idx] = Math.round(nz);
 
         const mat = material[idx];
-        this.terrainSurface[idx] = mat === CellMaterial.UNCLAIMED ? SurfaceMaterial.WATER : SurfaceMaterial.OPAQUE;
         const cover = landCover[idx];
+        let surface: number = SurfaceMaterial.OPAQUE;
+        if (mat === CellMaterial.UNCLAIMED) {
+          surface = SurfaceMaterial.WATER;
+        } else if (
+          (mat === CellMaterial.STREET && cover !== LandCover.BRIDGE) ||
+          (mat === CellMaterial.PARK && cover === LandCover.NONE)
+        ) {
+          surface = isPuddleCellAt(world, x, y, relief[idx])
+            ? SurfaceMaterial.WET_PUDDLE
+            : SurfaceMaterial.WET_SHEEN;
+        }
+        this.terrainSurface[idx] = surface;
         const tGround =
           mat === CellMaterial.VOID || mat === CellMaterial.EMPTY ? 0 :
           mat === CellMaterial.WALL || mat === CellMaterial.BARRIER || cover === LandCover.SILO
@@ -1460,6 +1547,41 @@ export class LightingEngine {
     };
   }
 
+  /** Evaluates a fast unshadowed CSS color for a rain streak or splash at `(x, y, z)` so raindrops glint near neon, towers, and explosions. */
+  rainGlintStyle(x: number, y: number, z = 2.5, splash = false): string {
+    const preset = this.activePreset;
+    let r = 82 + preset.ambientColor[0] * 115 + preset.sunIntensity * preset.sunColor[0] * 85;
+    let g = 104 + preset.ambientColor[1] * 125 + preset.sunIntensity * preset.sunColor[1] * 85;
+    let b = 148 + preset.ambientColor[2] * 140 + preset.sunIntensity * preset.sunColor[2] * 90;
+    const lights = this.compiledLights;
+    for (let i = 0; i < lights.length; i++) {
+      const l = lights[i];
+      const dx = l.x - x;
+      const dy = l.y - y;
+      const d2 = dx * dx + dy * dy;
+      if (d2 >= l.radiusSq) continue;
+      const dz = l.z - z;
+      const falloff = 1 - Math.sqrt(d2) * l.invRadius;
+      const atten = (falloff * falloff) / (1 + dz * dz * 0.04);
+      const gain = splash ? 185 : 155;
+      r += l.r * atten * gain;
+      g += l.g * atten * gain;
+      b += l.b * atten * gain;
+    }
+    if (this.haloW > 0 && preset.neonIntensity > 0.2) {
+      const hx = Math.max(0, Math.min(this.haloW - 1, x >> 1));
+      const hy = Math.max(0, Math.min(this.haloH - 1, y >> 1));
+      const hi = (hy * this.haloW + hx) * 3;
+      const hBoost = preset.neonIntensity * (splash ? 0.55 : 0.44);
+      r += this.halo[hi] * hBoost;
+      g += this.halo[hi + 1] * hBoost;
+      b += this.halo[hi + 2] * hBoost;
+    }
+    const q = (v: number) => Math.min(255, Math.max(40, Math.round(v / 8) * 8));
+    const alpha = splash ? "0.82" : "0.66";
+    return `rgba(${q(r)}, ${q(g)}, ${q(b)}, ${alpha})`;
+  }
+
   // Cache only on the native raster. Actor samples use arbitrary heights and normals.
   private shadowCacheFor(slot: number, light: PointLight, tx0: number, ty0: number, tx1: number, ty1: number): ShadowCache {
     let revision = 0;
@@ -1552,6 +1674,7 @@ export class LightingEngine {
     groundShadowMap?: Uint8Array,
     blending = false,
     reflectionMargin = 0,
+    wetness = 0,
   ): void {
     const { w, h, chunksW, chunksH } = world.grid;
     const {
@@ -1561,6 +1684,7 @@ export class LightingEngine {
       terrainNy,
       terrainNz,
       terrainElev,
+      terrainSurface,
       tileLightsLo,
       tileLightsHi,
       tileVisited,
@@ -1568,11 +1692,13 @@ export class LightingEngine {
       curActiveTiles,
     } = this;
 
+    const qWet = wetness <= 0.001 ? 0 : Math.round(Math.min(1, wetness) * 64) / 64;
+    const qPuddleWet = qWet > 0 ? Math.round(puddleWetnessFor(qWet) * 64) / 64 : 0;
     if (preset) {
       this.activePreset = preset;
       const key = [preset.id, ...preset.sunDir, preset.sunHeight, ...preset.sunColor,
         preset.sunIntensity, ...preset.ambientColor, ...preset.voidAmbientColor,
-        preset.neonIntensity, preset.hazeAmount, preset.shadowReachScale, preset.shadowStrengthScale].join(",");
+        preset.neonIntensity, preset.hazeAmount, preset.shadowReachScale, preset.shadowStrengthScale, qWet].join(",");
       if (blending || key !== this.lastPresetKey || groundShadowMap !== this.lastGroundShadows) {
         this.lastPresetKey = key;
         this.lastGroundShadows = groundShadowMap;
@@ -1705,6 +1831,7 @@ export class LightingEngine {
       atlasNy,
       atlasNz,
       atlasSpec,
+      atlasSurface,
       atlasBldId,
     } = spriteCache;
     const { material, streetTier } = world;
@@ -1835,25 +1962,47 @@ export class LightingEngine {
 
           const isEmissive = isBuilding && atlasSpec[i] >= 240;
           const wz = isBuilding ? atlasElev[i] : terrainElev[i];
-          const nx = (isBuilding ? atlasNx[i] : terrainNx[i]) * (1 / 127);
-          const ny = (isBuilding ? atlasNy[i] : terrainNy[i]) * (1 / 127);
-          const nz = (isBuilding ? atlasNz[i] : terrainNz[i]) * (1 / 127);
+          const surfTag = isBuilding ? atlasSurface[i] : terrainSurface[i];
+          const isPuddle = !isBuilding && surfTag === SurfaceMaterial.WET_PUDDLE && qPuddleWet > 0;
+          const isWetGround = !isBuilding && (surfTag === SurfaceMaterial.WET_PUDDLE || surfTag === SurfaceMaterial.WET_SHEEN) && qWet > 0;
+          const isWetRoof = isBuilding && surfTag === SurfaceMaterial.WET_ROOF && qWet > 0;
+          const isDirtRoad = !isBuilding && material[i] === CellMaterial.STREET && streetTier[i] === 8;
+          const localWet = isPuddle
+            ? (isDirtRoad ? qPuddleWet * 0.55 : qPuddleWet)
+            : isWetGround
+              ? (isDirtRoad ? qWet * 0.38 : qWet)
+              : isWetRoof
+                ? qWet * 0.75
+                : 0;
+          let nx = (isBuilding ? atlasNx[i] : terrainNx[i]) * (1 / 127);
+          let ny = (isBuilding ? atlasNy[i] : terrainNy[i]) * (1 / 127);
+          let nz = (isBuilding ? atlasNz[i] : terrainNz[i]) * (1 / 127);
+          if (isPuddle && localWet > 0.05) {
+            const flat = localWet * 0.72;
+            nx *= 1 - flat;
+            ny *= 1 - flat;
+            nz = Math.sqrt(Math.max(0.1, 1 - nx * nx - ny * ny));
+          }
           const isWetOrShinyGround =
             !isBuilding &&
             (material[i] === CellMaterial.UNCLAIMED ||
               material[i] === CellMaterial.BARRIER ||
-              (material[i] === CellMaterial.STREET && streetTier[i] !== 8));
-          const specWeight = isBuilding
+              (material[i] === CellMaterial.STREET && streetTier[i] !== 8) ||
+              localWet > 0.05);
+          const baseSpec = isBuilding
             ? atlasSpec[i] * (1 / 255)
             : material[i] === CellMaterial.UNCLAIMED
               ? 0.78
               : material[i] === CellMaterial.BARRIER
                 ? 0.65
-                : isWetOrShinyGround
+                : (material[i] === CellMaterial.STREET && streetTier[i] !== 8)
                   ? preset && preset.id === "night"
                     ? 0.46
                     : 0.32
                   : 0.16;
+          const specWeight = localWet > 0
+            ? Math.min(0.96, baseSpec + localWet * (isPuddle ? 0.48 : 0.30))
+            : baseSpec;
           const selfBldId = isBuilding ? atlasBldId[i] : -1;
 
           // Reconstruct 3D world ground position from oblique screen coordinate (sy = wy - wz)
@@ -1891,9 +2040,17 @@ export class LightingEngine {
           }
 
           // TimeOfDay full-scene shading (Day, Sunset, Night)
-          const br = IS_LITTLE_ENDIAN ? baseAbgr & 255 : baseAbgr >>> 24;
-          const bg = (baseAbgr >>> (IS_LITTLE_ENDIAN ? 8 : 16)) & 255;
-          const bb = (baseAbgr >>> (IS_LITTLE_ENDIAN ? 16 : 8)) & 255;
+          let br = IS_LITTLE_ENDIAN ? baseAbgr & 255 : baseAbgr >>> 24;
+          let bg = (baseAbgr >>> (IS_LITTLE_ENDIAN ? 8 : 16)) & 255;
+          let bb = (baseAbgr >>> (IS_LITTLE_ENDIAN ? 16 : 8)) & 255;
+          if (qWet > 0 && !isEmissive) {
+            if (localWet > 0) {
+              [br, bg, bb] = applyWetAlbedo(br, bg, bb, localWet, isPuddle ? 0.34 : 0.25, isPuddle ? 0.28 : 0.22);
+            } else if (!isBuilding && (material[i] === CellMaterial.PARK || material[i] === CellMaterial.RECLAIMED)) {
+              // Grass, crops, forest, and reclaimed soil darken slightly when wet but do not reflect
+              [br, bg, bb] = applyWetAlbedo(br, bg, bb, qWet, 0.14, 0.12);
+            }
+          }
 
           const hasPt = nLocal > 0 && this.illuminate(world, localLights, wx, wy, wz, nx, ny, nz, specWeight,
             selfBldId, -1, sunShadow, sy);
@@ -1917,7 +2074,8 @@ export class LightingEngine {
             ptB += hSpillB;
             // Subtle wet-street reflection sheen from nearby neon halos
             if (isWetOrShinyGround && (hSpillR + hSpillG + hSpillB) > 0.04) {
-              const shimmer = ((sx * 7 + sy * 13) & 3) === 0 ? 34 : 18;
+              const baseShimmer = ((sx * 7 + sy * 13) & 3) === 0 ? 34 : 18;
+              const shimmer = baseShimmer * (1 + localWet * (isPuddle ? 1.15 : 0.75));
               spR += hSpillR * shimmer;
               spG += hSpillG * shimmer;
               spB += hSpillB * shimmer;

@@ -38,13 +38,16 @@ import {
   LightingEngine,
   type LightingQualityMode,
   normalizeVoidTimeOfDay,
+  normalizeVoidWeather,
   parseColorRgb01,
   looseMaterialLight,
   shadeLooseMaterial,
+  stepWetness,
   TIME_OF_DAY_PRESETS,
   type TimeOfDayPreset,
   TOWER_SOBEL_NORMALS,
   type VoidTimeOfDay,
+  type VoidWeatherMode,
 } from "./lighting.ts";
 import { isOccludedByLedge, paintVoidLedge } from "./ledge.ts";
 import { valueNoise } from "./portal-noise.ts";
@@ -301,6 +304,9 @@ export class VoidRenderer {
   private fastLightFrames = 0;
   /** Active Time of Day lighting preset (`day`, `sunset`, or `night`) with smooth mode blending. */
   timeOfDay: VoidTimeOfDay = "night";
+  /** Active weather state (`clear` or `rain`) and surface wetness (`0..1`, ramps over 20 s, dries over 60 s). */
+  weather: VoidWeatherMode = "clear";
+  wetness = 0;
   private fromPreset: TimeOfDayPreset = TIME_OF_DAY_PRESETS.night;
   private toPreset: TimeOfDayPreset = TIME_OF_DAY_PRESETS.night;
   private presetBlendT = 1;
@@ -309,12 +315,20 @@ export class VoidRenderer {
   readonly spriteCache = new BuildingSpriteCache();
   /** Tiled 2.5D bump-mapped surface lighting, surface glows and dynamic cast shadows. */
   readonly lighting = new LightingEngine();
-  private readonly reflections = new SurfaceReflections();
+  readonly reflections = new SurfaceReflections();
   private lastDirtyChunks = new Uint8Array(0);
   private placementPulses: { x: number; y: number; ageMs: number }[] = [];
   private incomePopups: { x: number; y: number; text: string; ageMs: number }[] = [];
   private outcomeFlashMs = 0;
   private outcomeFlashWon = true;
+
+  setWeather(mode: VoidWeatherMode, immediate = false): void {
+    const clean = normalizeVoidWeather(mode);
+    this.weather = clean;
+    if (immediate) {
+      this.wetness = clean === "rain" ? 1 : 0;
+    }
+  }
 
   setTimeOfDay(mode: VoidTimeOfDay, immediate = false): void {
     const clean = normalizeVoidTimeOfDay(mode);
@@ -540,6 +554,72 @@ export class VoidRenderer {
       }
     }
     return null;
+  }
+
+  /** Paints deterministic slanted whole-pixel rain streaks (2–3 per 16x16 tile) and tiny impact splash pixels,
+   * shaded by nearby point lights and neon halos so raindrops glint near bright fixtures. */
+  private paintRainPass(
+    rawScene: CanvasRenderingContext2D,
+    world: VoidWorld,
+    viewBounds: { x0: number; y0: number; x1: number; y1: number },
+    animTime: number,
+  ): void {
+    const { w, h, chunksW, chunksH } = world.grid;
+    const tx0 = Math.max(0, Math.floor(viewBounds.x0 / CHUNK_SIZE));
+    const ty0 = Math.max(0, Math.floor(viewBounds.y0 / CHUNK_SIZE));
+    const tx1 = Math.min(chunksW - 1, Math.floor(viewBounds.x1 / CHUNK_SIZE));
+    const ty1 = Math.min(chunksH - 1, Math.floor(viewBounds.y1 / CHUNK_SIZE));
+    const dropsPerTile = this.effectiveLightingQuality === "low" ? 2 : 3;
+    const period = 0.42;
+    const { material } = world;
+    const { atlasElev } = this.spriteCache;
+
+    for (let ty = ty0; ty <= ty1; ty++) {
+      const iy = ty * CHUNK_SIZE;
+      for (let tx = tx0; tx <= tx1; tx++) {
+        const ix = tx * CHUNK_SIZE;
+        for (let k = 0; k < dropsPerTile; k++) {
+          const hVal = hash(world.seed, 987, tx, ty, k);
+          const phase = ((hVal >>> 8) & 255) / 256;
+          const u = this.reduceEffects ? phase : (animTime / period + phase) % 1;
+          const slot = this.reduceEffects ? 0 : Math.floor(animTime / period + phase);
+          const sHash = hash(world.seed, 989, tx, ty, k, slot);
+          const lx = sHash & 15;
+          const ly = (sHash >>> 4) & 15;
+          const gx = ix + lx;
+          const gy = iy + ly;
+          if (gx < 1 || gx >= w - 1 || gy < 3 || gy >= h - 1) continue;
+          const idx = gy * w + gx;
+          if (material[idx] === CellMaterial.VOID) continue;
+          const roofZ = atlasElev[idx];
+
+          if (u < 0.76) {
+            const f = u / 0.76;
+            const altitude = Math.round((1 - f) * 5);
+            const sx = gx - Math.round((1 - f) * 2);
+            const sy = gy - roofZ - altitude;
+            if (sx < 0 || sx >= w - 1 || sy < 2 || sy >= h) continue;
+            rawScene.fillStyle = this.lighting.rainGlintStyle(gx, gy, roofZ + altitude + 1, false);
+            // Thin slanted whole-pixel streak (1 px step right per 2 px step down)
+            rawScene.fillRect(sx, sy - 2, 1, 1);
+            rawScene.fillRect(sx, sy - 1, 1, 1);
+            rawScene.fillRect(sx + 1, sy, 1, 1);
+          } else {
+            // Tiny 1-pixel impact splash on ground or roof
+            const splashAge = (u - 0.76) / 0.24;
+            const sy = gy - roofZ;
+            if (sy < 1 || sy >= h) continue;
+            rawScene.fillStyle = this.lighting.rainGlintStyle(gx, gy, roofZ + 0.5, true);
+            if (splashAge < 0.45) {
+              rawScene.fillRect(gx, sy, 1, 1);
+            } else {
+              if (gx > 0) rawScene.fillRect(gx - 1, sy, 1, 1);
+              if (gx + 1 < w) rawScene.fillRect(gx + 1, sy, 1, 1);
+            }
+          }
+        }
+      }
+    }
   }
 
   private paintVehicleSpill(world: VoidWorld, x: number, y: number, inner: string, outer: string): void {
@@ -1469,6 +1549,7 @@ export class VoidRenderer {
     // 1. Draw cached metropolitan terrain layer + tiled 2.5D bump lighting & dynamic cast shadows
     const dt = this.lastTimeMs > 0 ? Math.max(0, Math.min(0.08, (nowMs - this.lastTimeMs) * 0.001)) : 0.016;
     this.lastTimeMs = nowMs;
+    this.wetness = stepWetness(this.wetness, this.weather, dt);
     const animTime = this.reduceEffects ? 0 : nowMs * 0.001;
     const pulse = this.reduceEffects ? 0.75 : 0.65 + 0.35 * Math.sin(animTime * 5.2);
     const cleanTod = normalizeVoidTimeOfDay(this.timeOfDay);
@@ -1522,6 +1603,7 @@ export class VoidRenderer {
     );
     this.lighting.syncMovingCasters(combat.agents, this.reduceEffects ? [] : physics.fallingChunks, sim.tick);
     const reflectionQuality = this.effectiveLightingQuality;
+    const wetActive = this.wetness > 0.001;
     this.lighting.renderLighting(
       world,
       this.terrainU32,
@@ -1532,6 +1614,7 @@ export class VoidRenderer {
       this.shadowMap,
       this.presetBlendT < 1,
       reflectionQuality === "low" ? 0 : MAX_ELEVATION_PX + 1,
+      this.wetness,
     );
     lap("lighting");
 
@@ -1548,7 +1631,7 @@ export class VoidRenderer {
         for (let z = 1; z <= towerRise; z++) {
           const color = z === towerRise ? TOWER_SPECS[tower.type].color : "#424657";
           this.reflections.stampActor(surface, tower.x, y, tower.w, z, () =>
-            litColor(tower.x + tower.w * 0.5, y, z, color, tower.uid));
+            litColor(tower.x + tower.w * 0.5, y, z, color, tower.uid), wetActive);
         }
       }
       for (const agent of combat.agents) {
@@ -1559,11 +1642,11 @@ export class VoidRenderer {
         const height = agent.layer === "air" || wide ? 2 : 1;
         const color = agent.layer === "air" || agent.kind === "wallSerpent" ? "#6ad8ff" : "#ffd15c";
         this.reflections.stampActor(surface, wide ? x - 1 : x, y, wide ? 2 : 1, height, () =>
-          litColor(x, y, height, color));
+          litColor(x, y, height, color), wetActive);
       }
     }
     this.reflections.paint(this.spriteCache, this.lighting, this.terrainU32, sceneLights,
-      activePreset, reflectionQuality, animTime);
+      activePreset, reflectionQuality, animTime, this.wetness);
     lap("reflections");
 
     // Auto-drop lighting quality on slow devices when lighting + terrain exceeds frame budget
@@ -3104,6 +3187,12 @@ export class VoidRenderer {
     }
 
     lap("debris");
+
+    // 14b. Rain particles: thin, slanted whole-pixel streaks (a few per 16x16 tile) with tiny splash pixels on impact,
+    //      lit by nearby point lights and emissive neon halos so they glint near neon.
+    if (this.weather === "rain") {
+      this.paintRainPass(rawScene, world, viewBounds, animTime);
+    }
 
     // 15. Draw interactive drag preview (tower footprint, strike radius, reticle, or wall blueprint)
     if (preview) {

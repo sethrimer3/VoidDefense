@@ -592,6 +592,19 @@
   text-shadow: 0 0 6px rgba(255, 157, 0, 0.75);
 }
 
+.void-weather-btn {
+  margin-left: 3px;
+}
+
+.void-weather-btn.active,
+.void-weather-btn[aria-pressed="true"] {
+  border-color: var(--void-neon-cyan);
+  border-top-color: #8cf5ff;
+  background: linear-gradient(180deg, #102534 0%, #091520 100%);
+  box-shadow: 0 0 8px rgba(0, 229, 255, 0.45), inset 0 0 4px rgba(0, 229, 255, 0.25);
+  text-shadow: 0 0 6px rgba(0, 229, 255, 0.75);
+}
+
 /* Top Center Status Bar */
 .void-hud-top {
   display: flex;

@@ -17,7 +17,7 @@ import type {
 import { ResistanceMapView } from "./map/view.ts";
 import { sectorUnlocked } from "./map/progress.ts";
 import { ResistanceOperationsView } from "./operations/scene.ts";
-import { normalizeVoidTimeOfDay, type VoidTimeOfDay } from "./lighting.ts";
+import { normalizeVoidTimeOfDay, normalizeVoidWeather, type VoidTimeOfDay, type VoidWeatherMode } from "./lighting.ts";
 import { VoidRenderer, type DragPreview } from "./render.ts";
 import { type VoidSave } from "./save.ts";
 import { VoidSim } from "./sim.ts";
@@ -285,10 +285,11 @@ export class VoidApp {
 
               <!-- Clean HUD Overlays floating over battle canvas -->
               <div class="void-battle-hud" data-battle-hud>
-                <div class="void-hud-top-left" data-tod-bar role="group" aria-label="Time of Day">
+                <div class="void-hud-top-left" data-tod-bar role="group" aria-label="Time of Day & Weather">
                   <button type="button" class="void-tod-btn" data-set-tod="day" data-i18n="void.tod.day" title="Day">Day</button>
                   <button type="button" class="void-tod-btn" data-set-tod="sunset" data-i18n="void.tod.sunset" title="Sunset">Sunset</button>
                   <button type="button" class="void-tod-btn" data-set-tod="night" data-i18n="void.tod.night" title="Night">Night</button>
+                  <button type="button" class="void-tod-btn void-weather-btn" data-toggle-weather data-i18n="void.weather.rain" title="Rain">Rain</button>
                 </div>
 
                 <div class="void-hud-top">
@@ -372,6 +373,7 @@ export class VoidApp {
     this.renderer.lightingQuality = this.save.settings.lightingQuality;
     this.renderer.effectiveLightingQuality = this.save.settings.lightingQuality;
     this.renderer.setTimeOfDay(normalizeVoidTimeOfDay(this.save.settings.timeOfDay), true);
+    this.renderer.setWeather(normalizeVoidWeather(this.save.settings.weather), true);
     this.syncTimeOfDayButtons();
     this.root.querySelectorAll<HTMLButtonElement>("[data-set-tod]").forEach((btn) => {
       btn.onclick = () => {
@@ -380,6 +382,14 @@ export class VoidApp {
         this.soundEngine.playSfx("uiToggle");
       };
     });
+    const weatherBtn = this.root.querySelector<HTMLButtonElement>("[data-toggle-weather]");
+    if (weatherBtn) {
+      weatherBtn.onclick = () => {
+        const next: VoidWeatherMode = normalizeVoidWeather(this.save.settings.weather) === "rain" ? "clear" : "rain";
+        this.setWeather(next);
+        this.soundEngine.playSfx("uiToggle");
+      };
+    }
     this.bindBoardPointers(canvas);
 
     this.towerMenu = new TowerMenuController({
@@ -530,6 +540,14 @@ export class VoidApp {
     this.persist();
   }
 
+  setWeather(mode: VoidWeatherMode, immediate = false): void {
+    const clean = normalizeVoidWeather(mode);
+    this.save.settings.weather = clean;
+    this.renderer.setWeather(clean, immediate);
+    this.syncTimeOfDayButtons();
+    this.persist();
+  }
+
   private syncTimeOfDayButtons(): void {
     const cur = normalizeVoidTimeOfDay(this.save.settings.timeOfDay);
     this.root.querySelectorAll<HTMLButtonElement>("[data-set-tod]").forEach((btn) => {
@@ -537,6 +555,12 @@ export class VoidApp {
       btn.classList.toggle("active", active);
       btn.setAttribute("aria-pressed", String(active));
     });
+    const raining = normalizeVoidWeather(this.save.settings.weather) === "rain";
+    const weatherBtn = this.root.querySelector<HTMLButtonElement>("[data-toggle-weather]");
+    if (weatherBtn) {
+      weatherBtn.classList.toggle("active", raining);
+      weatherBtn.setAttribute("aria-pressed", String(raining));
+    }
   }
 
   startNewRun(scenarioId = this.save.selectedScenario, mode?: PlayStyleMode): void {
@@ -560,6 +584,7 @@ export class VoidApp {
     this.renderer.reduceEffects = this.save.settings.reduceMotion;
     this.renderer.buildingHeight = this.save.settings.buildingHeight;
     this.renderer.setTimeOfDay(normalizeVoidTimeOfDay(this.save.settings.timeOfDay), true);
+    this.renderer.setWeather(normalizeVoidWeather(this.save.settings.weather), false);
     this.syncTimeOfDayButtons();
     this.renderer.resetCam(this.sim.world.grid.w, this.sim.world.grid.h);
     this.persist();
@@ -1742,6 +1767,12 @@ export class VoidApp {
                 <option value="night" ${normalizeVoidTimeOfDay(this.save.settings.timeOfDay) === "night" ? "selected" : ""}>${t("void.tod.night")}</option>
               </select>
             </label>
+            <label class="void-select-row"><span>${t("void.settings.weather")}</span>
+              <select data-set-weather-select>
+                <option value="clear" ${normalizeVoidWeather(this.save.settings.weather) === "clear" ? "selected" : ""}>${t("void.weather.clear")}</option>
+                <option value="rain" ${normalizeVoidWeather(this.save.settings.weather) === "rain" ? "selected" : ""}>${t("void.weather.rain")}</option>
+              </select>
+            </label>
             ${
               showDev
                 ? `<label><input type="checkbox" data-set-dev ${this.save.settings.devMode ? "checked" : ""} /> Developer Mode (Unlock All &amp; Unlimited Supplies)</label>`
@@ -1830,6 +1861,10 @@ export class VoidApp {
     dlg.querySelector<HTMLSelectElement>("[data-set-tod-select]")!.onchange = (e) => {
       const v = normalizeVoidTimeOfDay((e.target as HTMLSelectElement).value);
       this.setTimeOfDay(v);
+    };
+    dlg.querySelector<HTMLSelectElement>("[data-set-weather-select]")!.onchange = (e) => {
+      const v = normalizeVoidWeather((e.target as HTMLSelectElement).value);
+      this.setWeather(v);
     };
     const devInput = dlg.querySelector<HTMLInputElement>("[data-set-dev]");
     if (devInput) {

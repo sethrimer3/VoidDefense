@@ -8,9 +8,13 @@ const output = "test-results/void-reflections";
 await mkdir(output, { recursive: true });
 const browser = await chromium.launch({
   headless: true,
-  ...(process.env.PLAYWRIGHT_CHANNEL
-    ? { channel: process.env.PLAYWRIGHT_CHANNEL }
-    : { executablePath: process.env.PLAYWRIGHT_EXECUTABLE ?? "/usr/bin/chromium" }),
+  ...(process.env.PLAYWRIGHT_EXECUTABLE
+    ? { executablePath: process.env.PLAYWRIGHT_EXECUTABLE }
+    : process.env.PLAYWRIGHT_CHANNEL
+      ? { channel: process.env.PLAYWRIGHT_CHANNEL }
+      : process.platform === "win32"
+        ? { channel: "chrome" }
+        : { executablePath: "/usr/bin/chromium" }),
 });
 try {
   for (const mobile of [false,true]) {
@@ -42,8 +46,9 @@ try {
       const canvas=document.querySelector("canvas");
       const renderer=new VoidRenderer(canvas);
       renderer.resize(w,h);
-      function shot(mode,zoom,focusY,now=1000) {
+      function shot(mode,zoom,focusY,now=1000,rain=false) {
         renderer.setTimeOfDay(mode,true);
+        renderer.setWeather(rain?"rain":"clear",true);
         renderer.cam.s=zoom;
         const scale=renderer.pixelScale();
         renderer.cam.x=Math.round(canvas.width/2-(b.x+b.w*.5)*scale);
@@ -74,10 +79,12 @@ try {
     assert.ok(info.glasses>0);
     if (!mobile) {
       for (const mode of ["day","sunset","night"]) {
-        await page.evaluate(mode=>window.preview.shot(mode,7,window.preview.shore),mode);
+        await page.evaluate(mode=>window.preview.shot(mode,7,window.preview.shore,1000,false),mode);
         await page.screenshot({path:`${output}/reflection-river-${mode}.png`});
+        await page.evaluate(mode=>window.preview.shot(mode,7,window.preview.shore-14,1040,true),mode);
+        await page.screenshot({path:`${output}/reflection-rain-${mode}.png`});
       }
-      await page.evaluate(()=>window.preview.shot("sunset",13,window.preview.shore-10));
+      await page.evaluate(()=>window.preview.shot("sunset",13,window.preview.shore-10,1000,false));
       await page.screenshot({path:`${output}/reflection-glass-sunset.png`});
       const explosion=await page.evaluate(()=>{
         const {sim,b,shore,shot,sampleLayer}=window.preview;
@@ -90,8 +97,12 @@ try {
       assert.ok(explosion>15);
       await page.screenshot({path:`${output}/reflection-explosion.png`});
     } else {
-      await page.evaluate(()=>window.preview.shot("night",6,window.preview.shore));
-      await page.screenshot({path:`${output}/reflection-mobile.png`});
+      for (const mode of ["day","sunset","night"]) {
+        await page.evaluate(mode=>window.preview.shot(mode,6,window.preview.shore,1000,false),mode);
+        await page.screenshot({path:`${output}/reflection-mobile-${mode}.png`});
+        await page.evaluate(mode=>window.preview.shot(mode,6,window.preview.shore-12,1040,true),mode);
+        await page.screenshot({path:`${output}/reflection-mobile-rain-${mode}.png`});
+      }
     }
     const perf = await page.evaluate(async ()=>{
       const {sim,renderer,b,shore,shot,candidates}=window.preview;
@@ -114,20 +125,35 @@ try {
           renderer.reflections.water.pixels[agentPixel] === beforeMove) throw Error("Moving unit left a stale reflection");
       sim.combat.agents.pop();
       const times={};
-      for (const zoom of [3,1]) for (const quality of ["high","medium","low"]) {
+      for (const rain of [false,true]) for (const zoom of [3,1]) for (const quality of ["high","medium","low"]) {
         if(zoom===1) {
           renderer.resetCam(sim.world.grid.w,sim.world.grid.h);
           renderer.setTimeOfDay("night",true);
-        } else shot("night",zoom,shore);
+          renderer.setWeather(rain?"rain":"clear",true);
+        } else shot("night",zoom,shore,1000,rain);
         renderer.lightingQuality=quality;
-        const samples=[];
+        const refSamples=[];
+        const lightSamples=[];
+        const totalSamples=[];
         for(let i=0;i<62;i++){
           renderer.effectiveLightingQuality=quality;
           renderer.draw(sim,1600+i*16,null,null,null,false);
-          if(i>=12) samples.push(renderer.lastTimings.reflections);
+          if(i>=12) {
+            refSamples.push(renderer.lastTimings.reflections);
+            lightSamples.push(renderer.lastTimings.lighting);
+            totalSamples.push(renderer.lastTimings.lighting + renderer.lastTimings.reflections);
+          }
         }
-        samples.sort((a,b)=>a-b);
-        times[zoom+"x "+quality]={p50:samples[25],p95:samples[47]};
+        refSamples.sort((a,b)=>a-b);
+        lightSamples.sort((a,b)=>a-b);
+        totalSamples.sort((a,b)=>a-b);
+        const tag = `${rain?"rain":"dry"} ${zoom}x ${quality}`;
+        times[tag]={
+          lightingP50:Number(lightSamples[25].toFixed(3)),
+          reflectionsP50:Number(refSamples[25].toFixed(3)),
+          combinedP50:Number(totalSamples[25].toFixed(3)),
+          combinedP95:Number(totalSamples[47].toFixed(3)),
+        };
       }
       shot("night",5,shore,2800);
       const prior = candidates.map(i=>renderer.reflections.water.pixels[i]);
