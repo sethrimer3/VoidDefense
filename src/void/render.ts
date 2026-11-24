@@ -35,6 +35,8 @@ import {
   BUILDING_LIGHT_BUDGET,
   collectSceneLights,
   INFANTRY_SOBEL_NORMALS,
+  isBoulevardOrAvenueLaneAt,
+  isBoulevardStreetlightAt,
   LightingEngine,
   type LightingQualityMode,
   normalizeVoidTimeOfDay,
@@ -1413,10 +1415,24 @@ export class VoidRenderer {
         color = cover === LandCover.BRIDGE
           ? (x + y) % 3 === 0 ? "#523b28" : "#876948"
           : valueNoise(x * 0.25, y * 0.25) > 0.55 ? "#a38152" : "#8c6d45";
+      } else if (world.streetTier[idx] === 3) {
+        // Raised boulevard central median with spaced streetlights
+        if (isBoulevardStreetlightAt(world, x, y)) {
+          color = "#a8e6ff";
+        } else {
+          color = (x + y) % 3 === 0 ? "#2a3542" : "#222b36";
+        }
       } else {
         const kerb = (x > 0 && world.buildingAt[idx - 1] >= 0) || (x + 1 < w && world.buildingAt[idx + 1] >= 0) ||
           (y > 0 && world.buildingAt[idx - w] >= 0) || (y + 1 < h && world.buildingAt[idx + w] >= 0);
-        color = kerb ? "#343b43" : world.streetTier[idx] === 4 ? "#202732" : r < 0.07 ? "#1c222c" : "#171d26";
+        if (kerb) {
+          color = "#2e353e";
+        } else if (isBoulevardOrAvenueLaneAt(world, x, y)) {
+          // Faint warm-orange lane / edge line on boulevards and avenues (subtle, much dimmer than tower orange)
+          color = world.streetTier[idx] === 1 ? "#59351e" : "#4a2c1a";
+        } else {
+          color = world.streetTier[idx] === 4 ? "#1d242e" : r < 0.07 ? "#191f28" : "#151a22";
+        }
       }
     } else if (mat === CellMaterial.PARK) {
       const patch = valueNoise(x * 0.14 + (world.seed & 255), y * 0.14);

@@ -2,10 +2,14 @@
  * and point lights binned into the same 16x16 tiles as the terrain cache. */
 import { CHUNK_SIZE, pixels } from "./config.ts";
 import {
+  ARCH_PALETTES,
   type BuildingHeightMode,
+  buildingNeonTier,
   BuildingSpriteCache,
   cellTierElevation,
+  districtNeonAccentFor,
   elevationOf,
+  getLandmarkBuildingIds,
   MAX_ELEVATION_PX,
   TOWER_ELEVATION_PX,
 } from "./elevation.ts";
@@ -159,15 +163,15 @@ export const TIME_OF_DAY_PRESETS: Record<VoidTimeOfDay, TimeOfDayPreset> = {
   },
   night: {
     id: "night",
-    skyColor: [23, 39, 81],
+    skyColor: [18, 30, 68],
     sunDir: norm3(-0.48, -0.52, 0.71),
     sunHeight: 0.32,
-    sunColor: [0.22, 0.34, 0.62],
-    sunIntensity: 0.14,
-    ambientColor: [0.17, 0.22, 0.44],
-    voidAmbientColor: [0.24, 0.14, 0.48],
+    sunColor: [0.18, 0.28, 0.54],
+    sunIntensity: 0.11,
+    ambientColor: [0.14, 0.19, 0.42],
+    voidAmbientColor: [0.22, 0.13, 0.46],
     neonIntensity: 1.65,
-    hazeAmount: 0.34,
+    hazeAmount: 0.32,
     shadowReachScale: 0.95,
     shadowStrengthScale: 1.18,
   },
@@ -600,17 +604,66 @@ const buildingLightOrder = new WeakMap<VoidWorld, VoidWorld["buildings"]>();
 function priorityBuildingLights(world: VoidWorld): VoidWorld["buildings"] {
   let selected = buildingLightOrder.get(world);
   if (selected) return selected;
-  const ordered = world.buildings.filter((b) => b.archStyle !== "homestead" && b.archStyle !== "barn" && b.cells.length > 0)
-    .map((b) => ({ b, rank: hash(world.seed, 927, b.id) }))
+  const landmarks = getLandmarkBuildingIds(world);
+  // Only hero landmarks and active neon-lit buildings emit building point lights, leaving calm dark blocks in deep night shadow
+  const ordered = world.buildings
+    .filter((b) => b.archStyle !== "homestead" && b.archStyle !== "barn" && b.cells.length > 0 && buildingNeonTier(world, b) !== "dark")
+    .map((b) => ({
+      b,
+      isLandmark: landmarks.has(b.id),
+      rank: (landmarks.has(b.id) ? 0 : 1_000_000) + (hash(world.seed, 927, b.id) & 0xfffff),
+    }))
     .sort((a, b) => a.rank - b.rank || a.b.id - b.b.id);
   selected = [];
-  for (const { b } of ordered) {
-    if (selected.some((other) => (other.x - b.x) ** 2 + (other.y - b.y) ** 2 < 36 ** 2)) continue;
+  for (const { b, isLandmark } of ordered) {
+    const minSpacing = isLandmark ? 32 : 42;
+    if (selected.some((other) => (other.x - b.x) ** 2 + (other.y - b.y) ** 2 < minSpacing ** 2)) continue;
     selected.push(b);
     if (selected.length === BUILDING_LIGHT_BUDGET.high) break;
   }
   buildingLightOrder.set(world, selected);
   return selected;
+}
+
+/** True when cell `(x, y)` is a boulevard median streetlight fixture (spaced every 16 world pixels along median tier 3). */
+export function isBoulevardStreetlightAt(world: VoidWorld, x: number, y: number): boolean {
+  const { w, h } = world.grid;
+  if (x < 2 || x >= w - 2 || y < 2 || y >= h - 2) return false;
+  const idx = y * w + x;
+  if (world.material[idx] !== CellMaterial.STREET || world.streetTier[idx] !== 3) return false;
+  // Place 1 fixture per 2x2 median block every 16 pixels along the boulevard axis
+  const isEvenCell = (x & 1) === 0 && (y & 1) === 0;
+  if (!isEvenCell) return false;
+  const vertMedian = world.streetTier[idx - 1] === 1 || world.streetTier[idx + 1] === 1;
+  const horizMedian = world.streetTier[idx - w] === 1 || world.streetTier[idx + w] === 1;
+  if (vertMedian && (y & 15) === 6) return true;
+  if (horizMedian && (x & 15) === 6) return true;
+  return false;
+}
+
+/** True when street cell `(x, y)` lies on a faint glowing orange boulevard/avenue lane or median edge line. */
+export function isBoulevardOrAvenueLaneAt(world: VoidWorld, x: number, y: number): boolean {
+  const { w, h } = world.grid;
+  if (x < 1 || x >= w - 1 || y < 1 || y >= h - 1) return false;
+  const idx = y * w + x;
+  if (world.material[idx] !== CellMaterial.STREET) return false;
+  const tier = world.streetTier[idx];
+  if (tier === 1) {
+    // Boulevard: faint orange edge line next to the central median (`streetTier === 3`)
+    const adjVertMedian = world.streetTier[idx - 1] === 3 || world.streetTier[idx + 1] === 3;
+    const adjHorizMedian = world.streetTier[idx - w] === 3 || world.streetTier[idx + w] === 3;
+    if (adjVertMedian && (y & 3) !== 0) return true;
+    if (adjHorizMedian && (x & 3) !== 0) return true;
+    return false;
+  }
+  if (tier === 2) {
+    // Medium avenue: dashed centerline 4 px inside the block curb
+    const curbW = x >= 4 && world.buildingAt[idx - 4] >= 0 && world.streetTier[idx - 1] === 2;
+    const curbN = y >= 4 && world.buildingAt[idx - w * 4] >= 0 && world.streetTier[idx - w] === 2;
+    if (curbW && (y & 7) < 3) return true;
+    if (curbN && (x & 7) < 3) return true;
+  }
+  return false;
 }
 
 /** Gathers and prioritizes all active dynamic light sources in the scene (explosions, Void portals,
@@ -908,36 +961,40 @@ export function collectSceneLights(
   const buildingLights: PointLight[] = [];
   if (neonMult > 0.15) {
     const selected = priorityBuildingLights(world);
+    const landmarks = getLandmarkBuildingIds(world);
     const shadowBudget = Math.max(1, (buildingBudget - 1) / 3);
     for (let i = 0; i < selected.length && i < buildingBudget; i++) {
       const b = selected[i];
-      const weight = Math.min(1, buildingBudget - i);
+      const isLandmark = landmarks.has(b.id);
+      const weight = Math.min(1, buildingBudget - i) * (isLandmark ? 1.28 : 0.92);
       const shadowMix = Math.max(0, Math.min(1, shadowBudget - i));
       // Place the storefront light just beyond the facade so it reaches the street.
       const bx = b.x + b.w * 0.5;
       const by = Math.min(h - 1.5, b.y + b.h + 0.8);
-      const radius = b.isSkyscraper ? 18 : 14;
+      const radius = isLandmark ? 24 : b.isSkyscraper ? 18 : 14;
       if (!inView(bx, by, radius)) continue;
       const foot = Math.min(h - 1, Math.floor(b.y + b.h - 0.5)) * w + Math.min(w - 1, Math.floor(bx));
       if (world.material[foot] === CellMaterial.VOID ||
           !b.cells.some((idx) => world.hp[idx] > 0 && world.columnFloors[idx] > 0)) continue;
       const bElev = elevationOf(b, buildingHeight);
       const hum = (reduceEffects ? 0.94 : 0.88 + 0.12 * Math.sin(animTime * 3.8 + b.id)) * neonMult * weight;
-      const isWarmStorefront = ((b.id * 7 + b.variant * 3) & 7) === 3;
+      const palettes = ARCH_PALETTES[b.archStyle] ?? ARCH_PALETTES.glassTower;
+      const pal = palettes[b.variant % palettes.length];
+      const accent = districtNeonAccentFor(world, b, pal);
       buildingLights.push({
         buildingId: b.id,
         shadowMix,
         x: bx,
         y: by,
-        z: Math.max(2.6, Math.min(7.0, bElev * 0.45 + 1.8)),
-        r: (isWarmStorefront ? 1.25 : 0.08) * hum,
-        g: (isWarmStorefront ? 0.68 : 0.92) * hum,
-        b: (isWarmStorefront ? 0.16 : 1.48) * hum,
+        z: Math.max(2.6, Math.min(8.5, bElev * 0.48 + 1.8)),
+        r: accent.lightRgb[0] * hum,
+        g: accent.lightRgb[1] * hum,
+        b: accent.lightRgb[2] * hum,
         radius,
-        specular: 0.92,
+        specular: isLandmark ? 0.98 : 0.90,
         castsShadows: shadowMix > 0,
-        shadowStrength: Math.min(0.58, 0.36 * shadowScale),
-        priority: b.isSkyscraper ? 73 : 69,
+        shadowStrength: Math.min(0.58, (isLandmark ? 0.42 : 0.34) * shadowScale),
+        priority: isLandmark ? 79 : b.isSkyscraper ? 73 : 69,
       });
     }
   }
@@ -1630,6 +1687,7 @@ export class LightingEngine {
 
   private bakeHaloTile(cache: BuildingSpriteCache, x0: number, y0: number, x1: number, y1: number): void {
     const { atlasColorU32, atlasSpec, atlasBldId } = cache;
+    const world = this.world;
     const width = x1 - x0;
     const height = y1 - y0;
     const seedStride = (width + 4) * 3;
@@ -1645,12 +1703,27 @@ export class LightingEngine {
         const dst = y * seedStride + x * 3;
         for (let dy = 0; dy < 2 && py + dy < this.h; dy++) {
           for (let dx = 0; dx < 2 && px + dx < this.w; dx++) {
-            const i = (py + dy) * this.w + px + dx;
-            if (atlasBldId[i] < 0 || atlasSpec[i] < 240) continue;
-            const color = atlasColorU32[i];
-            seeds[dst] = Math.max(seeds[dst], IS_LITTLE_ENDIAN ? color & 255 : color >>> 24);
-            seeds[dst + 1] = Math.max(seeds[dst + 1], (color >>> (IS_LITTLE_ENDIAN ? 8 : 16)) & 255);
-            seeds[dst + 2] = Math.max(seeds[dst + 2], (color >>> (IS_LITTLE_ENDIAN ? 16 : 8)) & 255);
+            const wx = px + dx;
+            const wy = py + dy;
+            const i = wy * this.w + wx;
+            if (atlasBldId[i] >= 0 && atlasSpec[i] >= 240) {
+              const color = atlasColorU32[i];
+              seeds[dst] = Math.max(seeds[dst], IS_LITTLE_ENDIAN ? color & 255 : color >>> 24);
+              seeds[dst + 1] = Math.max(seeds[dst + 1], (color >>> (IS_LITTLE_ENDIAN ? 8 : 16)) & 255);
+              seeds[dst + 2] = Math.max(seeds[dst + 2], (color >>> (IS_LITTLE_ENDIAN ? 16 : 8)) & 255);
+            } else if (world && atlasBldId[i] < 0) {
+              if (isBoulevardStreetlightAt(world, wx, wy)) {
+                // Soft boulevard streetlight pool seed
+                seeds[dst] = Math.max(seeds[dst], 135);
+                seeds[dst + 1] = Math.max(seeds[dst + 1], 205);
+                seeds[dst + 2] = Math.max(seeds[dst + 2], 245);
+              } else if (isBoulevardOrAvenueLaneAt(world, wx, wy)) {
+                // Very faint glowing warm-orange lane line seed (low intensity, never competes with tower orange)
+                seeds[dst] = Math.max(seeds[dst], 64);
+                seeds[dst + 1] = Math.max(seeds[dst + 1], 32);
+                seeds[dst + 2] = Math.max(seeds[dst + 2], 10);
+              }
+            }
           }
         }
       }

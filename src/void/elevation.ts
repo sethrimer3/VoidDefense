@@ -164,6 +164,91 @@ export const ARCH_PALETTES: Record<MetroBuilding["archStyle"], readonly ArchPale
   ],
 };
 
+export type BuildingNeonTier = "landmark" | "lit" | "dark";
+
+export type DistrictNeonAccent = {
+  neonEdge: string;
+  neonCore: string;
+  lightRgb: readonly [number, number, number];
+};
+
+const landmarkIdsCache = new WeakMap<VoidWorld, Set<number>>();
+
+/** Deterministically selects 3 hero landmark skyscrapers per map (well-spaced across the downtown/midtown skyline)
+ * that receive the brightest, largest full-facade and crown neon signage. */
+export function getLandmarkBuildingIds(world: VoidWorld): Set<number> {
+  let cached = landmarkIdsCache.get(world);
+  if (cached) return cached;
+  const candidates = world.buildings
+    .filter((b) => b.isSkyscraper && b.archStyle !== "homestead" && b.archStyle !== "barn" && b.w >= 8 && b.h >= 8 && b.cells.length > 0)
+    .map((b) => ({
+      b,
+      score: b.height * 128 + b.w * 8 + (hash(world.seed, 911, b.id) & 63),
+    }))
+    .sort((a, b) => b.score - a.score || a.b.id - b.b.id);
+  const chosen: MetroBuilding[] = [];
+  for (const { b } of candidates) {
+    if (chosen.some((o) => (o.x - b.x) ** 2 + (o.y - b.y) ** 2 < 46 ** 2)) continue;
+    chosen.push(b);
+    if (chosen.length >= 3) break;
+  }
+  cached = new Set(chosen.map((b) => b.id));
+  landmarkIdsCache.set(world, cached);
+  return cached;
+}
+
+/** Classifies a building's neon brightness tier for light restraint:
+ * - `"landmark"`: 2–4 hero skyscrapers per map with the brightest, largest neon.
+ * - `"lit"`: ~23% of urban buildings with active neon signage/strips (total ~25% lit with landmarks).
+ * - `"dark"`: ~75% of urban buildings with calm, unlit facades and sparse window clusters. */
+export function buildingNeonTier(world: VoidWorld, b: MetroBuilding): BuildingNeonTier {
+  if (b.archStyle === "homestead" || b.archStyle === "barn") return "dark";
+  if (getLandmarkBuildingIds(world).has(b.id)) return "landmark";
+  if (b.development > 1.05) return "lit";
+  return hash01(world.seed, 919, b.id) < 0.23 ? "lit" : "dark";
+}
+
+/** Returns the district neon accent color for building `b`:
+ * mostly Tron cyan, with 1–2 district sectors using magenta, electric violet, or cool white-ice.
+ * (Tower lights stay uniquely orange.) */
+export function districtNeonAccentFor(world: VoidWorld, b: MetroBuilding, pal: ArchPalette): DistrictNeonAccent {
+  if (b.archStyle === "homestead" || b.archStyle === "barn") {
+    return { neonEdge: pal.neonEdge, neonCore: pal.neonCore, lightRgb: [1.1, 0.72, 0.32] };
+  }
+  const sectorX = Math.floor(b.x / Math.max(48, world.grid.w * 0.34));
+  const sectorY = Math.floor(b.y / Math.max(48, world.grid.h * 0.34));
+  const sectorRoll = (hash(world.seed, 923, sectorX, sectorY) + (b.district === "industrial" ? 2 : 0)) % 7;
+  if (sectorRoll === 1) {
+    // Cyber magenta district accent
+    return {
+      neonEdge: "#d838e8",
+      neonCore: "#ff94f2",
+      lightRgb: [1.26, 0.26, 1.38],
+    };
+  }
+  if (sectorRoll === 2) {
+    // Electric violet district accent
+    return {
+      neonEdge: "#7c4dff",
+      neonCore: "#c8b8ff",
+      lightRgb: [0.64, 0.40, 1.48],
+    };
+  }
+  if (sectorRoll === 3 && (b.district === "plaza" || b.archStyle === "civicDome" || b.archStyle === "solarTerrace")) {
+    // Cool white-ice civic accent
+    return {
+      neonEdge: "#8ce8ff",
+      neonCore: "#eafaff",
+      lightRgb: [0.86, 1.16, 1.42],
+    };
+  }
+  return {
+    neonEdge: pal.neonEdge,
+    neonCore: pal.neonCore,
+    lightRgb: [0.08, 0.92, 1.48],
+  };
+}
+
 /** Returns the elevation in world pixels for `floors` under `mode`. */
 export function floorsToElevation(floors: number, mode: BuildingHeightMode = "full"): number {
   if (mode === "flat" || floors <= 0) return 0;
@@ -355,17 +440,25 @@ export function roofColorAt(
       const dy = y - cy;
       if (b.roofFeature === "helipad" && Math.abs(dx) <= 2 && Math.abs(dy) <= 2) {
         color = Math.abs(dx) === 2 || dy === 0 ? "#d9b252" : pal.mid;
-      } else if (b.roofFeature === "skyGarden" && (lx + ly) % 3 !== 0) color = "#3b6e42";
-      else if (b.roofFeature === "solarArray" && ly % 3 === 0) color = "#437ea6";
-      else if (dx === 0 && dy === 0) color = pal.litEdge;
-      else if (Math.abs(dx) <= 1 && Math.abs(dy) <= 1 && (lx + ly) % 2 === 0) color = pal.roofAccent;
+      } else if (b.roofFeature === "skyGarden" && inset >= pixels(2)) {
+        color = "#284d30";
+      } else if (b.roofFeature === "solarArray" && ly % 4 === 0 && inset >= pixels(2)) {
+        color = "#356385";
+      } else if (Math.abs(dx) <= 1 && Math.abs(dy) <= 1) {
+        // Single clean rooftop HVAC unit / penthouse core instead of noisy checkerboard
+        color = dx === 0 && dy === 0 ? pal.litEdge : pal.roofAccent;
+      }
     }
-    // Coherent rooftop neon strips / beacons on skyscrapers & developed buildings
-    const hasRoofNeonStrip = (b.isSkyscraper || b.development > 1.05 || (b.id & 3) === 0) && b.w >= 4;
+    // Light restraint: only hero landmarks and ~12% of lit skyscrapers carry rooftop neon strips
+    const neonTier = buildingNeonTier(world, b);
+    const accent = districtNeonAccentFor(world, b, pal);
+    const hasRoofNeonStrip =
+      b.w >= 6 &&
+      (neonTier === "landmark" || (neonTier === "lit" && b.isSkyscraper && (b.id & 1) === 0));
     if (hasRoofNeonStrip && ly === b.h - 2 && lx >= 1 && lx <= b.w - 2) {
-      color = lx === 1 || lx === b.w - 2 ? pal.neonEdge : pal.neonCore;
-    } else if (b.isSkyscraper && b.h >= 5 && lx === 1 && ly >= 1 && ly <= b.h - 2 && (b.id & 1) === 0) {
-      color = ly === 1 || ly === b.h - 2 ? pal.neonEdge : pal.neonCore;
+      color = lx === 1 || lx === b.w - 2 ? accent.neonEdge : accent.neonCore;
+    } else if (neonTier === "landmark" && b.h >= 6 && (lx === 1 || lx === b.w - 2) && ly >= 1 && ly <= b.h - 2) {
+      color = ly === 1 || ly === b.h - 2 ? accent.neonEdge : accent.neonCore;
     }
   }
 
@@ -402,62 +495,67 @@ export function facadeColorAt(
   const lx = x - b.x;
   const midX = Math.floor(b.w * 0.5);
   const feat = (b.id * 7 + b.variant * 3) & 3;
+  const neonTier = buildingNeonTier(world, b);
+  const accent = districtNeonAccentFor(world, b, pal);
 
-  // 1. Wide glowing ground-floor storefront / lobby neon canopy (3..5 px wide contiguous strip)
-  if (fRow === 0 && hpRatio > 0.35 && b.w >= 4) {
-    const span = Math.max(1, Math.min(2, Math.floor((b.w - 2) * 0.38)));
-    if (Math.abs(lx - midX) <= span) {
-      return Math.abs(lx - midX) === span ? pal.neonEdge : pal.neonCore;
+  if (neonTier !== "dark" && hpRatio > 0.35) {
+    // 1. Ground-floor storefront / lobby neon canopy (landmarks always; lit buildings when feat is 0 or 2)
+    if (fRow === 0 && b.w >= 4 && (neonTier === "landmark" || feat === 0 || feat === 2)) {
+      const span = neonTier === "landmark"
+        ? Math.max(2, Math.min(4, Math.floor((b.w - 2) * 0.45)))
+        : Math.max(1, Math.min(2, Math.floor((b.w - 2) * 0.34)));
+      if (Math.abs(lx - midX) <= span) {
+        return Math.abs(lx - midX) === span ? accent.neonEdge : accent.neonCore;
+      }
+      return pal.shadeEdge;
     }
+
+    // 2. Crown / upper cornice neon strip on hero landmarks or selected lit skyscrapers
+    if (
+      fRow === elev - 1 &&
+      (neonTier === "landmark" || (b.isSkyscraper && feat === 0)) &&
+      lx >= 1 &&
+      lx <= b.w - 2
+    ) {
+      return lx === 1 || lx === b.w - 2 ? accent.neonEdge : accent.neonCore;
+    }
+
+    // 3. Vertical neon sign / strip down primary facade column(s)
+    if (
+      elev >= 3 &&
+      (neonTier === "landmark" || feat === 1) &&
+      (lx === (b.id & 1 ? 1 : Math.max(1, b.w - 2)) || (neonTier === "landmark" && (lx === 1 || lx === b.w - 2))) &&
+      fRow >= 1 &&
+      fRow <= elev - 1
+    ) {
+      return fRow === 1 || fRow === elev - 1 ? accent.neonEdge : accent.neonCore;
+    }
+
+    // 4. Horizontal mid-facade neon sign on lit buildings with feat 2 or 3
+    if (elev >= 4 && (feat === 2 || feat === 3)) {
+      const signRow = Math.max(1, Math.min(elev - 2, Math.floor(elev * 0.55)));
+      if (
+        fRow === signRow &&
+        lx >= 2 &&
+        lx <= Math.min(b.w - 3, 5)
+      ) {
+        return lx === 2 ? accent.neonEdge : accent.neonCore;
+      }
+    }
+  } else if (fRow === 0) {
     return pal.shadeEdge;
   }
 
-  // 2. Crown / upper cornice neon strip on skyscrapers or cyber arcologies
-  if (
-    fRow === elev - 1 &&
-    hpRatio > 0.35 &&
-    (b.isSkyscraper || b.archStyle === "cyberArcology" || feat === 0) &&
-    lx >= 1 &&
-    lx <= b.w - 2
-  ) {
-    return lx === 1 || lx === b.w - 2 ? pal.neonEdge : pal.neonCore;
-  }
-
-  // 3. Vertical neon sign / strip down a primary facade column (feat 0 or 1 on taller buildings)
-  if (
-    elev >= 3 &&
-    hpRatio > 0.35 &&
-    (feat === 1 || (b.isSkyscraper && feat === 2)) &&
-    lx === (b.id & 1 ? 1 : Math.max(1, b.w - 2)) &&
-    fRow >= 1 &&
-    fRow <= elev - 1
-  ) {
-    return fRow === 1 || fRow === elev - 1 ? pal.neonEdge : pal.neonCore;
-  }
-
-  // 4. Horizontal neon sign or 2x2 lit window bay (feat 2 or 3)
-  if (elev >= 3 && hpRatio > 0.35) {
-    const signRow = Math.max(1, Math.min(elev - 2, Math.floor(elev * 0.55)));
-    if (
-      (feat === 2 || feat === 3) &&
-      (fRow === signRow || (elev >= 5 && fRow === signRow + 1)) &&
-      lx >= 1 &&
-      lx <= Math.min(b.w - 2, 4)
-    ) {
-      // Warm amber vs Tron cyan window/sign contrast on feat === 3
-      if (feat === 3 && (b.id & 1) === 1) {
-        return fRow === signRow ? "#ffd166" : "#ff9e38";
-      }
-      return lx === 1 ? pal.neonEdge : pal.neonCore;
-    }
-  }
-
-  // 5. Recessed structural window columns (mostly dark glass so large neon features pop with high contrast)
+  // 5. Recessed structural window columns: most windows dark; lit windows appear only in small clusters
   const isWindowCol = lx % 2 === 1;
   if (isWindowCol) {
-    const bandRoll = hash01(world.seed, 965, b.id, Math.floor(fRow / 2), 0);
-    if (bandRoll < 0.14 && hpRatio > 0.35 && lx >= 1 && lx <= b.w - 2) {
-      return (b.id + fRow) % 3 === 0 ? "#ffd166" : pal.litEdge;
+    // Group window columns and floors into small 2-window x 1-band clusters so only a few rooms per building are lit
+    const clusterX = lx >> 2;
+    const clusterY = fRow >> 1;
+    const clusterRoll = hash01(world.seed, 965, b.id, clusterX, clusterY);
+    const threshold = neonTier === "landmark" ? 0.11 : neonTier === "lit" ? 0.075 : 0.045;
+    if (clusterRoll < threshold && hpRatio > 0.35 && lx >= 1 && lx <= b.w - 2) {
+      return pal.litEdge;
     }
     return pal.shadeEdge;
   }
@@ -524,6 +622,9 @@ export function buildBuildingSprite(
   const surfaceMap = new Uint8Array(spriteSize);
   const palettes = ARCH_PALETTES[b.archStyle] ?? ARCH_PALETTES.glassTower;
   const pal = palettes[b.variant % palettes.length];
+  const accent = districtNeonAccentFor(world, b, pal);
+  const isNeonColor = (c: string): boolean =>
+    c === pal.neonCore || c === pal.neonEdge || c === accent.neonCore || c === accent.neonEdge;
   const { w, h } = world.grid;
   const { columnFloors, buildingAt, material, hp, maxHp } = world;
 
@@ -707,7 +808,7 @@ export function buildBuildingSprite(
             // Ground lobby awning or upper cornice band
             ny = 0.62;
             nz = 0.78;
-            spec = fCol === pal.neonCore || fCol === pal.neonEdge ? 250 : 95;
+            spec = isNeonColor(fCol) ? 250 : 95;
             partRelief += 0.24;
           } else if (lx % 2 === 1) {
             // Window column: smooth recessed glass panes with horizontal floor spandrels
@@ -722,7 +823,7 @@ export function buildBuildingSprite(
               spec = isGlassStyle ? 200 : 155;
               partRelief -= 0.18;
             }
-            if (fCol === pal.neonCore || fCol === pal.neonEdge) spec = 250;
+            if (isNeonColor(fCol)) spec = 250;
             else if (fCol === "#ffd166" || fCol === "#ff9e38") spec = 242;
           } else {
             // Vertical structural pilaster / mullion rib
@@ -730,7 +831,7 @@ export function buildBuildingSprite(
             ny = 0.82;
             nz = 0.50;
             partRelief += 0.22;
-            if (fCol === pal.neonCore || fCol === pal.neonEdge) spec = 250;
+            if (isNeonColor(fCol)) spec = 250;
             else if (fCol === "#ffd166" || fCol === "#ff9e38") spec = 242;
           }
           baseNx[pIdx] = nx;
@@ -846,7 +947,7 @@ export function buildBuildingSprite(
         baseNy[pIdx] = ny;
         baseNz[pIdx] = nz;
         microHeight[pIdx] = elev * 0.22 + partRelief;
-        specMap[pIdx] = rCol === pal.neonCore || rCol === pal.neonEdge ? 250 : spec;
+        specMap[pIdx] = isNeonColor(rCol) ? 250 : spec;
         const hasGlassRoof = (isGlassStyle && (rCol === pal.crown || rCol === pal.mid || rCol === pal.roofAccent)) || spec === 210;
         const isFlatRoof = !spalledTop && !rustic && b.archStyle !== "civicDome" && specMap[pIdx] < 240 && nz >= 0.9;
         surfaceMap[pIdx] = !spalledTop && hpRatio >= 0.75 && hasGlassRoof && specMap[pIdx] < 240

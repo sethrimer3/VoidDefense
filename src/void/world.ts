@@ -258,45 +258,139 @@ export class VoidWorld {
       }
     }
 
-    // 2. Define hierarchical Manhattan avenues (vertical) and cross-streets (horizontal).
-    const xBlocks: { x0: number; x1: number }[] = [];
+    // 2. Define 3-tier street hierarchy:
+    //    Tier 1: Wide boulevards (7 coarse cells = 14 world px wide, with a 1-cell = 2 px central median `streetTier = 3`)
+    //    Tier 2: Medium avenues (4 coarse cells = 8 world px wide, `streetTier = 2`)
+    //    Tier 3: Narrow alleys inside blocks (1 coarse cell = 2 world px wide, `streetTier = 4`, used sparingly)
+    const xBlocks: { x0: number; x1: number; afterTier: 1 | 2; afterW: number }[] = [];
     let cx = 4;
     let colIdx = 0;
-    while (cx < w - 8) {
-      const bw = 16 + (hash(seed, 101, colIdx) % 8); // 16..23 cells wide
+    while (cx < w - 10) {
+      const bw = 20 + (hash(seed, 101, colIdx) % 8); // 20..27 coarse cells (40..54 world px)
       const x1 = Math.min(w - 4, cx + bw);
-      if (x1 - cx >= 8) xBlocks.push({ x0: cx, x1 });
-      const aveW = colIdx % 2 === 0 ? 3 : 2;
-      cx = x1 + aveW;
+      const isBlvd = colIdx % 2 === 1;
+      const afterW = isBlvd ? 7 : 4;
+      if (x1 - cx >= 10) xBlocks.push({ x0: cx, x1, afterTier: isBlvd ? 1 : 2, afterW });
+      cx = x1 + afterW;
       colIdx++;
     }
 
-    const yBlocks: { y0: number; y1: number }[] = [];
+    const yBlocks: { y0: number; y1: number; afterTier: 1 | 2; afterW: number }[] = [];
     let cy = 4;
     let rowIdx = 0;
-    while (cy < h - 8) {
-      const bh = 11 + (hash(seed, 202, rowIdx) % 6); // 11..16 cells tall
+    while (cy < h - 10) {
+      const bh = 14 + (hash(seed, 202, rowIdx) % 6); // 14..19 coarse cells (28..38 world px)
       const y1 = Math.min(h - 4, cy + bh);
-      if (y1 - cy >= 6) yBlocks.push({ y0: cy, y1 });
-      const stW = rowIdx % 3 === 0 ? 3 : 2;
-      cy = y1 + stW;
+      const isBlvd = rowIdx % 3 === 1;
+      const afterW = isBlvd ? 7 : 4;
+      if (y1 - cy >= 8) yBlocks.push({ y0: cy, y1, afterTier: isBlvd ? 1 : 2, afterW });
+      cy = y1 + afterW;
       rowIdx++;
     }
 
-    // Mark cross-streets in `streetTier`
+    // Default all street corridors to medium avenue (`streetTier = 2`), then paint wide boulevards (`streetTier = 1`)
+    // and their raised central medians (`streetTier = 3`, interrupted at cross-street intersections).
+    for (let i = 0; i < this.grid.count; i++) {
+      if (this.material[i] === CellMaterial.STREET) {
+        this.streetTier[i] = 2;
+      }
+    }
+
+    const inXBlock = (x: number): boolean => {
+      for (let i = 0; i < xBlocks.length; i++) {
+        if (x >= xBlocks[i].x0 && x < xBlocks[i].x1) return true;
+      }
+      return false;
+    };
+    const inYBlock = (y: number): boolean => {
+      for (let i = 0; i < yBlocks.length; i++) {
+        if (y >= yBlocks[i].y0 && y < yBlocks[i].y1) return true;
+      }
+      return false;
+    };
+
+    for (let bx = 0; bx < xBlocks.length; bx++) {
+      const blk = xBlocks[bx];
+      if (blk.afterTier !== 1) continue;
+      const sx0 = blk.x1;
+      const sx1 = Math.min(w, sx0 + blk.afterW);
+      const midX = sx0 + (blk.afterW >> 1);
+      for (let y = 0; y < h; y++) {
+        const isSegmentBetweenCrossStreets = inYBlock(y);
+        for (let x = sx0; x < sx1; x++) {
+          const idx = y * w + x;
+          if (this.material[idx] !== CellMaterial.STREET) continue;
+          this.streetTier[idx] = x === midX && isSegmentBetweenCrossStreets && (y & 7) !== 0 ? 3 : 1;
+        }
+      }
+    }
+
     for (let by = 0; by < yBlocks.length; by++) {
-      for (let bx = 0; bx < xBlocks.length; bx++) {
-        for (let py = yBlocks[by].y0; py < yBlocks[by].y1; py++) {
-          for (let px = xBlocks[bx].x0; px < xBlocks[bx].x1; px++) {
-            this.streetTier[py * w + px] = 4; // inside block (alley/sidewalk)
+      const blk = yBlocks[by];
+      if (blk.afterTier !== 1) continue;
+      const sy0 = blk.y1;
+      const sy1 = Math.min(h, sy0 + blk.afterW);
+      const midY = sy0 + (blk.afterW >> 1);
+      for (let y = sy0; y < sy1; y++) {
+        for (let x = 0; x < w; x++) {
+          const idx = y * w + x;
+          if (this.material[idx] !== CellMaterial.STREET) continue;
+          const isSegmentBetweenAvenues = inXBlock(x);
+          if (y === midY && isSegmentBetweenAvenues && (x & 7) !== 0) {
+            this.streetTier[idx] = 3;
+          } else if (this.streetTier[idx] !== 3) {
+            this.streetTier[idx] = 1;
           }
         }
       }
     }
 
-    // 3. Subdivide each city block into dense metropolitan parcels.
+    // Mark block interiors as tier 4 (sidewalk / setback / alley)
+    for (let by = 0; by < yBlocks.length; by++) {
+      for (let bx = 0; bx < xBlocks.length; bx++) {
+        for (let py = yBlocks[by].y0; py < yBlocks[by].y1; py++) {
+          for (let px = xBlocks[bx].x0; px < xBlocks[bx].x1; px++) {
+            const idx = py * w + px;
+            if (this.material[idx] === CellMaterial.STREET) {
+              this.streetTier[idx] = 4;
+            }
+          }
+        }
+      }
+    }
+
+    // Crosstown canal / drainage channel cutting across the lower city (with wide bridges on boulevards and avenues)
+    if (scenario.id !== "archipelagoCity" && yBlocks.length >= 4) {
+      const canalBlk = yBlocks[Math.min(yBlocks.length - 2, Math.floor(yBlocks.length * 0.78))];
+      const canalY = canalBlk.y0 + Math.floor((canalBlk.y1 - canalBlk.y0) * 0.5);
+      for (let y = Math.max(2, canalY - 1); y <= Math.min(h - 3, canalY + 1); y++) {
+        for (let x = 0; x < w; x++) {
+          const idx = y * w + x;
+          if (this.zone[idx] !== ZoneKind.URBAN) continue;
+          if (!inXBlock(x)) continue;
+          if (y === canalY) {
+            this.material[idx] = CellMaterial.UNCLAIMED;
+            this.hp[idx] = 14;
+            this.maxHp[idx] = 14;
+            this.landCover[idx] = LandCover.NONE;
+          } else {
+            this.material[idx] = CellMaterial.STREET;
+            this.streetTier[idx] = 4;
+            this.hp[idx] = 16;
+            this.maxHp[idx] = 16;
+          }
+        }
+      }
+    }
+
+    // 3. Subdivide each city superblock into larger, calmer metropolitan footprints with open lots & setbacks.
     const centerX = w * 0.5;
-    const centerY = h * 0.5;
+    const centerY = h * 0.54;
+    const portalCenters = scenario.portals.map((p) => ({
+      x: Math.round(p.xFrac * w),
+      y: Math.round(p.yFrac * h),
+      r: p.radius,
+    }));
 
     for (let by = 0; by < yBlocks.length; by++) {
       for (let bx = 0; bx < xBlocks.length; bx++) {
@@ -307,111 +401,183 @@ export class VoidWorld {
         const blkW = blkX1 - blkX0;
         const blkH = blkY1 - blkY0;
 
-        // Blocks whose centre is countryside still subdivide as leafy suburb lots; any lot
-        // cells that fall on rural ground are clipped by `addBuilding`, so the city edge
-        // follows the noisy zone boundary cell by cell rather than whole blocks.
         const blockZone = this.zoneAtBlock(blkX0, blkX1, blkY0, blkY1);
         const isSuburb = blockZone !== ZoneKind.URBAN;
 
-        const distFromCenter =
-          dist((blkX0 + blkX1) * 0.5 - centerX, (blkY0 + blkY1) * 0.5 - centerY) / Math.max(w, h);
+        const blkCx = (blkX0 + blkX1) * 0.5;
+        const blkCy = (blkY0 + blkY1) * 0.5;
+        const distFromCenter = dist(blkCx - centerX, blkCy - centerY) / Math.max(w, h);
         const blkRoll = hash01(seed, 303, bx, by);
         const blkUrbanity = this.urbanity[Math.min(h - 1, (blkY0 + blkY1) >> 1) * w + Math.min(w - 1, (blkX0 + blkX1) >> 1)] / 255;
 
+        let minPortalClearance = Number.POSITIVE_INFINITY;
+        for (let pi = 0; pi < portalCenters.length; pi++) {
+          const p = portalCenters[pi];
+          const d = dist(blkCx - p.x, blkCy - p.y) - p.r;
+          if (d < minPortalClearance) minPortalClearance = d;
+        }
+        const nearBreach = minPortalClearance < 11;
+
         let district: DistrictKind = "midtown";
-        if (isSuburb) district = blkRoll < 0.22 ? "plaza" : "residential";
-        else if (distFromCenter < 0.25 && blkUrbanity > 0.8) district = "downtown";
-        else if (blkRoll < 0.13) district = "plaza";
-        else if (distFromCenter > 0.36 && blkRoll < 0.48 && blkUrbanity > 0.6) district = "industrial";
-        else if (blkRoll > 0.7 || blkUrbanity < 0.45) district = "residential";
+        if (isSuburb) district = blkRoll < 0.24 ? "plaza" : "residential";
+        else if (blkRoll < 0.16) district = "plaza";
+        else if (distFromCenter < 0.24 && blkUrbanity > 0.72 && !nearBreach) district = "downtown";
+        else if (distFromCenter < 0.36 && blkUrbanity > 0.60) district = "midtown";
+        else if (distFromCenter > 0.34 && blkRoll < 0.52 && blkUrbanity > 0.55) district = "industrial";
+        else district = "residential";
 
         if (district === "plaza") {
+          const openKind = hash(seed, 311, bx, by) % 3; // 0 = green park, 1 = civic plaza + pavilion, 2 = parking/rubble commons
           for (let py = blkY0; py < blkY1; py++) {
             for (let px = blkX0; px < blkX1; px++) {
               const idx = py * w + px;
               if (this.material[idx] === CellMaterial.UNCLAIMED) continue;
               const border = px === blkX0 || px === blkX1 - 1 || py === blkY0 || py === blkY1 - 1;
-              this.material[idx] = border ? CellMaterial.STREET : CellMaterial.PARK;
-              this.hp[idx] = border ? 16 : 14;
-              this.maxHp[idx] = this.hp[idx];
-              if (!border && isSuburb) {
-                this.landCover[idx] = hash01(seed, 304, px, py) < 0.3 ? LandCover.FOREST : LandCover.GRASS;
+              if (openKind === 2 && !isSuburb && !border) {
+                this.material[idx] = CellMaterial.STREET;
+                this.streetTier[idx] = PARKING_STREET_TIER;
+                this.hp[idx] = 16;
+                this.maxHp[idx] = 16;
+              } else {
+                this.material[idx] = border ? CellMaterial.STREET : CellMaterial.PARK;
+                this.hp[idx] = border ? 16 : 14;
+                this.maxHp[idx] = this.hp[idx];
+                if (!border && isSuburb) {
+                  this.landCover[idx] = hash01(seed, 304, px, py) < 0.3 ? LandCover.FOREST : LandCover.GRASS;
+                }
               }
             }
           }
-          if (blkW >= 10 && blkH >= 8 && !isSuburb) {
+          if (openKind === 1 && blkW >= 12 && blkH >= 10 && !isSuburb && !nearBreach) {
             this.addBuilding(
-              blkX0 + Math.floor(blkW / 2) - 2,
+              blkX0 + Math.floor(blkW / 2) - 3,
               blkY0 + Math.floor(blkH / 2) - 2,
-              5,
+              6,
               5,
               "plaza",
               false,
-              6,
+              5,
               hash(seed, 399, bx, by),
             );
           }
           continue;
         }
 
-        const hasHAlley = blkH >= 11 && hash01(seed, 401, bx, by) < 0.72;
+        // Use narrow interior alleys sparingly (~32% of tall blocks) so blocks hold larger, calmer footprints
+        const hasHAlley = blkH >= 14 && hash01(seed, 401, bx, by) < 0.32;
         const alleyY = hasHAlley ? blkY0 + Math.floor(blkH / 2) : -1;
+
+        // Leave a 1-coarse-cell (2 world px) sidewalk setback around urban blocks so towers don't crowd the curb
+        const padX = isSuburb ? 0 : 1;
+        const padY = isSuburb ? 0 : 1;
+        const innerX0 = blkX0 + padX;
+        const innerX1 = blkX1 - padX;
+        const innerY0 = blkY0 + padY;
+        const innerY1 = blkY1 - padY;
 
         const rowSlices: { y0: number; y1: number }[] = hasHAlley
           ? [
-              { y0: blkY0, y1: alleyY },
-              { y0: alleyY + 1, y1: blkY1 },
+              { y0: innerY0, y1: alleyY },
+              { y0: alleyY + 1, y1: innerY1 },
             ]
-          : [{ y0: blkY0, y1: blkY1 }];
+          : [{ y0: innerY0, y1: innerY1 }];
 
         for (let sIdx = 0; sIdx < rowSlices.length; sIdx++) {
           const sy0 = rowSlices[sIdx].y0;
           const sy1 = rowSlices[sIdx].y1;
           const sh = sy1 - sy0;
-          if (sh < 3) continue;
+          if (sh < 4) continue;
 
-          let px = blkX0;
+          let px = innerX0;
           let lotIdx = 0;
-          while (px < blkX1 - 2) {
-            const maxLotW = blkX1 - px;
-            if (maxLotW < 3) break;
+          while (px < innerX1 - 3) {
+            const maxLotW = innerX1 - px;
+            if (maxLotW < 4) break;
             const wantW =
               district === "downtown"
-                ? 5 + (hash(seed, 501, bx, by, sIdx, lotIdx) % 5) // 5..9
+                ? 6 + (hash(seed, 501, bx, by, sIdx, lotIdx) % 5) // 6..10 coarse (12..20 world px)
                 : district === "industrial"
-                  ? 5 + (hash(seed, 502, bx, by, sIdx, lotIdx) % 6) // 5..10
+                  ? 6 + (hash(seed, 502, bx, by, sIdx, lotIdx) % 5) // 6..10 coarse (12..20 world px)
                   : isSuburb
                     ? 3 + (hash(seed, 503, bx, by, sIdx, lotIdx) % 3) // 3..5 leafy lots
-                    : 3 + (hash(seed, 503, bx, by, sIdx, lotIdx) % 5); // 3..7
+                    : 5 + (hash(seed, 503, bx, by, sIdx, lotIdx) % 5); // 5..9 coarse (10..18 world px)
             const lw = Math.min(maxLotW, wantW);
+
+            // Breathing room: ~22% of urban parcels become calm open lots (pocket parks, parking lots, or rubble lots)
+            const openLotRoll = hash01(seed, 515, bx, by, sIdx, lotIdx);
+            if (!isSuburb && openLotRoll < (district === "downtown" ? 0.14 : 0.24)) {
+              const openType = hash(seed, 516, bx, by, sIdx, lotIdx) % 3;
+              for (let py = sy0; py < sy1; py++) {
+                for (let lx = px; lx < px + lw; lx++) {
+                  const i = py * w + lx;
+                  if (this.material[i] === CellMaterial.UNCLAIMED || this.zone[i] === ZoneKind.RURAL) continue;
+                  if (openType === 0) {
+                    // Pocket park / dark green plaza
+                    this.material[i] = CellMaterial.PARK;
+                    this.hp[i] = 14;
+                    this.maxHp[i] = 14;
+                    this.landCover[i] = LandCover.NONE;
+                  } else if (openType === 1) {
+                    // Parking lot
+                    this.material[i] = CellMaterial.STREET;
+                    this.streetTier[i] = PARKING_STREET_TIER;
+                    this.hp[i] = 16;
+                    this.maxHp[i] = 16;
+                  } else {
+                    // Quiet empty / foundation lot with sparse salvage rubble
+                    const isRubble = hash01(seed, 517, lx, py) < 0.22;
+                    this.material[i] = isRubble ? CellMaterial.SALVAGE : CellMaterial.STREET;
+                    this.streetTier[i] = 4;
+                    this.hp[i] = 16;
+                    this.maxHp[i] = 16;
+                  }
+                }
+              }
+              px += lw + 1;
+              lotIdx++;
+              continue;
+            }
+
             const lh = Math.min(
               isSuburb ? Math.min(sh, 4) : sh,
-              3 + (hash(seed, 504, bx, by, sIdx, lotIdx) % Math.max(1, sh - 2)),
+              (isSuburb ? 3 : 5) + (hash(seed, 504, bx, by, sIdx, lotIdx) % Math.max(1, sh - (isSuburb ? 2 : 4))),
             );
             const ly0 = sy0 + (sIdx === 0 ? 0 : sh - lh);
 
             const skyRoll = hash01(seed, 505, bx, by, sIdx, lotIdx);
             const isSkyscraper =
               !isSuburb &&
-              ((district === "downtown" && skyRoll < 0.75 && lw >= 4 && lh >= 4) ||
-                (district === "midtown" && skyRoll < 0.42 && lw >= 4 && lh >= 4));
+              !nearBreach &&
+              lw >= 5 &&
+              lh >= 5 &&
+              ((district === "downtown" && skyRoll < 0.80) ||
+                (district === "midtown" && distFromCenter < 0.32 && skyRoll < 0.38));
 
-            const heightBias = Math.round(blkUrbanity * 4);
-            const height = isSkyscraper
-              ? 14 + heightBias + (hash(seed, 506, bx, by, sIdx, lotIdx) % 13) // 14..30 stories
-              : district === "midtown"
-                ? 6 + (hash(seed, 507, bx, by, sIdx, lotIdx) % 7) // 6..12 stories
+            // Strong downtown-to-edge height gradient: tall core fading to low, sparse outer edges
+            const coreFactor = Math.max(0, 1 - distFromCenter * 2.1);
+            const heightBias = Math.round(coreFactor * 8 + blkUrbanity * 3);
+            let height = isSkyscraper
+              ? Math.min(30, 16 + heightBias + (hash(seed, 506, bx, by, sIdx, lotIdx) % 9)) // 18..30 stories in core
+              : district === "downtown" || district === "midtown"
+                ? 6 + Math.round(coreFactor * 5) + (hash(seed, 507, bx, by, sIdx, lotIdx) % 6) // 6..16 stories
                 : isSuburb
                   ? 1 + (hash(seed, 508, bx, by, sIdx, lotIdx) % 3) // 1..3 stories
-                  : 2 + (hash(seed, 508, bx, by, sIdx, lotIdx) % 5); // 2..6 stories
+                  : 2 + (hash(seed, 508, bx, by, sIdx, lotIdx) % 4); // 2..5 stories at edges
+            if (nearBreach) {
+              // Keep buildings immediately adjacent to portals low so they never hide the breach or frontline towers
+              height = Math.min(height, 5);
+            }
 
-            const gapRoll = hash01(seed, 510, bx, by, sIdx, lotIdx);
-            const gap = isSuburb ? 1 + (hash(seed, 510, bx, by, sIdx, lotIdx) % 2) : gapRoll < 0.65 ? 1 : 0;
-            // Keep the lot grid and the taller skyline while opening up shoulder space beside low rises.
-            const buildingWidth = !isSuburb && !isSkyscraper && gap === 0 && lw >= 5 ? lw - 1 : lw;
+            const gap = isSuburb ? 1 + (hash(seed, 510, bx, by, sIdx, lotIdx) % 2) : 1 + (hash(seed, 510, bx, by, sIdx, lotIdx) % 2);
+            let variant = hash(seed, 509, bx, by, sIdx, lotIdx);
+            // Ensure central skyscrapers include glassTower landmarks for reflections & skyline contrast
+            if (isSkyscraper && bx === (xBlocks.length >> 1) && lotIdx === 0) {
+              district = "downtown";
+              variant = variant - (variant % 3); // index 0 in downtown is glassTower
+              height = Math.max(22, height);
+            }
             this.addBuilding(
-              px, ly0, buildingWidth, lh, district, isSkyscraper, height,
-              hash(seed, 509, bx, by, sIdx, lotIdx),
+              px, ly0, lw, lh, district, isSkyscraper, height, variant,
             );
 
             const parkingY = sIdx === 0 ? ly0 + lh : sy0;
@@ -595,14 +761,14 @@ export class VoidWorld {
       }
     };
 
-    // Avenue exits: scan straight columns/rows of arterial street (tier 1, outside blocks)
+    // Avenue exits: scan straight columns/rows of arterial street (tier 1 or 2, outside blocks)
     let roadId = 0;
     const avenueXs: number[] = [];
     for (let x = 1; x < w - 1; x++) {
       let streetRun = 0;
       for (let y = 0; y < h; y++) {
         const idx = y * w + x;
-        if (this.zone[idx] !== ZoneKind.RURAL && this.material[idx] === CellMaterial.STREET && this.streetTier[idx] === 1) streetRun++;
+        if (this.zone[idx] !== ZoneKind.RURAL && this.material[idx] === CellMaterial.STREET && (this.streetTier[idx] === 1 || this.streetTier[idx] === 2)) streetRun++;
       }
       if (streetRun > h * 0.25 && (avenueXs.length === 0 || x - avenueXs[avenueXs.length - 1] > 12)) avenueXs.push(x);
     }
@@ -611,7 +777,7 @@ export class VoidWorld {
       let streetRun = 0;
       for (let x = 0; x < w; x++) {
         const idx = y * w + x;
-        if (this.zone[idx] !== ZoneKind.RURAL && this.material[idx] === CellMaterial.STREET && this.streetTier[idx] === 1) streetRun++;
+        if (this.zone[idx] !== ZoneKind.RURAL && this.material[idx] === CellMaterial.STREET && (this.streetTier[idx] === 1 || this.streetTier[idx] === 2)) streetRun++;
       }
       if (streetRun > w * 0.25 && (avenueYs.length === 0 || y - avenueYs[avenueYs.length - 1] > 10)) avenueYs.push(y);
     }
