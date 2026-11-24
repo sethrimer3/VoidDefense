@@ -266,7 +266,12 @@ export class VoidWorld {
     let cx = 4;
     let colIdx = 0;
     while (cx < w - 10) {
-      const bw = 20 + (hash(seed, 101, colIdx) % 8); // 20..27 coarse cells (40..54 world px)
+      const bw =
+        colIdx === 0
+          ? 19
+          : colIdx === 1
+            ? 21
+            : 20 + (hash(seed, 101, colIdx) % 7); // 19..26 coarse cells (38..52 world px)
       const x1 = Math.min(w - 4, cx + bw);
       const isBlvd = colIdx % 2 === 1;
       const afterW = isBlvd ? 7 : 4;
@@ -276,13 +281,20 @@ export class VoidWorld {
     }
 
     const yBlocks: { y0: number; y1: number; afterTier: 1 | 2; afterW: number }[] = [];
-    let cy = 4;
+    let cy = 3;
     let rowIdx = 0;
     while (cy < h - 10) {
-      const bh = 14 + (hash(seed, 202, rowIdx) % 6); // 14..19 coarse cells (28..38 world px)
+      const bh =
+        rowIdx === 0
+          ? 12
+          : rowIdx === 1
+            ? 15
+            : rowIdx === 2
+              ? 16
+              : 15 + (hash(seed, 202, rowIdx) % 6); // 15..20 coarse cells (30..40 world px)
       const y1 = Math.min(h - 4, cy + bh);
-      const isBlvd = rowIdx % 3 === 1;
-      const afterW = isBlvd ? 7 : 4;
+      const isBlvd = rowIdx >= 2 && rowIdx % 2 === 0;
+      const afterW = rowIdx === 0 ? 3 : isBlvd ? 7 : 4;
       if (y1 - cy >= 8) yBlocks.push({ y0: cy, y1, afterTier: isBlvd ? 1 : 2, afterW });
       cy = y1 + afterW;
       rowIdx++;
@@ -421,7 +433,7 @@ export class VoidWorld {
         let district: DistrictKind = "midtown";
         if (isSuburb) district = blkRoll < 0.22 ? "plaza" : "residential";
         else if (distFromCore < 0.25 && blkUrbanity > 0.78) district = "downtown";
-        else if (blkRoll < 0.11) district = "plaza";
+        else if (blkRoll < 0.11 && !(bx <= 1 && by <= 2)) district = "plaza";
         else if (distFromCore > 0.36 && blkRoll < 0.45 && blkUrbanity > 0.58) district = "industrial";
         else if (blkRoll > 0.74 || blkUrbanity < 0.45) district = "residential";
 
@@ -496,7 +508,7 @@ export class VoidWorld {
 
             // Breathing room: ~14% of urban parcels become calm open lots (pocket parks, parking lots, or rubble lots)
             const openLotRoll = hash01(seed, 515, bx, by, sIdx, lotIdx);
-            if (!isSuburb && openLotRoll < (district === "downtown" ? 0.08 : 0.15)) {
+            if (!isSuburb && !(bx <= 1 && by <= 2 && sIdx === 0) && openLotRoll < (district === "downtown" ? 0.08 : 0.15)) {
               const openType = hash(seed, 516, bx, by, sIdx, lotIdx) % 3;
               for (let py = sy0; py < sy1; py++) {
                 for (let lx = px; lx < px + lw; lx++) {
@@ -581,7 +593,7 @@ export class VoidWorld {
               }
             }
 
-            px += lw + gap;
+            px += buildingWidth + gap;
             lotIdx++;
           }
         }
@@ -966,6 +978,7 @@ export class VoidWorld {
       this.buildingAt[idx] = id;
       this.landCover[idx] = LandCover.NONE;
       this.columnFloors[idx] = height;
+      this.streetTier[idx] = 4;
     }
 
     const styles = ARCH_STYLES_BY_DISTRICT[district] ?? ARCH_STYLES_BY_DISTRICT.midtown;
@@ -1051,6 +1064,7 @@ export class VoidWorld {
             this.hp[cellIdx] = 0;
             this.buildingAt[cellIdx] = -1;
             this.columnFloors[cellIdx] = 0;
+            this.streetTier[cellIdx] = 0;
           } else if (d <= effectiveR + 3.2) {
             if (hash01(this.seed, 889, idx, x, y) < 0.48) {
               this.material[cellIdx] = CellMaterial.SALVAGE;
@@ -1058,6 +1072,7 @@ export class VoidWorld {
               this.maxHp[cellIdx] = 24;
               this.buildingAt[cellIdx] = -1;
               this.columnFloors[cellIdx] = 0;
+              this.streetTier[cellIdx] = 0;
             } else {
               this.hp[cellIdx] = Math.max(6, Math.floor(this.hp[cellIdx] * 0.55));
             }

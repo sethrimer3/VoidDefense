@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { ARCH_PALETTES, BuildingSpriteCache, hexToElevAbgr } from "../src/void/elevation.ts";
+import {
+  ARCH_PALETTES,
+  buildingNeonTier,
+  BuildingSpriteCache,
+  districtNeonAccentFor,
+  getLandmarkBuildingIds,
+  hexToElevAbgr,
+} from "../src/void/elevation.ts";
 import {
   AMBIENT_COOL_FILL,
   blendTimeOfDayPresets,
@@ -8,6 +15,8 @@ import {
   computeSpriteSobelNormals,
   computeTerrainNormalAt,
   INFANTRY_SOBEL_NORMALS,
+  isBoulevardOrAvenueLaneAt,
+  isBoulevardStreetlightAt,
   LIGHTING_QUALITY_CAPS,
   LightingEngine,
   looseMaterialLight,
@@ -914,4 +923,57 @@ test("Debris reflects daylight and cool night tones while hot fragments remain e
   assert.ok(distanceInBrightness(0.96) > 0);
   assert.ok(distanceInBrightness(0.96) < distanceInBrightness(0.2) / 2);
   assert.ok(red(shadeLooseMaterial("#e89853", 0.96, night)) > red(shadeLooseMaterial("#e89853", 0.2, night)));
+});
+
+test("10. City hierarchy & light restraint: 3 street tiers, boulevard medians/streetlights/lanes, 2-4 hero landmarks, 20-30% lit neon ratio, and district accent colors", () => {
+  const sim = new VoidSim("tutorialBreach", "underSiege", emptyTechWallet());
+  const { world } = sim;
+  const { w, h, count } = world.grid;
+
+  let tier1Blvd = 0;
+  let tier2Ave = 0;
+  let tier3Median = 0;
+  let tier4Alley = 0;
+  let streetlights = 0;
+  let laneLines = 0;
+
+  for (let i = 0; i < count; i++) {
+    if (world.material[i] !== CellMaterial.STREET) continue;
+    const t = world.streetTier[i];
+    if (t === 1) tier1Blvd++;
+    else if (t === 2) tier2Ave++;
+    else if (t === 3) tier3Median++;
+    else if (t === 4) tier4Alley++;
+    const x = i % w;
+    const y = (i / w) | 0;
+    if (isBoulevardStreetlightAt(world, x, y)) streetlights++;
+    if (isBoulevardOrAvenueLaneAt(world, x, y)) laneLines++;
+  }
+
+  assert.ok(tier1Blvd > 1000, `Expected wide boulevards (tier 1), got ${tier1Blvd}`);
+  assert.ok(tier2Ave > 1000, `Expected medium avenues (tier 2), got ${tier2Ave}`);
+  assert.ok(tier3Median > 100, `Expected boulevard central medians (tier 3), got ${tier3Median}`);
+  assert.ok(tier4Alley > 200, `Expected sparse alleys/setbacks (tier 4), got ${tier4Alley}`);
+  assert.ok(streetlights >= 12, `Expected spaced boulevard streetlights, got ${streetlights}`);
+  assert.ok(laneLines >= 100, `Expected faint orange boulevard/avenue lane lines, got ${laneLines}`);
+
+  const landmarks = getLandmarkBuildingIds(world);
+  assert.ok(landmarks.size >= 2 && landmarks.size <= 4, `Expected 2-4 hero landmark buildings, got ${landmarks.size}`);
+
+  const urbanBlds = world.buildings.filter((b) => b.archStyle !== "homestead" && b.archStyle !== "barn");
+  let litCount = 0;
+  const accentCores = new Set<string>();
+  for (const b of urbanBlds) {
+    const tier = buildingNeonTier(world, b);
+    if (tier === "landmark" || tier === "lit") litCount++;
+    const pal = ARCH_PALETTES[b.archStyle][0];
+    accentCores.add(districtNeonAccentFor(world, b, pal).neonCore);
+  }
+  const litRatio = litCount / Math.max(1, urbanBlds.length);
+  assert.ok(
+    litRatio >= 0.18 && litRatio <= 0.34,
+    `Expected ~20-30% of urban buildings to carry strong neon, got ${(litRatio * 100).toFixed(1)}% (${litCount}/${urbanBlds.length})`,
+  );
+  assert.ok(accentCores.size >= 2, `Expected multiple district neon accent colors, got ${[...accentCores].join(", ")}`);
+  assert.ok(w > 0 && h > 0);
 });

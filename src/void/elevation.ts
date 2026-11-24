@@ -215,9 +215,9 @@ export function districtNeonAccentFor(world: VoidWorld, b: MetroBuilding, pal: A
   if (b.archStyle === "homestead" || b.archStyle === "barn") {
     return { neonEdge: pal.neonEdge, neonCore: pal.neonCore, lightRgb: [1.1, 0.72, 0.32] };
   }
-  const sectorX = Math.floor(b.x / Math.max(48, world.grid.w * 0.34));
-  const sectorY = Math.floor(b.y / Math.max(48, world.grid.h * 0.34));
-  const sectorRoll = (hash(world.seed, 923, sectorX, sectorY) + (b.district === "industrial" ? 2 : 0)) % 7;
+  const sectorX = Math.floor(b.x / 92);
+  const sectorY = Math.floor(b.y / 96);
+  const sectorRoll = (sectorX * 3 + sectorY * 2 + (world.seed & 3)) % 5;
   if (sectorRoll === 1) {
     // Cyber magenta district accent
     return {
@@ -226,20 +226,19 @@ export function districtNeonAccentFor(world: VoidWorld, b: MetroBuilding, pal: A
       lightRgb: [1.26, 0.26, 1.38],
     };
   }
-  if (sectorRoll === 2) {
-    // Electric violet district accent
+  if (sectorRoll === 3) {
+    // Electric violet / cool white-ice district accent
+    if (b.district === "plaza" || b.archStyle === "civicDome" || b.archStyle === "solarTerrace") {
+      return {
+        neonEdge: "#8ce8ff",
+        neonCore: "#eafaff",
+        lightRgb: [0.86, 1.16, 1.42],
+      };
+    }
     return {
       neonEdge: "#7c4dff",
       neonCore: "#c8b8ff",
       lightRgb: [0.64, 0.40, 1.48],
-    };
-  }
-  if (sectorRoll === 3 && (b.district === "plaza" || b.archStyle === "civicDome" || b.archStyle === "solarTerrace")) {
-    // Cool white-ice civic accent
-    return {
-      neonEdge: "#8ce8ff",
-      neonCore: "#eafaff",
-      lightRgb: [0.86, 1.16, 1.42],
     };
   }
   return {

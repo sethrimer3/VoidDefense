@@ -163,7 +163,7 @@ export const TIME_OF_DAY_PRESETS: Record<VoidTimeOfDay, TimeOfDayPreset> = {
   },
   night: {
     id: "night",
-    skyColor: [18, 30, 68],
+    skyColor: [23, 39, 81],
     sunDir: norm3(-0.48, -0.52, 0.71),
     sunHeight: 0.32,
     sunColor: [0.18, 0.28, 0.54],
@@ -649,19 +649,19 @@ export function isBoulevardOrAvenueLaneAt(world: VoidWorld, x: number, y: number
   if (world.material[idx] !== CellMaterial.STREET) return false;
   const tier = world.streetTier[idx];
   if (tier === 1) {
-    // Boulevard: faint orange edge line next to the central median (`streetTier === 3`)
-    const adjVertMedian = world.streetTier[idx - 1] === 3 || world.streetTier[idx + 1] === 3;
-    const adjHorizMedian = world.streetTier[idx - w] === 3 || world.streetTier[idx + w] === 3;
-    if (adjVertMedian && (y & 3) !== 0) return true;
-    if (adjHorizMedian && (x & 3) !== 0) return true;
+    // Boulevard: faint dashed orange edge line next to the central median (`streetTier === 3`)
+    const adjVertMedian = (x & 1) === 1 && world.streetTier[idx + 1] === 3;
+    const adjHorizMedian = (y & 1) === 1 && world.streetTier[idx + w] === 3;
+    if (adjVertMedian && (y & 7) < 3) return true;
+    if (adjHorizMedian && (x & 7) < 3) return true;
     return false;
   }
   if (tier === 2) {
-    // Medium avenue: dashed centerline 4 px inside the block curb
-    const curbW = x >= 4 && world.buildingAt[idx - 4] >= 0 && world.streetTier[idx - 1] === 2;
-    const curbN = y >= 4 && world.buildingAt[idx - w * 4] >= 0 && world.streetTier[idx - w] === 2;
-    if (curbW && (y & 7) < 3) return true;
-    if (curbN && (x & 7) < 3) return true;
+    // Medium avenue: dashed 1-px centerline 4 px inside the block curb
+    const curbW = (x & 1) === 0 && x >= 4 && world.buildingAt[idx - 4] >= 0 && world.streetTier[idx - 1] === 2;
+    const curbN = (y & 1) === 0 && y >= 4 && world.buildingAt[idx - w * 4] >= 0 && world.streetTier[idx - w] === 2;
+    if (curbW && (y & 7) < 2) return true;
+    if (curbN && (x & 7) < 2) return true;
   }
   return false;
 }
@@ -971,7 +971,7 @@ export function collectSceneLights(
       // Place the storefront light just beyond the facade so it reaches the street.
       const bx = b.x + b.w * 0.5;
       const by = Math.min(h - 1.5, b.y + b.h + 0.8);
-      const radius = isLandmark ? 24 : b.isSkyscraper ? 18 : 14;
+      const radius = isLandmark ? 16 : b.isSkyscraper ? 14 : 12;
       if (!inView(bx, by, radius)) continue;
       const foot = Math.min(h - 1, Math.floor(b.y + b.h - 0.5)) * w + Math.min(w - 1, Math.floor(bx));
       if (world.material[foot] === CellMaterial.VOID ||
@@ -1199,6 +1199,7 @@ export class LightingEngine {
   terrainNz = new Int8Array(0);
   terrainElev = new Uint8Array(0);
   terrainSurface = new Uint8Array(0);
+  private terrainLane = new Uint8Array(0);
   surfaceTileRevision = new Float64Array(0);
   private surfaceFrame = 0;
   /** Ground-footprint height-field (`w * h`) for 2.5D shadow raycasting. */
@@ -1711,18 +1712,11 @@ export class LightingEngine {
               seeds[dst] = Math.max(seeds[dst], IS_LITTLE_ENDIAN ? color & 255 : color >>> 24);
               seeds[dst + 1] = Math.max(seeds[dst + 1], (color >>> (IS_LITTLE_ENDIAN ? 8 : 16)) & 255);
               seeds[dst + 2] = Math.max(seeds[dst + 2], (color >>> (IS_LITTLE_ENDIAN ? 16 : 8)) & 255);
-            } else if (world && atlasBldId[i] < 0) {
-              if (isBoulevardStreetlightAt(world, wx, wy)) {
-                // Soft boulevard streetlight pool seed
-                seeds[dst] = Math.max(seeds[dst], 135);
-                seeds[dst + 1] = Math.max(seeds[dst + 1], 205);
-                seeds[dst + 2] = Math.max(seeds[dst + 2], 245);
-              } else if (isBoulevardOrAvenueLaneAt(world, wx, wy)) {
-                // Very faint glowing warm-orange lane line seed (low intensity, never competes with tower orange)
-                seeds[dst] = Math.max(seeds[dst], 64);
-                seeds[dst + 1] = Math.max(seeds[dst + 1], 32);
-                seeds[dst + 2] = Math.max(seeds[dst + 2], 10);
-              }
+            } else if (world && atlasBldId[i] < 0 && isBoulevardStreetlightAt(world, wx, wy)) {
+              // Soft boulevard streetlight pool seed at regular spacing along medians
+              seeds[dst] = Math.max(seeds[dst], 115);
+              seeds[dst + 1] = Math.max(seeds[dst + 1], 185);
+              seeds[dst + 2] = Math.max(seeds[dst + 2], 235);
             }
           }
         }
@@ -2164,6 +2158,29 @@ export class LightingEngine {
             }
           }
 
+          // Faint glowing orange lane markings on boulevards & avenues, slightly lighting the wet street in rain
+          if (!isBuilding && preset.neonIntensity > 0.2 && (streetTier[i] === 1 || streetTier[i] === 2)) {
+            if (isBoulevardOrAvenueLaneAt(world, sx, sy)) {
+              const laneGlow = preset.neonIntensity * (0.14 + localWet * 0.08);
+              ptR += laneGlow;
+              ptG += laneGlow * 0.45;
+              ptB += laneGlow * 0.08;
+            } else if (
+              localWet > 0.05 &&
+              (isBoulevardOrAvenueLaneAt(world, sx - 1, sy) ||
+                isBoulevardOrAvenueLaneAt(world, sx + 1, sy) ||
+                isBoulevardOrAvenueLaneAt(world, sx, sy - 1) ||
+                isBoulevardOrAvenueLaneAt(world, sx, sy + 1))
+            ) {
+              const wetLaneSpill = localWet * preset.neonIntensity * 0.09;
+              ptR += wetLaneSpill;
+              ptG += wetLaneSpill * 0.44;
+              ptB += wetLaneSpill * 0.08;
+              spR += wetLaneSpill * 22;
+              spG += wetLaneSpill * 10;
+              spB += wetLaneSpill * 2;
+            }
+          }
           // Emissive neon cores stay bright and saturated with a soft colored boost
           if (isEmissive) {
             const emBoost = 0.85 + preset.neonIntensity * 0.35;
