@@ -136,9 +136,9 @@ export const LIGHTING_QUALITY_CAPS: Record<
   LightingQualityMode,
   { maxLights: number; maxShadowLights: number }
 > = {
-  low: { maxLights: 20, maxShadowLights: 6 },
-  medium: { maxLights: 34, maxShadowLights: 14 },
-  high: { maxLights: 48, maxShadowLights: 28 },
+  low: { maxLights: 16, maxShadowLights: 5 },
+  medium: { maxLights: 24, maxShadowLights: 9 },
+  high: { maxLights: 34, maxShadowLights: 12 },
 };
 
 /** Warm directional sunlight vector `(lx, ly, lz)` coming from the North-West so south/east
@@ -802,7 +802,7 @@ export function collectSceneLights(
       if (world.material[byFloor * w + bxFloor] === CellMaterial.VOID) continue;
       inViewBuildings.push(b);
     }
-    const targetBldLights = quality === "low" ? 5 : quality === "medium" ? 9 : 14;
+    const targetBldLights = quality === "low" ? 4 : quality === "medium" ? 7 : 10;
     const bStride = Math.max(1, Math.floor(inViewBuildings.length / targetBldLights));
     for (let i = 0; i < inViewBuildings.length; i += bStride) {
       const b = inViewBuildings[i];
@@ -810,7 +810,7 @@ export function collectSceneLights(
       // neon canopy visibly pools saturated cyan/blue light onto the street and casts long shadows!
       const bx = b.x + b.w * 0.5;
       const by = Math.min(h - 1.5, b.y + b.h + 0.8);
-      const radius = b.isSkyscraper ? 21 : 17;
+      const radius = b.isSkyscraper ? 18 : 14;
       const bElev = elevationOf(b, buildingHeight);
       const hum = (reduceEffects ? 0.94 : 0.88 + 0.12 * Math.sin(animTime * 3.8 + b.id)) * neonMult;
       const isWarmStorefront = ((b.id * 7 + b.variant * 3) & 7) === 3;
@@ -943,8 +943,8 @@ export function collectSceneLights(
       }
     }
 
-    // Clustered frontier perimeter glow (up to 10 evenly strided samples around the breach)
-    const clusterTarget = 10;
+    // Clustered frontier perimeter glow (up to 6 evenly strided samples around the breach)
+    const clusterTarget = 6;
     const fStride = Math.max(1, Math.floor(fLen / clusterTarget));
     for (let i = 0; i < fLen; i += fStride) {
       const cIdx = voidField.frontierCells[i];
@@ -952,7 +952,7 @@ export function collectSceneLights(
       const fy = ((cIdx / w) | 0) + 0.5;
       const micro = voidField.cellMicroWork[cIdx];
       const intensity = Math.min(1, 0.35 + micro / 1400);
-      const radius = 14 + intensity * 5;
+      const radius = Math.round(13 + intensity * 4);
       if (!inView(fx, fy, radius)) continue;
       lights.push({
         x: fx,
@@ -963,8 +963,8 @@ export function collectSceneLights(
         b: 0.92 * intensity * pulse,
         radius,
         specular: 0.55,
-        castsShadows: true,
-        shadowStrength: 0.25 * intensity,
+        castsShadows: false,
+        shadowStrength: 0,
         priority: 65 + intensity * 10,
       });
     }
@@ -1439,17 +1439,62 @@ export class LightingEngine {
     const y0 = ty0 * CHUNK_SIZE;
     const w = (tx1 - tx0 + 1) * CHUNK_SIZE;
     const h = (ty1 - ty0 + 1) * CHUNK_SIZE;
+    const qx = Math.round(light.x * 2);
+    const qy = Math.round(light.y * 2);
+    const qz = Math.round(light.z * 2);
     let cache = this.shadowCaches[slot];
     const length = w * h;
     if (!cache || cache.visibility.length < length) {
+      for (let s = 0; s < this.shadowCaches.length; s++) {
+        const cand = this.shadowCaches[s];
+        if (
+          cand &&
+          cand.revision === revision &&
+          cand.x === qx &&
+          cand.y === qy &&
+          cand.z === qz &&
+          cand.x0 === x0 &&
+          cand.y0 === y0 &&
+          cand.w === w &&
+          cand.h === h
+        ) {
+          return cand;
+        }
+      }
       cache = { x: 0, y: 0, z: 0, x0: 0, y0: 0, w: 0, h: 0, revision: -1, visibility: new Uint8Array(length) };
       this.shadowCaches[slot] = cache;
+    } else if (
+      cache.revision !== revision ||
+      cache.x !== qx ||
+      cache.y !== qy ||
+      cache.z !== qz ||
+      cache.x0 !== x0 ||
+      cache.y0 !== y0 ||
+      cache.w !== w ||
+      cache.h !== h
+    ) {
+      for (let s = 0; s < this.shadowCaches.length; s++) {
+        const cand = this.shadowCaches[s];
+        if (
+          cand &&
+          cand.revision === revision &&
+          cand.x === qx &&
+          cand.y === qy &&
+          cand.z === qz &&
+          cand.x0 === x0 &&
+          cand.y0 === y0 &&
+          cand.w === w &&
+          cand.h === h
+        ) {
+          return cand;
+        }
+      }
     }
-    if (cache.revision !== revision || cache.x !== light.x || cache.y !== light.y || cache.z !== light.z ||
+    if (cache.revision !== revision || cache.x !== qx || cache.y !== qy || cache.z !== qz ||
         cache.x0 !== x0 || cache.y0 !== y0 || cache.w !== w || cache.h !== h) {
-      cache.x = light.x;
-      cache.y = light.y;
-      cache.z = light.z;
+      cache.x = qx;
+      cache.y = qy;
+      cache.z = qz;
       cache.x0 = x0;
       cache.y0 = y0;
       cache.w = w;

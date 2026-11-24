@@ -62,5 +62,5 @@ All world surfaces—terrain, buildings, placed towers, and infantry—generate 
 - **64-Bit Tile Light Binning:**
   - Point lights are culled against the camera viewport (`viewBounds` + radius margin), prioritized, and binned into 16×16 tiles using 64-bit bitmasks (`tileLightsLo`, `tileLightsHi`). Only tiles with active lights are shaded and cleared on the next frame.
 - **Lighting Quality Tiers & Auto-Drop (`lightingQuality` in `src/settings.ts`):**
-  - Configurable in Command Settings (`High`: 48 lights / 28 shadow casters; `Medium`: 34 lights / 14 shadow casters; `Low`: 20 lights / 6 shadow casters). Lights beyond the shadow cap smoothly fade their `shadowStrength` to unshadowed surface glow.
+  - Configurable in Command Settings (`High`: 34 lights / 12 shadow casters; `Medium`: 24 lights / 9 shadow casters; `Low`: 16 lights / 5 shadow casters). Lights beyond the shadow cap smoothly fade their `shadowStrength` to unshadowed surface glow.
   - `VoidRenderer` monitors `lastTimings.lighting` and automatically drops `effectiveLightingQuality` one tier after sustained slow frames (`> 11.5 ms`), recovering when frame times drop (`< 4.5 ms`).
