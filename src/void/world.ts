@@ -940,10 +940,11 @@ export class VoidWorld {
           }
           if (
             shapeKind === 3 &&
+            !isSkyscraper &&
             (lx === 0 || lx === w - 1) &&
             (ly === 0 || ly === h - 1)
           ) {
-            // Octagonal / chamfered high-rise
+            // Octagonal / chamfered mid-rise
             continue;
           }
           if (
