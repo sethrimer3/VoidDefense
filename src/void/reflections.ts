@@ -381,7 +381,7 @@ export class SurfaceReflections {
         }
       }
       const bankFalloff = Math.max(0.24, 1 - Math.abs(cx - lightX) / light.radius);
-      const streakLen = wetActive ? Math.max(length, Math.round(light.radius * 1.18)) : length;
+      const streakLen = wetActive ? Math.max(length, Math.round(light.radius * 1.35)) : length;
       for (let y = Math.max(y0, cy - (length >> 1)); y < Math.min(y1, cy + streakLen); y++) {
         const wave = phase > 0 ? ((y + phase + cx) >> 2) % 3 - 1 : 0;
         const falloff = Math.max(0, 1 - Math.abs(y - cy) / streakLen);
@@ -409,7 +409,7 @@ export class SurfaceReflections {
             const shimmer = isPuddle ? wave : (phase > 0 && ((x + y + phase) & 3) === 0 ? 1 : 0);
             const xDist = Math.abs(x - cx - shimmer);
             if (xDist > halfWidth) continue;
-            const rawEnergy = falloff * falloff * (1 - xDist / (halfWidth + 1)) * (isPuddle ? 96 : 64) * bankFalloff * localWet;
+            const rawEnergy = Math.pow(falloff, 1.55) * (1 - xDist / (halfWidth + 1)) * (isPuddle ? 128 : 92) * bankFalloff * localWet;
             const energy = Math.round(rawEnergy / 6) * 6;
             if (energy < 4) continue;
             this.streakTiles[((y / CHUNK_SIZE) | 0) * chunksW + ((x / CHUNK_SIZE) | 0)] = 1;
@@ -704,6 +704,8 @@ export class SurfaceReflections {
         expand(waterDraw, ix, iy, ex, ey);
         const wetSkyChanged = tile.wetSky !== wetSkyKey;
         tile.wetSky = wetSkyKey;
+        const { halo, haloW } = lighting.getHaloBuffer();
+        const haloStreakScale = preset.neonIntensity > 0.25 && haloW > 0 ? preset.neonIntensity * 0.48 : 0;
         const hasWetStreak = this.streakTiles[tileIndex] !== 0 || this.actorTileFlags[tileIndex] !== 0;
         let wetSourceRevision = localRevision;
         for (const source of wetSample.sources) wetSourceRevision = Math.max(wetSourceRevision, lighting.surfaceTileRevision[source]);
@@ -768,7 +770,28 @@ export class SurfaceReflections {
             ? 1
             : Math.max(0.22, 1 - mirrorDepth / (MAX_ELEVATION_PX + 3));
           const base = terrainLightU32[i] || baseTerrain[i];
-          const streak = this.streaks.size ? this.streaks.get(i) ?? 0 : 0;
+          let streak = this.streaks.size ? this.streaks.get(i) ?? 0 : 0;
+          if (haloStreakScale > 0) {
+            // Reuse the half-res emissive halo buffer to cast vertical neon streaks onto wet pavement south of storefronts
+            const hx = Math.min(haloW - 1, x >> 1);
+            const hy1 = Math.max(0, (y - 3) >> 1);
+            const hy2 = Math.max(0, (y - 6) >> 1);
+            const hy3 = Math.max(0, (y - 10) >> 1);
+            const hi1 = (hy1 * haloW + hx) * 3;
+            const hi2 = (hy2 * haloW + hx) * 3;
+            const hi3 = (hy3 * haloW + hx) * 3;
+            const kGain = (isPuddle ? 1.25 : 0.85) * haloStreakScale;
+            const hr = (halo[hi1] * 0.68 + halo[hi2] * 0.46 + halo[hi3] * 0.26) * kGain;
+            const hg = (halo[hi1 + 1] * 0.68 + halo[hi2 + 1] * 0.46 + halo[hi3 + 1] * 0.26) * kGain;
+            const hb = (halo[hi1 + 2] * 0.68 + halo[hi2 + 2] * 0.46 + halo[hi3 + 2] * 0.26) * kGain;
+            if (hr + hg + hb > 5) {
+              streak = packElevAbgr(
+                Math.min(255, channel(streak, RED) + Math.round(hr)),
+                Math.min(255, channel(streak, GREEN) + Math.round(hg)),
+                Math.min(255, channel(streak, BLUE) + Math.round(hb)),
+              );
+            }
+          }
           if (!wetSkyChanged && wetSample.previousBase[k] === base && wetSample.previousRay[k] === ray &&
               wetSample.previousStreak[k] === streak) continue;
           wetSample.previousBase[k] = base;

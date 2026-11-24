@@ -36,6 +36,9 @@ try {
       const b=world.buildings.find(b=>b.height>=20&&b.archStyle==="glassTower"&&b.w>=8&&b.x>80&&b.x<w-90&&b.y>100&&b.y<h-130);
       assertBuilding(b);
       function assertBuilding(b) { if(!b) throw Error("Expected a glass tower"); }
+      sim.supplies=500;
+      sim.placeTower("matterCannon",b.x-14,b.y+b.h-5);
+      sim.placeTower("shieldProjector",b.x+b.w+6,b.y+b.h-5);
       const shore=b.y+b.h;
       for(let y=shore;y<shore+21;y++) for(let x=b.x-26;x<b.x+b.w+38;x++) {
         const idx=y*w+x;

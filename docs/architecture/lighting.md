@@ -109,3 +109,20 @@ procedural city buildings.
 - [Night river](../void-defense/reflections/reflection-river-night.png)
 - [Glass tower at sunset](../void-defense/reflections/reflection-glass-sunset.png)
 - [Explosion reflected in water](../void-defense/reflections/reflection-explosion.png)
+
+## 8. Rain Weather, Wet Surface Materials, Puddles, and Ripples
+
+- **Weather State & Wetness Ramp (`weather`, `stepWetness`, `puddleWetnessFor` in `src/void/lighting.ts`):**
+  - Supports two weather states (`clear`, `rain`) persisted in `settings.weather` and toggled via the **Rain** button next to **Day / Sunset / Night** in `.void-hud-top-left` (and in Command Settings).
+  - Global surface `wetness` (`0..1`) ramps up over `20 s` when rain starts and dries over `60 s` when rain stops. Puddles retain moisture (`wetness^0.55`) and dry last.
+  - Slanted whole-pixel rain streaks (`2–3` per 16×16 tile) and 1-px impact splashes draw over non-Void cells and glint with local point-light and half-res neon halo colors (`LightingEngine.rainGlintStyle`).
+- **Wet Surface Classification & Puddle Mask (`computePuddleDepthAt`, `isPuddleCellAt`, `applyWetAlbedo`):**
+  - Urban streets, sidewalks, parking lots, and plazas (`CellMaterial.STREET`, `CellMaterial.PARK` with `LandCover.NONE`) and flat urban rooftops (`SurfaceMaterial.WET_ROOF`) get wet; rural dirt roads (`streetTier === 8`) get slightly wet; grass, crops, forests, and reclaimed soil darken slightly (`applyWetAlbedo`) without reflecting; the Void anomaly absorbs rain without pooling or reflecting.
+  - Seeded multi-octave value noise combined with low spots in `terrainReliefAt` (depressions away from raised street curbs and crowns) classifies wet ground into mirror-like puddles (`SurfaceMaterial.WET_PUDDLE`) and blurry wet road sheen (`SurfaceMaterial.WET_SHEEN`).
+  - Wet surfaces darken and saturate base albedo with a cool slate-blue tint, flatten puddle bump normals toward `(0, 0, 1)`, lower roughness, and boost specular highlights while keeping sun and point-light shadows intact.
+- **Wet Ground Reflections, Light Streaks & Raindrop Ripples (`src/void/reflections.ts`):**
+  - Every point light (building neon, orange tower lights, explosions, muzzle flashes, projectiles) and the half-resolution emissive halo buffer cast vertically stretched, palette-quantized colored streaks southward across wet ground in screen space.
+  - Puddles and wet streets pick up the time-of-day sky tint and faint blurred inverse-elevation (`groundY + z`) mirrors of nearby buildings, trees, towers, and units, fading with vertical distance from the object.
+  - Expanding raindrop ripple rings (`computePuddleRippleOffset`) deterministically perturb puddle reflection lookups by `1–2` whole pixels per tile and time slot; non-puddle wet pavement uses a 1-px shimmer without ring ripples.
+  - **Quality Tiers:** When `wetness === 0`, wet reflection work is skipped completely (`0 ms` overhead). On `low`, only sky tint and vertical light streaks are evaluated; on `medium`, streaks plus half-resolution (`2×2`) puddle mirrors are drawn; on `high`, puddles (with raindrop ripples, foliage, and actors) and blurred wet road sheen are all active.
+

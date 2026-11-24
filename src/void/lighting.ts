@@ -1582,6 +1582,11 @@ export class LightingEngine {
     return `rgba(${q(r)}, ${q(g)}, ${q(b)}, ${alpha})`;
   }
 
+  /** Half-resolution emissive halo buffer (`haloW * haloH * 3` floats, RGB in `0..255` before preset scaling). */
+  getHaloBuffer(): { halo: Float32Array; haloW: number; haloH: number } {
+    return { halo: this.halo, haloW: this.haloW, haloH: this.haloH };
+  }
+
   // Cache only on the native raster. Actor samples use arbitrary heights and normals.
   private shadowCacheFor(slot: number, light: PointLight, tx0: number, ty0: number, tx1: number, ty1: number): ShadowCache {
     let revision = 0;
