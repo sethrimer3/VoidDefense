@@ -67,3 +67,8 @@ All world surfaces—terrain, buildings, placed towers, and infantry—generate 
 - **Lighting Quality Tiers & Auto-Drop (`lightingQuality` in `src/settings.ts`):**
   - Configurable in Command Settings (`High`: 34 lights / 12 shadow casters; `Medium`: 24 lights / 9 shadow casters; `Low`: 16 lights / 5 shadow casters). Lights beyond the shadow cap smoothly fade their `shadowStrength` to unshadowed surface glow.
   - `VoidRenderer` monitors `lastTimings.lighting` and automatically drops `effectiveLightingQuality` one tier after sustained slow frames (`> 11.5 ms`), recovering when frame times drop (`< 4.5 ms`).
+
+
+## 6. Void Debris and Traffic
+
+Loose fragments and submerged chunks use cached heat palettes shaded by the current sky. Heat adds its own emission near the event horizon. The Void's floor takes the preset's ambient tint, with a directional highlight on the portal rim. Blue civilian traffic and amber delivery trucks cast small, additive pools on nearby road and park pixels at native resolution.

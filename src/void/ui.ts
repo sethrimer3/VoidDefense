@@ -92,6 +92,15 @@ function paintCardIcon(canvas: HTMLCanvasElement, kind: string): void {
       c.fillStyle = "#ffd166";
       c.fillRect(13, 4, 3, 3);
       break;
+    case "deliveryDepot":
+      c.fillStyle = "#8f4829";
+      c.fillRect(3, 5, 14, 11);
+      c.fillStyle = "#f49b48";
+      c.fillRect(4, 6, 12, 3);
+      c.fillRect(4, 11, 12, 2);
+      c.fillStyle = "#fff0bc";
+      c.fillRect(7, 14, 6, 2);
+      break;
     case "gravityAnchor":
       c.fillStyle = "#6c88ff";
       c.fillRect(7, 4, 6, 12);
@@ -1262,7 +1271,13 @@ export class VoidApp {
     let extraInfo = "";
     let rotateBtn = "";
     let hasRotate = false;
-    if (t.type === "voidSiphon") {
+    if (t.type === "deliveryDepot") {
+      const route = this.sim.deliveries.routeFor(t.uid);
+      extraInfo = route?.path ? `<span><b>+${route.payout} Supplies</b> per delivery</span>`
+        : route ? "<span>Route blocked. Looking for open roads.</span>"
+        : this.sim.phase === "prep" ? "<span>Pairs with another depot at deployment.</span>"
+        : "<span>Build another depot to start deliveries.</span>";
+    } else if (t.type === "voidSiphon") {
       const s = this.sim.combat.siphonStates.get(t.uid);
       if (s) {
         const pct = Math.round((s.stored / Math.max(1, s.maxStorage)) * 100);
@@ -1309,7 +1324,7 @@ export class VoidApp {
       <div class="void-insp-actions">
         ${upgCost > 0 ? `<button type="button" data-insp-upgrade class="primary-btn" ${canUpgrade ? "" : "disabled"}>${tr("void.insp.upgrade", { n: lvl + 1, cost: upgCost })}</button>` : ""}
         ${rotateBtn}
-        <button type="button" data-insp-reticle class="secondary-btn">${tr("void.insp.focus")}</button>
+        ${t.type === "deliveryDepot" ? "" : `<button type="button" data-insp-reticle class="secondary-btn">${tr("void.insp.focus")}</button>`}
         <button type="button" data-insp-sell class="danger-btn" ${canModify ? "" : "disabled"}>${tr("void.insp.sell", { n: refund })}</button>
       </div>
     `;
@@ -1332,7 +1347,8 @@ export class VoidApp {
           this.refreshHUD();
         };
       }
-      el.querySelector<HTMLButtonElement>("[data-insp-reticle]")!.onclick = () => {
+      const reticle = el.querySelector<HTMLButtonElement>("[data-insp-reticle]");
+      if (reticle) reticle.onclick = () => {
         this.activeTool = { kind: "setReticle", towerUid: t.uid };
         this.towerMenu.setPlacing(true);
         this.soundEngine.playSfx("uiClick");
@@ -1941,6 +1957,10 @@ export class VoidApp {
           this.renderer.triggerIncomePopup(b.x + b.w * 0.5, b.y + b.h * 0.5, ev.lastIncomeAmount);
         }
       }
+      for (const arrival of this.sim.deliveries.arrivals) {
+        this.renderer.triggerIncomePopup(arrival.x, arrival.y, arrival.amount);
+      }
+      this.sim.deliveries.arrivals.length = 0;
       ev.pelletsFired = 0;
       ev.pelletsHit = 0;
       ev.collapses = 0;

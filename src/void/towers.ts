@@ -22,6 +22,7 @@ import {
   type VoidOrganism,
   type WallBlueprint,
 } from "./model.ts";
+import { hasDepotRoad } from "./street-routes.ts";
 import { CHUNK_TOWER_DAMAGE_SCALE, type VoidPhysics } from "./physics.ts";
 import type { EvaluatedTech } from "./tech/wallet.ts";
 import type { VoidField } from "./void-field.ts";
@@ -48,6 +49,19 @@ export type TowerSpec = {
 };
 
 export const TOWER_SPECS: Record<TowerTypeId, TowerSpec> = {
+  deliveryDepot: {
+    id: "deliveryDepot",
+    name: "Delivery Depot",
+    shortName: "Delivery",
+    description: "Place two depots beside roads to dispatch a truck. Earn Supplies on arrival, with higher payouts for longer trips.",
+    cost: 45,
+    w: pixels(3),
+    h: pixels(3),
+    maxHp: 160,
+    range: 0,
+    cooldownSeconds: 0,
+    color: "#f18433",
+  },
   matterCannon: {
     id: "matterCannon",
     name: "Matter Cannon",
@@ -640,11 +654,12 @@ export class VoidCombatManager {
         const idx = world.grid.index(px, py);
         const mat = world.material[idx];
         if (mat === CellMaterial.VOID || mat === CellMaterial.UNCLAIMED || mat === CellMaterial.EMPTY) return false;
+        if (type === "deliveryDepot" && world.buildingAt[idx] >= 0) return false;
         const occ = world.towerAt[idx];
         if (occ >= 0 && occ !== ignoreUid) return false;
       }
     }
-    return true;
+    return type !== "deliveryDepot" || hasDepotRoad(world, x, y, spec.w, spec.h);
   }
 
   placeTower(

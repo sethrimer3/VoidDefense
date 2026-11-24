@@ -14,6 +14,7 @@ import type {
   TowerTypeId,
   ZeroContactReason,
 } from "./model.ts";
+import { DeliveryNetwork } from "./deliveries.ts";
 import { FarmFires } from "./farms.ts";
 import { VoidPhysics } from "./physics.ts";
 import { computeCityIncomePerCycle, evaluateRunOutcome } from "./scoring.ts";
@@ -29,6 +30,7 @@ export class VoidSim {
   readonly world: VoidWorld;
   readonly physics: VoidPhysics;
   readonly farms: FarmFires;
+  readonly deliveries = new DeliveryNetwork();
   readonly voidField: VoidField;
   readonly combat: VoidCombatManager;
 
@@ -141,6 +143,7 @@ export class VoidSim {
     const refund = this.refundAmount(uid);
     const removed = this.combat.removeTower(this.world, uid, this.voidField);
     if (!removed) return false;
+    this.deliveries.removeDepot(uid);
     this.supplies += refund;
     return true;
   }
@@ -176,7 +179,7 @@ export class VoidSim {
 
   setTowerFocus(uid: number, x: number, y: number): boolean {
     const t = this.combat.towers.find((tw) => tw.uid === uid);
-    if (!t || !this.world.grid.inBounds(Math.floor(x), Math.floor(y))) return false;
+    if (!t || t.type === "deliveryDepot" || !this.world.grid.inBounds(Math.floor(x), Math.floor(y))) return false;
     t.focus = { x, y };
     this.playerActionsCount++;
     return true;
@@ -322,6 +325,7 @@ export class VoidSim {
     else if (this.combat.pellets.length < prevPellets) this.sfxEvents.pelletsHit++;
     if (this.combat.agents.length < prevAgents) this.sfxEvents.unitsLost++;
 
+    this.supplies += this.deliveries.step(this.world, this.combat.towers, this.tick, TICK_DT);
     this.farms.step(TICK_DT, this.combat.lasers);
 
     this.reason = statusReason;

@@ -168,7 +168,7 @@ export function towerPanelHtml(target: TowerMenuTarget, placing = false): string
     ? `<button type="button" class="secondary-btn" data-vbp="rotate">Rotate +45°</button>`
     : "";
 
-  const focusBtn = `<button type="button" class="secondary-btn vbp-focus" data-vbp="focus" aria-pressed="${placing || target.focusSet}">${tr("void.insp.focus")}</button>`;
+  const focusBtn = target.tower.type === "deliveryDepot" ? "" : `<button type="button" class="secondary-btn vbp-focus" data-vbp="focus" aria-pressed="${placing || target.focusSet}">${tr("void.insp.focus")}</button>`;
   const sellBtn = `<button type="button" class="danger-btn" data-vbp="sell" ${target.canModify ? "" : "disabled"}>${tr("void.insp.sell", { n: target.refund })}</button>`;
 
   return (
@@ -208,7 +208,7 @@ export function towerRingHtml(target: TowerMenuTarget, placing = false): string 
       ? `<button type="button" class="vbm-btn secondary-btn" data-vbp="rotate" title="Rotate +45°">↻</button>`
       : "");
 
-  const right =
+  const right = target.tower.type === "deliveryDepot" ? "" :
     `<div class="vbm-aim"><button type="button" class="vbm-btn secondary-btn" data-vbp="focus" aria-pressed="${placing || target.focusSet}" title="${esc(tr("void.insp.focus"))}">⌖</button></div>`;
 
   const bottom =

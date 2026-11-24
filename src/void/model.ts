@@ -283,7 +283,8 @@ export type TowerTypeId =
   | "lanternBearer"
   | "seamwalker"
   | "echoMine"
-  | "countervoidHeart";
+  | "countervoidHeart"
+  | "deliveryDepot";
 
 export type PlacedTower = {
   uid: number;

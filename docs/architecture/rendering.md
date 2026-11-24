@@ -37,6 +37,8 @@ Cosmic organisms (such as the Queen Bee, Bee Swarms, Nebula Worms, and Constella
 - **Building Height Setting (`buildingHeight`):** Configurable in Sectors & Mode settings (`"full"` default, `"low"` half-height, `"flat"` legacy top-down).
 - **Falling Chunks & Civilians:** Pooled `FallingChunk` debris (from collapsing columns, tipped towers, and fallen agents), pooled 1-px grey `DustPuff` particles, and cosmetic 1-px street `Civilian` pedestrians project at `(round(x), round(y - z))`. Over Void (`z < 0`), chunks sink down-screen, shrink in whole-pixel LOD steps (`6 -> 4 -> 2 -> 1 px`), darken toward the Void palette, and are clipped behind northern subterranean ledge front faces (`isOccludedByLedge` in `src/void/ledge.ts`) before disappearing at `z < -24` (emitting a brief `paintVoidRipples` brightness ripple in `src/void/interior.ts` for large chunks). A large structural collapse (one building losing `>= 16` columns and `>= 30%` of its footprint in one tick) gives a slight 1 device-pixel, one-axis camera shake for 90 ms, only when the camera is zoomed in (`cam.s >= 2`) with that building on screen, at most once per 900 ms. Reduced Motion (`reduceEffects`) suppresses falling chunks, dust, camera shake, Void ripples, and civilians while keeping static facades and cutaways intact.
 
+Seeded urban lots leave service lanes between buildings. Usable gaps behind urban buildings have a parking surface painted with marked bays, parked cars and drive aisles at native resolution. Parking remains part of the street network.
+
 ## 2.5D Surface Lighting and Cast Shadows
 
 See `docs/architecture/lighting.md` for the full lighting design:

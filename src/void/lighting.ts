@@ -198,6 +198,25 @@ type ShadowCache = {
   visibility: Uint8Array;
 };
 
+/** Loose material takes on the sky color, while its hottest parts emit their own light. */
+export function looseMaterialLight(preset: TimeOfDayPreset): readonly [number, number, number] {
+  const channel = (i: number) => Math.min(1, 0.24 + 0.63 * preset.ambientColor[i] +
+    0.5 * preset.sunIntensity * preset.sunColor[i]);
+  return [channel(0), channel(1), channel(2)];
+}
+
+export function shadeLooseMaterial(
+  color: string,
+  heat: number,
+  sky: readonly [number, number, number],
+): string {
+  const [r, g, b] = parseColorRgb01(color);
+  const emission = heat ** 3 * 0.85;
+  const level = (channel: number, ambient: number) =>
+    Math.round(channel * 255 * (ambient + (1 - ambient) * emission));
+  return `rgb(${level(r, sky[0])} ${level(g, sky[1])} ${level(b, sky[2])})`;
+}
+
 function unlitColor(color: string): string { return color; }
 
 /** Tone-mapped per-channel surface shading:
@@ -1680,6 +1699,9 @@ export class LightingEngine {
 
     const haloBoost = preset ? preset.neonIntensity * (0.46 / 255) : 0;
     const useHalo = Boolean(preset && preset.neonIntensity > 0.25 && this.haloW > 0);
+    const voidR = preset ? 0.38 + preset.voidAmbientColor[0] * 0.68 + preset.sunIntensity * 0.46 : 0;
+    const voidG = preset ? 0.38 + preset.voidAmbientColor[1] * 0.68 + preset.sunIntensity * 0.46 : 0;
+    const voidB = preset ? 0.38 + preset.voidAmbientColor[2] * 0.68 + preset.sunIntensity * 0.46 : 0;
     const { haloW, halo } = this;
 
     let minX = w;
@@ -1773,7 +1795,16 @@ export class LightingEngine {
           if (!isBuilding) {
             buildingLightU32[i] = 0;
             if (material[i] === CellMaterial.VOID) {
-              terrainLightU32[i] = 0;
+              if (preset) {
+                const color = terrainU32[i];
+                const r = IS_LITTLE_ENDIAN ? color & 255 : color >>> 24;
+                const g = (color >>> (IS_LITTLE_ENDIAN ? 8 : 16)) & 255;
+                const b = (color >>> (IS_LITTLE_ENDIAN ? 16 : 8)) & 255;
+                terrainLightU32[i] = packRgba(Math.round(r * voidR), Math.round(g * voidG), Math.round(b * voidB));
+                hasTerrain = true;
+              } else {
+                terrainLightU32[i] = 0;
+              }
               continue;
             }
           } else {

@@ -16,7 +16,7 @@
  *   value present when the Resistance arrives on scene. */
 
 import { dist } from "../exact.ts";
-import { PIXELS_PER_FORMER_CELL, TICK_HZ } from "./config.ts";
+import { PARKING_STREET_TIER, PIXELS_PER_FORMER_CELL, TICK_HZ } from "./config.ts";
 import { hash, hash01, VoidGrid } from "./grid.ts";
 import {
   type BuildingArchStyle,
@@ -405,18 +405,28 @@ export class VoidWorld {
                   ? 1 + (hash(seed, 508, bx, by, sIdx, lotIdx) % 3) // 1..3 stories
                   : 2 + (hash(seed, 508, bx, by, sIdx, lotIdx) % 5); // 2..6 stories
 
+            const gapRoll = hash01(seed, 510, bx, by, sIdx, lotIdx);
+            const gap = isSuburb ? 1 + (hash(seed, 510, bx, by, sIdx, lotIdx) % 2) : gapRoll < 0.65 ? 1 : 0;
+            // Keep the lot grid and the taller skyline while opening up shoulder space beside low rises.
+            const buildingWidth = !isSuburb && !isSkyscraper && gap === 0 && lw >= 5 ? lw - 1 : lw;
             this.addBuilding(
-              px,
-              ly0,
-              lw,
-              lh,
-              district,
-              isSkyscraper,
-              height,
+              px, ly0, buildingWidth, lh, district, isSkyscraper, height,
               hash(seed, 509, bx, by, sIdx, lotIdx),
             );
 
-            const gap = isSuburb ? 1 + (hash(seed, 510, bx, by, sIdx, lotIdx) % 2) : hash01(seed, 510, bx, by, sIdx, lotIdx) < 0.65 ? 1 : 0;
+            const parkingY = sIdx === 0 ? ly0 + lh : sy0;
+            const parkingEnd = sIdx === 0 ? sy1 : ly0;
+            if (!isSuburb && lw >= 4 && parkingEnd - parkingY >= 2) {
+              for (let py = parkingY; py < parkingEnd; py++) {
+                for (let lx = px; lx < px + lw; lx++) {
+                  const i = py * w + lx;
+                  if (this.material[i] === CellMaterial.STREET && this.zone[i] !== ZoneKind.RURAL) {
+                    this.streetTier[i] = PARKING_STREET_TIER;
+                  }
+                }
+              }
+            }
+
             px += lw + gap;
             lotIdx++;
           }

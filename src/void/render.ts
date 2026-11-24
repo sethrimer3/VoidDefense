@@ -38,6 +38,8 @@ import {
   LightingEngine,
   type LightingQualityMode,
   normalizeVoidTimeOfDay,
+  looseMaterialLight,
+  shadeLooseMaterial,
   TIME_OF_DAY_PRESETS,
   type TimeOfDayPreset,
   TOWER_SOBEL_NORMALS,
@@ -54,7 +56,7 @@ import {
 } from "./interior.ts";
 import { pixelPainter } from "./pixel-painter.ts";
 import { Loupe } from "./loupe.ts";
-import { CHUNK_SIZE, CORRUPTION_REACH, PIXEL_AREA, VOID_CONTEST_COSTS, pixels } from "./config.ts";
+import { CHUNK_SIZE, CORRUPTION_REACH, PARKING_STREET_TIER, PIXEL_AREA, VOID_CONTEST_COSTS, pixels } from "./config.ts";
 import { hash, hash01 } from "./grid.ts";
 import {
   CellMaterial,
@@ -74,16 +76,16 @@ import {
   moltenGlowColorAtHeat,
   VOID_ABYSS_Z,
 } from "./physics.ts";
+import { findStreetPath, isCityStreet, type StreetBfsScratch } from "./street-routes.ts";
 import type { VoidSim } from "./sim.ts";
 import { STRIKE_SPECS, TOWER_SPECS } from "./towers.ts";
 import type { VoidWorld } from "./world.ts";
 
+export { findStreetPath, type StreetBfsScratch } from "./street-routes.ts";
+
 const DEBRIS_HEAT_STEPS = 64;
 const debrisGlowColors = Array.from({ length: DEBRIS_HEAT_STEPS + 1 }, (_, i) =>
   moltenGlowColorAtHeat(i / DEBRIS_HEAT_STEPS),
-);
-const hotDebrisColors = Array.from({ length: DEBRIS_HEAT_STEPS + 1 }, (_, i) =>
-  moltenColorAtHeat("#000000", i / DEBRIS_HEAT_STEPS),
 );
 
 /** Side of the local window a chunk's distance-to-Void transform runs on (chunk plus margin). */
@@ -181,11 +183,6 @@ export interface BuildingDoor {
   y: number;
 }
 
-export interface StreetBfsScratch {
-  parent: Int32Array;
-  queue: Int32Array;
-}
-
 export interface TronCycle {
   fromDoorIdx: number;
   toDoorIdx: number;
@@ -202,14 +199,6 @@ export const TRON_CYCLE_COLORS = [
   "#00c8ff",
   "#66f0ff",
 ] as const;
-
-function isCityStreet(world: VoidWorld, x: number, y: number): boolean {
-  const { w, h } = world.grid;
-  if (x < 0 || x >= w || y < 0 || y >= h) return false;
-  const i = y * w + x;
-  // Light cycles ride city streets only, never the countryside's dirt lanes
-  return world.material[i] === CellMaterial.STREET && world.streetTier[i] !== 8;
-}
 
 function findBuildingDoor(world: VoidWorld, b: MetroBuilding): { x: number; y: number } | null {
   const cx = b.x + Math.floor(b.w / 2);
@@ -237,88 +226,6 @@ export function collectBuildingDoors(world: VoidWorld): BuildingDoor[] {
     if (door) doors.push({ bldIdx: i, x: door.x, y: door.y });
   }
   return doors;
-}
-
-/** Finds a shortest orthogonal city-street path between two street cells anywhere on the map. */
-export function findStreetPath(
-  world: VoidWorld,
-  startX: number,
-  startY: number,
-  goalX: number,
-  goalY: number,
-  scratch?: StreetBfsScratch,
-): { x: number; y: number }[] | null {
-  if (!isCityStreet(world, startX, startY) || !isCityStreet(world, goalX, goalY)) {
-    return null;
-  }
-  const { w, h } = world.grid;
-  const startIdx = startY * w + startX;
-  const goalIdx = goalY * w + goalX;
-  if (startIdx === goalIdx) return null;
-
-  const n = w * h;
-  const parent = scratch && scratch.parent.length === n ? scratch.parent : new Int32Array(n);
-  const queue = scratch && scratch.queue.length === n ? scratch.queue : new Int32Array(n);
-  parent.fill(-1);
-
-  parent[startIdx] = -2;
-  queue[0] = startIdx;
-  let head = 0;
-  let tail = 1;
-  let found = false;
-
-  const { material, streetTier } = world;
-  while (head < tail) {
-    const cur = queue[head++];
-    if (cur === goalIdx) {
-      found = true;
-      break;
-    }
-    const cx = cur % w;
-    const cy = (cur - cx) / w;
-
-    if (cx + 1 < w) {
-      const ni = cur + 1;
-      if (parent[ni] === -1 && material[ni] === CellMaterial.STREET && streetTier[ni] !== 8) {
-        parent[ni] = cur;
-        queue[tail++] = ni;
-      }
-    }
-    if (cx - 1 >= 0) {
-      const ni = cur - 1;
-      if (parent[ni] === -1 && material[ni] === CellMaterial.STREET && streetTier[ni] !== 8) {
-        parent[ni] = cur;
-        queue[tail++] = ni;
-      }
-    }
-    if (cy + 1 < h) {
-      const ni = cur + w;
-      if (parent[ni] === -1 && material[ni] === CellMaterial.STREET && streetTier[ni] !== 8) {
-        parent[ni] = cur;
-        queue[tail++] = ni;
-      }
-    }
-    if (cy - 1 >= 0) {
-      const ni = cur - w;
-      if (parent[ni] === -1 && material[ni] === CellMaterial.STREET && streetTier[ni] !== 8) {
-        parent[ni] = cur;
-        queue[tail++] = ni;
-      }
-    }
-  }
-
-  if (!found) return null;
-
-  const path: { x: number; y: number }[] = [];
-  let cur = goalIdx;
-  while (cur >= 0) {
-    const x = cur % w;
-    const y = (cur - x) / w;
-    path.push({ x, y });
-    cur = parent[cur];
-  }
-  path.reverse();
-  return path.length >= 4 ? path : null;
 }
 
 export class VoidRenderer {
@@ -613,6 +520,26 @@ export class VoidRenderer {
     return null;
   }
 
+  private paintVehicleSpill(world: VoidWorld, x: number, y: number, inner: string, outer: string): void {
+    const c = this.sceneCtx;
+    const { w, h } = world.grid;
+    c.globalCompositeOperation = "lighter";
+    for (let oy = -2; oy <= 2; oy++) {
+      const py = y + oy;
+      if (py < 0 || py >= h) continue;
+      for (let ox = -2; ox <= 2; ox++) {
+        const reach = Math.abs(ox) + Math.abs(oy);
+        const px = x + ox;
+        if (reach > 3 || px < 0 || px >= w) continue;
+        const material = world.material[py * w + px];
+        if (material !== CellMaterial.STREET && material !== CellMaterial.RECLAIMED && material !== CellMaterial.PARK) continue;
+        c.fillStyle = reach <= 1 ? inner : outer;
+        c.fillRect(px, py, 1, 1);
+      }
+    }
+    c.globalCompositeOperation = "source-over";
+  }
+
   /** Initializes Tron light cycles traveling between random buildings across the map. */
   private syncCycles(world: VoidWorld): void {
     if (this.cyclesWorld === world && this.buildingDoors.length > 0) return;
@@ -758,8 +685,8 @@ export class VoidRenderer {
       const depth = -ch.z;
       const heatRaw = Math.min(1, Math.max(0, (depth - 3) / 17));
       const heat = heatRaw * heatRaw * (3 - 2 * heatRaw);
-      fill = moltenColorAtHeat(ch.color, heat);
-      edge = heat > 0.05 ? moltenColorAtHeat(ch.edgeColor, Math.min(1, heat + 0.18)) : ch.edgeColor;
+      fill = this.debrisColor(ch.color, Math.round(heat * DEBRIS_HEAT_STEPS));
+      edge = this.debrisColor(ch.edgeColor, Math.round(Math.min(1, heat > 0.05 ? heat + 0.18 : heat) * DEBRIS_HEAT_STEPS));
       if (depth > 4) {
         spread = Math.min(2, Math.floor((depth - 3) / 4));
       }
@@ -1042,17 +969,29 @@ export class VoidRenderer {
   }
 
   private readonly debrisPalettes = new Map<string, string[]>();
+  private debrisSky: readonly [number, number, number] = [1, 1, 1];
+
+  private updateDebrisLighting(preset: TimeOfDayPreset): void {
+    const light = looseMaterialLight(preset);
+    // Quantize only palette gains during blends. Every fragment shares the same lookup.
+    const next = [Math.round(light[0] * 48) / 48, Math.round(light[1] * 48) / 48,
+      Math.round(light[2] * 48) / 48] as const;
+    if (next[0] !== this.debrisSky[0] || next[1] !== this.debrisSky[1] || next[2] !== this.debrisSky[2]) {
+      this.debrisSky = next;
+      this.debrisPalettes.clear();
+    }
+  }
 
   private debrisColor(color: string, heatStep: number): string {
-    if (heatStep === 0) return color;
-    if (heatStep / DEBRIS_HEAT_STEPS >= 0.32) return hotDebrisColors[heatStep];
-    let palette = this.debrisPalettes.get(color);
+    const heat = heatStep / DEBRIS_HEAT_STEPS;
+    const base = heat >= 0.32 ? "#000000" : color;
+    let palette = this.debrisPalettes.get(base);
     if (!palette) {
       if (this.debrisPalettes.size >= 256) this.debrisPalettes.clear();
       palette = [];
-      this.debrisPalettes.set(color, palette);
+      this.debrisPalettes.set(base, palette);
     }
-    return palette[heatStep] ??= moltenColorAtHeat(color, heatStep / DEBRIS_HEAT_STEPS);
+    return palette[heatStep] ??= shadeLooseMaterial(moltenColorAtHeat(base, heat), heat, this.debrisSky);
   }
 
   /** Result of `nearestPortal` (reused to avoid an allocation per Void cell). */
@@ -1305,12 +1244,22 @@ export class VoidRenderer {
     } else if (mat === CellMaterial.STREET) {
       if (hp < 0.85 && (x + y) % 2 === 0) {
         color = "#252b38";
+      } else if (world.streetTier[idx] === PARKING_STREET_TIER) {
+        const row = y & 7;
+        const bay = x % 5;
+        const occupied = hash01(world.seed, 1208, Math.floor(x / 5), y >> 3) < 0.37;
+        if (row === 0 || (bay === 0 && row < 4)) color = "#78828a";
+        else if (occupied && bay >= 2 && bay <= 3 && row >= 1 && row <= 3) {
+          color = row === 1 ? "#7a96a6" : row === 2 ? "#476277" : "#a25743";
+        } else color = row >= 5 ? "#252d36" : "#303741";
       } else if (world.streetTier[idx] === 8) {
         color = cover === LandCover.BRIDGE
           ? (x + y) % 3 === 0 ? "#523b28" : "#876948"
           : valueNoise(x * 0.25, y * 0.25) > 0.55 ? "#a38152" : "#8c6d45";
       } else {
-        color = world.streetTier[idx] === 4 ? "#171c26" : "#131720";
+        const kerb = (x > 0 && world.buildingAt[idx - 1] >= 0) || (x + 1 < w && world.buildingAt[idx + 1] >= 0) ||
+          (y > 0 && world.buildingAt[idx - w] >= 0) || (y + 1 < h && world.buildingAt[idx + w] >= 0);
+        color = kerb ? "#343b43" : world.streetTier[idx] === 4 ? "#202732" : r < 0.07 ? "#1c222c" : "#171d26";
       }
     } else if (mat === CellMaterial.PARK) {
       const patch = valueNoise(x * 0.14 + (world.seed & 255), y * 0.14);
@@ -1436,7 +1385,7 @@ export class VoidRenderer {
     c.imageSmoothingEnabled = false;
 
     // 1. Draw cached metropolitan terrain layer + tiled 2.5D bump lighting & dynamic cast shadows
-    const dt = this.lastTimeMs > 0 ? Math.min(0.08, (nowMs - this.lastTimeMs) * 0.001) : 0.016;
+    const dt = this.lastTimeMs > 0 ? Math.max(0, Math.min(0.08, (nowMs - this.lastTimeMs) * 0.001)) : 0.016;
     this.lastTimeMs = nowMs;
     const animTime = this.reduceEffects ? 0 : nowMs * 0.001;
     const pulse = this.reduceEffects ? 0.75 : 0.65 + 0.35 * Math.sin(animTime * 5.2);
@@ -1453,6 +1402,7 @@ export class VoidRenderer {
       this.toPreset,
       this.reduceEffects ? 1 : this.presetBlendT,
     );
+    this.updateDebrisLighting(activePreset);
     const atlas = this.spriteCache.getBoardAtlas(world, this.buildingHeight, this.lastDirtyChunks);
     const scale = this.pixelScale();
     const viewBounds = {
@@ -1534,6 +1484,13 @@ export class VoidRenderer {
     this.syncCycles(world);
 
     const closeZoom = this.cam.s >= 2.0;
+    const glow = Math.min(1, activePreset.neonIntensity * 0.65 + 0.12);
+    const blueInner = `rgba(7, 125, 255, ${glow * 0.28})`;
+    const blueOuter = `rgba(7, 95, 245, ${glow * 0.12})`;
+    const amberInner = `rgba(255, 133, 30, ${glow * 0.35})`;
+    const amberOuter = `rgba(255, 112, 22, ${glow * 0.15})`;
+    const vehicleVisible = (x: number, y: number) => x >= viewBounds.x0 - 10 && x <= viewBounds.x1 + 10 &&
+      y >= viewBounds.y0 - 10 && y <= viewBounds.y1 + 10;
     const TRAIL_LEN = closeZoom ? pixels(4) : pixels(2);
     let reroutedThisFrame = 0;
     for (const cyc of this.cycles) {
@@ -1559,6 +1516,9 @@ export class VoidRenderer {
       }
 
       const headIdx = Math.min(cyc.path.length - 1, Math.floor(cyc.dist));
+      const head = cyc.path[headIdx];
+      if (!head || !vehicleVisible(head.x, head.y)) continue;
+      if (isCityStreet(world, head.x, head.y)) this.paintVehicleSpill(world, head.x, head.y, blueInner, blueOuter);
       const maxTrail = Math.min(TRAIL_LEN, headIdx);
 
       // Neon-blue light cycle head and fading ribbon trail
@@ -1580,6 +1540,27 @@ export class VoidRenderer {
           }
         }
       }
+    }
+
+    const selectedRoute = selectedTowerUid === null ? undefined : sim.deliveries.routeFor(selectedTowerUid);
+    if (selectedRoute?.path) {
+      rawScene.fillStyle = "rgba(255, 173, 73, 0.37)";
+      for (let i = 0; i < selectedRoute.path.length; i += 3) {
+        const p = selectedRoute.path[i];
+        if (vehicleVisible(p.x, p.y) && isCityStreet(world, p.x, p.y, true)) rawScene.fillRect(p.x, p.y, 1, 1);
+      }
+    }
+    for (const truck of sim.deliveries.routes) {
+      if (!truck.path || !vehicleVisible(truck.x, truck.y)) continue;
+      this.paintVehicleSpill(world, truck.x, truck.y, amberInner, amberOuter);
+      const tx = truck.x - truck.dx;
+      const ty = truck.y - truck.dy;
+      if (isCityStreet(world, tx, ty, true)) {
+        rawScene.fillStyle = "#d95824";
+        rawScene.fillRect(tx, ty, 1, 1);
+      }
+      rawScene.fillStyle = "#ffbc60";
+      rawScene.fillRect(truck.x, truck.y, 1, 1);
     }
 
     const { w, h } = world.grid;
@@ -1710,10 +1691,18 @@ export class VoidRenderer {
         c.beginPath();
         c.arc(p.x, p.y, coreR + 0.05, 0, Math.PI * 2);
         c.stroke();
-        c.strokeStyle = "rgba(195, 62, 190, 0.65)";
+        c.strokeStyle = `rgba(195, 62, 225, ${Math.min(0.86, 0.4 + activePreset.neonIntensity * 0.23)})`;
         c.lineWidth = 0.55;
         c.beginPath();
         c.arc(p.x, p.y, coreR + 0.65 + 0.08 * pulse, 0, Math.PI * 2);
+        c.stroke();
+
+        // The sun catches the near side of the lens. At night the violet rim lights itself.
+        const rimAngle = Math.atan2(activePreset.sunDir[1], activePreset.sunDir[0]);
+        c.strokeStyle = `rgba(192, 153, 255, ${0.12 + activePreset.sunIntensity * 0.92})`;
+        c.lineWidth = 0.85;
+        c.beginPath();
+        c.arc(p.x, p.y, coreR + 1.15, rimAngle - 0.88, rimAngle + 0.88);
         c.stroke();
 
         // The bright arc shows the remaining reservoir against a dim, complete track.
@@ -2274,7 +2263,15 @@ export class VoidRenderer {
       rawScene.fillStyle = "#ff7b18";
       rawScene.fillRect(t.x + Math.floor(t.w * 0.5), topY + t.h - 1, 1, 1);
       // Primary colored turret housing
-      if (t.type === "voidSiphon") {
+      if (t.type === "deliveryDepot") {
+        rawScene.fillStyle = top("#8f4a28");
+        rawScene.fillRect(t.x + 1, topY + 1, t.w - 2, t.h - 2);
+        rawScene.fillStyle = top("#f09946");
+        rawScene.fillRect(t.x + 1, topY + 1, t.w - 2, 1);
+        rawScene.fillRect(t.x + 1, topY + 3, t.w - 2, 1);
+        rawScene.fillStyle = front("#e5a868");
+        rawScene.fillRect(t.x + 2, topY + t.h - 1, t.w - 4, 1);
+      } else if (t.type === "voidSiphon") {
         const s = combat.siphonStates.get(t.uid);
         const fillFrac = s ? Math.min(1, s.stored / Math.max(1, s.maxStorage)) : 0;
         // Round glass reservoir
@@ -2901,6 +2898,10 @@ export class VoidRenderer {
         // Crisp 1-px dark underside edge giving the intact chunk 3D thickness
         rawScene.fillStyle = "rgba(0, 0, 0, 0.48)";
         rawScene.fillRect(bx, by + bh - 1, bw, 1);
+        if (detailedDebris && heatStep >= 10) {
+          rawScene.fillStyle = this.debrisColor(d.accentColor ?? d.color, Math.min(DEBRIS_HEAT_STEPS, heatStep + 5));
+          rawScene.fillRect(d.portalX >= d.x ? bx + bw - 1 : bx, by, 1, bh - 1);
+        }
         lastRawFill = "";
       } else {
         // Disintegrated individual 1x1 pixel accelerating into the inner whirlpool (spaghettification)

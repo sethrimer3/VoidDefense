@@ -348,6 +348,7 @@ export const ALL_TOWER_TYPES: readonly TowerTypeId[] = [
   "repairDepot",
   "infantryBarracks",
   "constructorHub",
+  "deliveryDepot",
   "shieldProjector",
   "wallSerpent",
   "gravityAnchor",

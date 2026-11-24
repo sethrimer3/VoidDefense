@@ -12,6 +12,7 @@ export const TICK_DT = 1 / TICK_HZ;
 /** One world pixel IS one simulation cell. Each former cell is subdivided 2×2.
  * Camera zoom changes display size only; there is no smaller terrain art grid. */
 export const PIXELS_PER_FORMER_CELL = 2;
+export const PARKING_STREET_TIER = 5;
 export const PIXEL_AREA = 1 / (PIXELS_PER_FORMER_CELL ** 2);
 /** Convert authored distances/speeds from the former grid into world pixels. */
 export const pixels = (formerCells: number): number => formerCells * PIXELS_PER_FORMER_CELL;

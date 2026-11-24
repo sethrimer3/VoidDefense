@@ -10,6 +10,8 @@ import {
   INFANTRY_SOBEL_NORMALS,
   LIGHTING_QUALITY_CAPS,
   LightingEngine,
+  looseMaterialLight,
+  shadeLooseMaterial,
   MAX_DYNAMIC_LIGHTS,
   normalizeVoidTimeOfDay,
   type PointLight,
@@ -874,4 +876,17 @@ test("Small camera pans preserve building emitter IDs and their glow in the shar
   engine.renderLighting(world, terrain, atlas, [], night);
   assert.ok(withSpill.some((pixel, idx) => pixel !== engine.terrainLightU32[idx]),
     "Emissive buildings spill light on the ground without budgeted point lights");
+});
+
+
+test("Debris reflects daylight and cool night tones while hot fragments remain emissive", () => {
+  const day = looseMaterialLight(TIME_OF_DAY_PRESETS.day);
+  const night = looseMaterialLight(TIME_OF_DAY_PRESETS.night);
+  const red = (color: string) => Number(color.match(/\d+/)?.[0]);
+  const distanceInBrightness = (heat: number) =>
+    red(shadeLooseMaterial("#e89853", heat, day)) - red(shadeLooseMaterial("#e89853", heat, night));
+  assert.ok(distanceInBrightness(0.2) > 90);
+  assert.ok(distanceInBrightness(0.96) > 0);
+  assert.ok(distanceInBrightness(0.96) < distanceInBrightness(0.2) / 2);
+  assert.ok(red(shadeLooseMaterial("#e89853", 0.96, night)) > red(shadeLooseMaterial("#e89853", 0.2, night)));
 });
