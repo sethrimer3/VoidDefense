@@ -265,7 +265,7 @@ export const TOWER_SOBEL_NORMALS = computeSpriteSobelNormals(
   [
     0.2, 0.5, 0.2,
     0.5, 1.0, 0.5,
-    0.1, 0.3, 0.1,
+    0.2, 0.5, 0.2,
   ],
   3,
   3,
@@ -648,11 +648,19 @@ export function collectSceneLights(
     for (let i = 0; i < bCount; i += bStride) {
       const b = world.buildings[i];
       if (b.archStyle === "homestead" || b.archStyle === "barn" || b.cells.length === 0) continue;
-      const sampleIdx = b.cells[0];
-      if (world.material[sampleIdx] === CellMaterial.VOID || world.hp[sampleIdx] <= 0) continue;
-      if (world.columnFloors && world.columnFloors[sampleIdx] <= 0) continue;
+      let intactCells = 0;
+      for (let c = 0; c < b.cells.length; c++) {
+        const cIdx = b.cells[c];
+        if (world.material[cIdx] !== CellMaterial.VOID && world.hp[cIdx] > 0 && (!world.columnFloors || world.columnFloors[cIdx] > 0)) {
+          intactCells++;
+        }
+      }
+      if (intactCells === 0) continue;
       const bx = b.x + b.w * 0.5;
       const by = b.y + b.h - 0.5;
+      const bxFloor = Math.min(w - 1, Math.max(0, Math.floor(bx)));
+      const byFloor = Math.min(h - 1, Math.max(0, Math.floor(by)));
+      if (world.material[byFloor * w + bxFloor] === CellMaterial.VOID) continue;
       const radius = b.isSkyscraper ? 16 : 13;
       if (!inView(bx, by, radius)) continue;
       const bElev = elevationOf(b, buildingHeight);

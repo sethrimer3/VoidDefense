@@ -25,6 +25,8 @@ try {
       const { emptyTechWallet } = await import('/src/void/tech/wallet.ts');
       const { CellMaterial } = await import('/src/void/model.ts');
       const sim = new VoidSim('tutorialBreach', 'buildAndWatch', emptyTechWallet());
+      sim.startBattle();
+      sim.stepTicks(60);
       const canvas = document.createElement('canvas');
       canvas.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;z-index:99999';
       document.body.append(canvas);

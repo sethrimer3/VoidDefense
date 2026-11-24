@@ -4,7 +4,12 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { chromium } from '@playwright/test';
 const out = 'test-results/void-farms';
 await mkdir(out, { recursive: true });
-const browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_EXECUTABLE || '/usr/bin/chromium', headless: true });
+const executablePath = process.env.PLAYWRIGHT_EXECUTABLE;
+const channel = process.env.PLAYWRIGHT_CHANNEL ?? (executablePath ? undefined : (process.platform === 'win32' ? 'chrome' : undefined));
+const browser = await chromium.launch({
+  headless: true,
+  ...(executablePath ? { executablePath } : channel ? { channel } : { executablePath: '/usr/bin/chromium' }),
+});
 try {
   for (const [name,width,height] of [['desktop',1280,800],['phone',390,844]]) {
     const page = await browser.newPage({ viewport: { width,height } });

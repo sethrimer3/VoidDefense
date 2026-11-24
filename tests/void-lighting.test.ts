@@ -1,14 +1,22 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { BuildingSpriteCache, hexToElevAbgr } from "../src/void/elevation.ts";
+import { ARCH_PALETTES, BuildingSpriteCache, hexToElevAbgr } from "../src/void/elevation.ts";
 import {
+  AMBIENT_COOL_FILL,
   collectSceneLights,
+  computeSpriteSobelNormals,
   computeTerrainNormalAt,
+  INFANTRY_SOBEL_NORMALS,
+  LIGHTING_QUALITY_CAPS,
   LightingEngine,
   MAX_DYNAMIC_LIGHTS,
   type PointLight,
+  SUN_DIRECTION,
+  SUN_WARM_COLOR,
   terrainReliefAt,
+  TOWER_SOBEL_NORMALS,
   traceLightOcclusion,
+  VOID_AMBIENT_FILL,
 } from "../src/void/lighting.ts";
 import { CellMaterial, LandCover } from "../src/void/model.ts";
 import {
@@ -605,4 +613,56 @@ test("Dirty terrain normals update across a chunk boundary", () => {
   engine.syncChunks(world, "full", world.grid.dirtyChunks);
   assert.ok(engine.terrainNx[neighbor] < -40);
   assert.equal(engine.terrainNx[world.grid.index(12, 40)], 0);
+});
+
+test("8. Tron neon blue building lights, Tron neon orange tower lights, Sobel sprite normals, directional sun, and quality caps", () => {
+  const sim = new VoidSim("tutorialBreach", "underSiege", emptyTechWallet(), true);
+  // Place a Matter Cannon tower in the city
+  let placed = false;
+  for (let y = 30; y < 120 && !placed; y += 4) {
+    for (let x = 30; x < 120 && !placed; x += 4) {
+      if (sim.placeTower("matterCannon", x, y)) placed = true;
+    }
+  }
+  assert.ok(placed, "Expected to place a Resistance tower");
+
+  // Urban building palettes use Tron neon blue accents (b > r)
+  for (const style of ["glassTower", "artDecoSetback", "cyberArcology", "foundryComplex", "solarTerrace", "civicDome"] as const) {
+    for (const pal of ARCH_PALETTES[style]) {
+      const r = parseInt(pal.neonEdge.slice(1, 3), 16);
+      const b = parseInt(pal.neonEdge.slice(5, 7), 16);
+      assert.ok(b > r + 100, `Expected Tron neon blue accent on ${style}, got ${pal.neonEdge}`);
+    }
+  }
+
+  // Sobel sprite normal generators produce unit-length 3D normals with opposing bevel tilts
+  assert.equal(TOWER_SOBEL_NORMALS.nx.length, 9);
+  assert.ok(TOWER_SOBEL_NORMALS.nx[3] < -0.3 && TOWER_SOBEL_NORMALS.nx[5] > 0.3, "Tower west/east Sobel bevels tilt outward");
+  assert.ok(TOWER_SOBEL_NORMALS.nz[4] > 0.95, "Tower roof center faces upward");
+  assert.equal(INFANTRY_SOBEL_NORMALS.nx.length, 6);
+  assert.ok(INFANTRY_SOBEL_NORMALS.ny[4] > 0.25, "Infantry torso front faces south");
+  const customSobel = computeSpriteSobelNormals([0, 1, 0, 1, 2, 1, 0, 1, 0], 3, 3);
+  assert.ok(Math.abs(Math.hypot(customSobel.nx[0], customSobel.ny[0], customSobel.nz[0]) - 1) < 1e-5);
+
+  // Directional sun & cool ambient fill constants
+  assert.ok(Math.abs(Math.hypot(SUN_DIRECTION.x, SUN_DIRECTION.y, SUN_DIRECTION.z) - 1) < 1e-6);
+  assert.ok(SUN_WARM_COLOR[0] > SUN_WARM_COLOR[2], "Sun light is warm (R > B)");
+  assert.ok(AMBIENT_COOL_FILL[2] > AMBIENT_COOL_FILL[0], "Ambient fill is cool (B > R)");
+  assert.ok(VOID_AMBIENT_FILL[2] > VOID_AMBIENT_FILL[1], "Void ambient fill is violet-tinted");
+
+  // Scene lights include Tron neon blue building lights (b > r * 3) and Tron neon orange tower lights (r > b * 3)
+  const highLights = collectSceneLights(sim, 1.2, false, "full", "high");
+  const hasBlueBuildingLight = highLights.some((l) => l.b > 0.9 && l.g > 0.6 && l.r < 0.2 && l.castsShadows);
+  const hasOrangeTowerLight = highLights.some((l) => l.r > 0.9 && l.g > 0.4 && l.b < 0.25 && l.castsShadows);
+  assert.ok(hasBlueBuildingLight, "Expected Tron neon blue shadow-casting building lights");
+  assert.ok(hasOrangeTowerLight, "Expected Tron neon orange shadow-casting tower lights");
+
+  // Low quality caps total lights and shadow-casting lights, fading excess lights to unshadowed glow
+  const lowLights = collectSceneLights(sim, 1.2, false, "full", "low");
+  assert.ok(lowLights.length <= LIGHTING_QUALITY_CAPS.low.maxLights);
+  const lowShadowCasters = lowLights.filter((l) => l.castsShadows).length;
+  assert.ok(
+    lowShadowCasters <= LIGHTING_QUALITY_CAPS.low.maxShadowLights,
+    `Expected <= ${LIGHTING_QUALITY_CAPS.low.maxShadowLights} shadow casters on low quality, got ${lowShadowCasters}`,
+  );
 });
