@@ -357,7 +357,7 @@ export class VoidRenderer {
   buildingHeight: BuildingHeightMode = "full";
   /** Per-building elevated roof & south-facade sprite cache. */
   readonly spriteCache = new BuildingSpriteCache();
-  /** Tiled 2.5D bump-mapped surface lighting, dynamic building shadow casting, and bloom engine. */
+  /** Tiled 2.5D bump-mapped surface lighting, surface glows and dynamic cast shadows. */
   readonly lighting = new LightingEngine();
   private lastDirtyChunks = new Uint8Array(0);
   private placementPulses: { x: number; y: number; ageMs: number }[] = [];
@@ -719,6 +719,14 @@ export class VoidRenderer {
       if (depth > 4) {
         spread = Math.min(2, Math.floor((depth - 3) / 4));
       }
+    }
+
+    if (ch.z >= 0) {
+      const x = px + (cw - 1) * 0.5;
+      const y = Math.round(ch.y) + (chH - 1) * 0.5;
+      const surfaceZ = ch.z + Math.min(3, chH);
+      fill = this.lighting.surfacePalette(x, y, surfaceZ, 0, 0, 1)(fill);
+      edge = this.lighting.surfacePalette(x, y, surfaceZ, -0.55, -0.55, 0.63)(edge);
     }
 
     const halfW = (cw - 1) * 0.5;
@@ -1370,6 +1378,7 @@ export class VoidRenderer {
     const pulse = this.reduceEffects ? 0.75 : 0.65 + 0.35 * Math.sin(animTime * 5.2);
     const atlas = this.spriteCache.getBoardAtlas(world, this.buildingHeight, this.lastDirtyChunks);
     const sceneLights = collectSceneLights(sim, animTime, this.reduceEffects, this.buildingHeight);
+    this.lighting.syncMovingCasters(combat.agents, this.reduceEffects ? [] : physics.fallingChunks, sim.tick);
     this.lighting.renderLighting(world, this.terrainU32, this.spriteCache, sceneLights);
     lap("lighting");
 
@@ -2071,17 +2080,20 @@ export class VoidRenderer {
     const drawTower = (t: (typeof combat.towers)[number]): void => {
       const spec = TOWER_SPECS[t.type];
       const topY = t.y - tElev;
+      const centerX = t.x + (t.w - 1) * 0.5;
+      const top = this.lighting.surfacePalette(centerX, t.y + (t.h - 1) * 0.5, tElev + 0.8, 0, 0, 1, t.uid);
+      const front = this.lighting.surfacePalette(centerX, t.y + t.h - 1, tElev * 0.5, 0, 0.94, 0.34, t.uid);
       // Armored shadow & south base facade (2 px tall)
-      rawScene.fillStyle = "#0d1118";
+      rawScene.fillStyle = front("#0d1118");
       rawScene.fillRect(t.x, topY, t.w, t.h + tElev);
       if (tElev > 0) {
-        rawScene.fillStyle = "#18202c";
+        rawScene.fillStyle = front("#18202c");
         rawScene.fillRect(t.x, t.y + t.h - tElev, t.w, tElev);
       }
-      rawScene.fillStyle = "#242c3a";
+      rawScene.fillStyle = top("#242c3a");
       rawScene.fillRect(t.x, topY, t.w, t.h);
       // Corner rivets / mounting brackets
-      rawScene.fillStyle = "#5c6b82";
+      rawScene.fillStyle = top("#5c6b82");
       rawScene.fillRect(t.x, topY, 1, 1);
       rawScene.fillRect(t.x + t.w - 1, topY, 1, 1);
       rawScene.fillRect(t.x, topY + t.h - 1, 1, 1);
@@ -2091,14 +2103,14 @@ export class VoidRenderer {
         const s = combat.siphonStates.get(t.uid);
         const fillFrac = s ? Math.min(1, s.stored / Math.max(1, s.maxStorage)) : 0;
         // Round glass reservoir
-        c.fillStyle = "#1a1426";
+        c.fillStyle = top("#1a1426");
         c.beginPath();
         c.arc(t.x + t.w * 0.5, topY + t.h * 0.5, t.w * 0.42, 0, Math.PI * 2);
         c.fill();
-        c.fillStyle = s?.phase === "venting" ? "#ffb052" : "#9a6bff";
+        c.fillStyle = top(s?.phase === "venting" ? "#ffb052" : "#9a6bff");
         const fillH = Math.max(0.4, (t.h * 0.72) * fillFrac);
         c.fillRect(t.x + t.w * 0.2, topY + t.h * 0.86 - fillH, t.w * 0.6, fillH);
-        c.strokeStyle = "#d8c4ff";
+        c.strokeStyle = top("#d8c4ff");
         c.lineWidth = 0.25;
         c.beginPath();
         c.arc(t.x + t.w * 0.5, topY + t.h * 0.5, t.w * 0.42, 0, Math.PI * 2);
@@ -2111,14 +2123,14 @@ export class VoidRenderer {
         }
       } else if (t.type === "boundaryPrism") {
         // Tall triangular faceted crystal
-        c.fillStyle = "#5ce1e6";
+        c.fillStyle = top("#5ce1e6");
         c.beginPath();
         c.moveTo(t.x + t.w * 0.5, topY - 0.6);
         c.lineTo(t.x + t.w - 0.2, topY + t.h - 0.2);
         c.lineTo(t.x + 0.2, topY + t.h - 0.2);
         c.closePath();
         c.fill();
-        c.fillStyle = "#d4fcff";
+        c.fillStyle = top("#d4fcff");
         c.beginPath();
         c.moveTo(t.x + t.w * 0.5, topY - 0.6);
         c.lineTo(t.x + t.w * 0.5, topY + t.h - 0.2);
@@ -2127,18 +2139,18 @@ export class VoidRenderer {
         c.fill();
       } else if (t.type === "chronoCannon") {
         // Golden clock-ring and reverse barrel
-        c.fillStyle = "#3a2e18";
+        c.fillStyle = top("#3a2e18");
         c.fillRect(t.x + 0.35, topY + 0.35, t.w - 0.7, t.h - 0.7);
-        c.strokeStyle = "#f2c14e";
+        c.strokeStyle = top("#f2c14e");
         c.lineWidth = 0.35;
         c.beginPath();
         c.arc(t.x + t.w * 0.5, topY + t.h * 0.5, t.w * 0.38, 0, Math.PI * 2);
         c.stroke();
-        c.fillStyle = "#fff3d1";
+        c.fillStyle = top("#fff3d1");
         c.fillRect(t.x + t.w * 0.5 - 0.4, topY + t.h * 0.5 - 0.4, 0.8, 0.8);
         // Counter-rotating clock hand
         const handAng = -(sim.tick * 0.12);
-        c.strokeStyle = "#ffe599";
+        c.strokeStyle = top("#ffe599");
         c.lineWidth = 0.3;
         c.beginPath();
         c.moveTo(t.x + t.w * 0.5, topY + t.h * 0.5);
@@ -2148,7 +2160,7 @@ export class VoidRenderer {
         );
         c.stroke();
       } else if (t.type === "echoMine") {
-        c.fillStyle = "#2b2530";
+        c.fillStyle = top("#2b2530");
         c.fillRect(t.x + 0.35, topY + 0.35, t.w - 0.7, t.h - 0.7);
         const pulse = this.reduceEffects ? 0.65 : 0.45 + 0.55 * Math.abs(Math.sin(sim.tick * 0.12 + t.uid));
         c.fillStyle = `rgba(255, 136, 48, ${pulse.toFixed(2)})`;
@@ -2159,29 +2171,29 @@ export class VoidRenderer {
         c.arc(t.x + t.w * 0.5, topY + t.h * 0.5, t.w * 0.55, 0, Math.PI * 2);
         c.stroke();
       } else if (t.type === "countervoidHeart") {
-        c.fillStyle = "#1f1528";
+        c.fillStyle = top("#1f1528");
         c.fillRect(t.x + 0.2, topY + 0.2, t.w - 0.4, t.h - 0.4);
-        c.strokeStyle = "#ff9a34";
+        c.strokeStyle = top("#ff9a34");
         c.lineWidth = 0.35;
         c.strokeRect(t.x + 0.2, topY + 0.2, t.w - 0.4, t.h - 0.4);
         const beat = this.reduceEffects ? 0.8 : 0.65 + 0.35 * Math.sin(sim.tick * 0.16);
         c.fillStyle = beat > 0.75 ? "#ffe39c" : "#ff8c24";
         c.fillRect(t.x + t.w * 0.5 - 0.75, topY + t.h * 0.5 - 0.75, 1.5, 1.5);
       } else if (t.type === "lanternBearer") {
-        c.fillStyle = "#4d3822";
+        c.fillStyle = top("#4d3822");
         c.fillRect(t.x + 0.35, topY + 0.35, t.w - 0.7, t.h - 0.7);
-        c.fillStyle = "#ffd875";
+        c.fillStyle = top("#ffd875");
         c.fillRect(t.x + t.w * 0.5 - 0.4, topY + t.h * 0.5 - 0.5, 0.8, 1.0);
       } else if (t.type === "seamwalker") {
-        c.fillStyle = "#3c324a";
+        c.fillStyle = top("#3c324a");
         c.fillRect(t.x + 0.35, topY + 0.35, t.w - 0.7, t.h - 0.7);
-        c.fillStyle = "#f29d38";
+        c.fillStyle = top("#f29d38");
         c.fillRect(t.x + t.w * 0.5 - 0.45, topY + t.h * 0.5 - 0.3, 0.9, 0.6);
       } else {
-        c.fillStyle = spec.color;
+        c.fillStyle = top(spec.color);
         c.fillRect(t.x + 0.35, topY + 0.35, t.w - 0.7, t.h - 0.7);
         // Glowing energy core / barrel mount
-        c.fillStyle = "#fff3d1";
+        c.fillStyle = top("#fff3d1");
         c.fillRect(t.x + t.w * 0.5 - 0.45, topY + t.h * 0.5 - 0.45, 0.9, 0.9);
       }
 
@@ -2210,40 +2222,43 @@ export class VoidRenderer {
     const drawAgent = (a: (typeof combat.agents)[number]): void => {
       const ax = Math.floor(a.x);
       const ay = Math.floor(a.y);
+      const elevation = a.layer === "air" ? 2.3 : a.kind === "heavyMech" ? 2.4 : 1.4;
+      const head = this.lighting.surfacePalette(ax, ay, elevation, 0, 0, 1);
+      const body = this.lighting.surfacePalette(ax, ay, elevation - 0.7, 0, 0.85, 0.52);
       if (a.kind === "rifleman") {
         rawScene.fillStyle = "rgba(10, 12, 16, 0.65)";
         rawScene.fillRect(ax, ay + 1, 1, 1);
-        rawScene.fillStyle = "#ff8b33";
+        rawScene.fillStyle = body("#ff8b33");
         rawScene.fillRect(ax, ay, 1, 1);
-        rawScene.fillStyle = "#ffe4b5";
+        rawScene.fillStyle = head("#ffe4b5");
         rawScene.fillRect(ax, ay - 1, 1, 1);
       } else if (a.kind === "rocketeer") {
         rawScene.fillStyle = "rgba(10, 12, 16, 0.65)";
         rawScene.fillRect(ax, ay + 1, 1, 1);
-        rawScene.fillStyle = "#ff4f38";
+        rawScene.fillStyle = body("#ff4f38");
         rawScene.fillRect(ax, ay, 1, 1);
-        rawScene.fillStyle = "#ffd15c";
+        rawScene.fillStyle = head("#ffd15c");
         rawScene.fillRect(ax, ay - 1, 1, 1);
       } else if (a.kind === "engineer") {
         rawScene.fillStyle = "rgba(10, 12, 16, 0.65)";
         rawScene.fillRect(ax, ay + 1, 1, 1);
-        rawScene.fillStyle = a.carryingMatter > 0 ? "#48e5ff" : "#ffd15c";
+        rawScene.fillStyle = head(a.carryingMatter > 0 ? "#48e5ff" : "#ffd15c");
         rawScene.fillRect(ax, ay - 1, 1, 1);
-        rawScene.fillStyle = "#d9822b";
+        rawScene.fillStyle = body("#d9822b");
         rawScene.fillRect(ax, ay, 1, 1);
       } else if (a.kind === "heavyMech") {
-        rawScene.fillStyle = "#161b24";
+        rawScene.fillStyle = body("#161b24");
         rawScene.fillRect(ax - 1, ay, 2, 2);
-        rawScene.fillStyle = "#ff9e30";
+        rawScene.fillStyle = head("#ff9e30");
         rawScene.fillRect(ax - 1, ay - 1, 2, 2);
-        rawScene.fillStyle = "#7afcff";
+        rawScene.fillStyle = head("#7afcff");
         rawScene.fillRect(ax, ay - 1, 1, 1);
       } else if (a.kind === "wallSerpent") {
-        c.fillStyle = "#0c1420";
+        c.fillStyle = body("#0c1420");
         c.fillRect(a.x - 1.1, a.y - 1.1, 2.2, 2.2);
-        c.fillStyle = "#48e5ff";
+        c.fillStyle = body("#48e5ff");
         c.fillRect(a.x - 0.9, a.y - 0.9, 1.8, 1.8);
-        c.fillStyle = "#ffd166";
+        c.fillStyle = body("#ffd166");
         c.fillRect(a.x - 0.4, a.y - 0.4, 0.8, 0.8);
       } else if (a.kind === "lanternBearer") {
         // Warm safe-ground footprint halo + tall carried lantern
@@ -2255,14 +2270,14 @@ export class VoidRenderer {
         c.stroke();
         c.fillStyle = "rgba(255, 200, 92, 0.10)";
         c.fill();
-        c.fillStyle = "#593e22";
+        c.fillStyle = body("#593e22");
         c.fillRect(ax, ay, 1, 1);
-        c.fillStyle = "#ffe599";
+        c.fillStyle = head("#ffe599");
         c.fillRect(ax, ay - 1, 1, 1);
       } else if (a.kind === "seamwalker") {
-        c.fillStyle = "#3e2f52";
+        c.fillStyle = body("#3e2f52");
         c.fillRect(ax, ay, 1, 1);
-        c.fillStyle = "#f29d38";
+        c.fillStyle = head("#f29d38");
         c.fillRect(ax, ay - 1, 1, 1);
       } else if (a.kind === "jetpack") {
         // Ground shadow if over land, airborne silhouette offset upward
@@ -2272,9 +2287,9 @@ export class VoidRenderer {
           c.fillRect(a.x - 0.5, a.y + 0.4, 1.0, 0.4);
         }
         const flyY = a.y - 1.6;
-        c.fillStyle = "#6ad8ff";
+        c.fillStyle = head("#6ad8ff");
         c.fillRect(a.x - 0.6, flyY - 0.5, 1.2, 1.0);
-        c.fillStyle = "#ff9a3c";
+        c.fillStyle = body("#ff9a3c");
         c.fillRect(a.x - 0.65, flyY + 0.45, 0.45, 0.55);
         c.fillRect(a.x + 0.2, flyY + 0.45, 0.45, 0.55);
       }
@@ -2837,19 +2852,9 @@ export class VoidRenderer {
     output.drawImage(this.sceneLayer, 0, 0);
     output.setTransform(1, 0, 0, 1, 0, 0);
 
-    // 15a. Screen-space additive bloom halos (explosions, Void portals, frontier surges, shells, lasers, fires, towers, beacons)
-    this.lighting.drawBloom(
-      output,
-      this.cam.x + shakeX,
-      this.cam.y + shakeY,
-      scale,
-      world,
-      sceneLights,
-      this.reduceEffects,
-    );
-    lap("bloom");
+    lap("composite");
 
-    // 15b. Pooled whole-pixel placement pulses, income popups & outcome flash
+    // Pooled whole-pixel placement pulses, income popups & outcome flash
     if (!this.reduceEffects) {
       const dtMs = dt * 1000;
       for (let i = this.placementPulses.length - 1; i >= 0; i--) {

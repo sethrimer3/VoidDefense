@@ -1,31 +1,5 @@
-/** 2.5D bump-mapped surface lighting, dynamic building shadow-casting, and screen-space
- * atmospheric bloom for Void Defense.
- *
- * Architecture:
- * - Incremental Normal & Elevation G-Buffer (`1 cell = 1 world pixel`):
- *   - Ground terrain (`terrainNx`, `terrainNy`, `terrainNz`, `terrainElev`) is derived from a
- *     procedural height relief field (`terrainReliefAt`: street curbs, defensive walls, craggy
- *     salvage rubble, domed forest canopy, orchard tree crowns, wheat furrows, river ripples)
- *     and updated only for dirtied 16x16 terrain chunks.
- *   - Elevated 2.5D buildings (`BuildingSpriteCache` in `elevation.ts`) provide per-pixel 3D
- *     elevation `z` (`0..15` px), specular weight, and 3D bump normals for south facades
- *     (window panes, vertical pilasters, horizontal floor spandrels, side borders), exposed
- *     interior cutaways (projecting concrete floor slabs, recessed rooms), and roofs (parapet
- *     bevels, setback terraces, solar panels, civic domes, pitched farmhouse gables).
- * - Tiled Deferred 2.5D Lighting & Height-Field Shadow Raycasting:
- *   - Dynamic lights (explosions/shockwaves, Void portals, active Void frontier surges and
- *     lightning bolts, parabolic artillery/rocket shells, laser impacts, farm fires, Countervoid,
- *     Lantern Bearers, towers, Void Nodes, and cosmic organisms) are binned into 16x16 tiles
- *     using 64-bit tile bitmasks (`tileLightsLo`, `tileLightsHi`).
- *   - Only active tiles are shaded, visiting each pixel at most once per frame with zero GPU
- *     canvas readbacks (`getImageData` is never called).
- *   - Each light traces a 2.5D ray through `groundElev` so tall buildings block light from
- *     explosions, the Void, and other sources, casting directional dynamic shadows away from
- *     the light source across streets and shorter neighboring buildings.
- * - Screen-Space Additive Bloom (`drawBloom`):
- *   - Composites pre-cached 64x64 radial glow stamps in `lighter` mode over the scaled display
- *     canvas while keeping `sceneLayer` strictly unfiltered 1:1 pixel art. */
-
+/** World-pixel lighting with cached terrain and building normals, transient caster volumes,
+ * and point lights binned into the same 16x16 tiles as the terrain cache. */
 import { CHUNK_SIZE, pixels } from "./config.ts";
 import {
   type BuildingHeightMode,
@@ -36,7 +10,7 @@ import {
   TOWER_ELEVATION_PX,
 } from "./elevation.ts";
 import { hash, hash01 } from "./grid.ts";
-import { CellMaterial, LandCover } from "./model.ts";
+import { type Agent, CellMaterial, type FallingChunk, LandCover } from "./model.ts";
 import { valueNoise } from "./portal-noise.ts";
 import type { VoidSim } from "./sim.ts";
 import { TOWER_SPECS } from "./towers.ts";
@@ -63,10 +37,6 @@ export type PointLight = {
   castsShadows: boolean;
   /** Dynamic shadow darkening behind occluding buildings (`0..0.65`). */
   shadowStrength: number;
-  /** Screen-space bloom intensity (`0` for none). */
-  bloom: number;
-  /** Optional bloom radius multiplier relative to light radius (default `1.0`). */
-  bloomScale?: number;
   /** Priority score for capping to `MAX_DYNAMIC_LIGHTS`. */
   priority?: number;
 };
@@ -74,7 +44,28 @@ export type PointLight = {
 type CompiledLight = PointLight & {
   radiusSq: number;
   invRadius: number;
+  sourceBuilding: number;
+  sourceTower: number;
+  shadowCache?: ShadowCache;
 };
+
+type ShadowCache = {
+  x: number;
+  y: number;
+  z: number;
+  x0: number;
+  y0: number;
+  w: number;
+  h: number;
+  revision: number;
+  visibility: Uint8Array;
+};
+
+function unlitColor(color: string): string { return color; }
+
+function litChannel(base: number, diffuse: number, specular: number, shadow: number): number {
+  return Math.min(255, Math.max(0, Math.round(base * (1 - shadow + diffuse * 1.15) + diffuse * 18 + specular)));
+}
 
 const IS_LITTLE_ENDIAN = new Uint8Array(new Uint32Array([0x01020304]).buffer)[0] === 0x04;
 
@@ -86,13 +77,6 @@ function packRgba(r: number, g: number, b: number, a = 255): number {
   return IS_LITTLE_ENDIAN
     ? (((a & 0xff) << 24) | ((b & 0xff) << 16) | ((g & 0xff) << 8) | (r & 0xff)) >>> 0
     : (((r & 0xff) << 24) | ((g & 0xff) << 16) | ((b & 0xff) << 8) | (a & 0xff)) >>> 0;
-}
-
-function unpackRgb(abgr: number): [number, number, number] {
-  if (IS_LITTLE_ENDIAN) {
-    return [abgr & 0xff, (abgr >>> 8) & 0xff, (abgr >>> 16) & 0xff];
-  }
-  return [(abgr >>> 24) & 0xff, (abgr >>> 16) & 0xff, (abgr >>> 8) & 0xff];
 }
 
 const hexRgbCache = new Map<string, [number, number, number]>();
@@ -210,9 +194,8 @@ export function computeTerrainNormalAt(
   return [-sx * inv, -sy * inv, inv];
 }
 
-/** Fast 2.5D height-field raycast from target `(wx, wy, wz)` toward light `(lx, ly, lz)`.
- * Returns visibility in `[0, 1]` (`0` = fully occluded by an intervening building/wall,
- * `0.28` = grazing rooftop penumbra, `1` = clear line of sight). */
+/** Marches grid boundaries from a receiver toward the light so a one-pixel caster cannot
+ * fall between ray samples. Height clearance and footprint coverage soften grazing edges. */
 export function traceLightOcclusion(
   world: VoidWorld,
   groundElev: Uint8Array,
@@ -223,37 +206,64 @@ export function traceLightOcclusion(
   lx: number,
   ly: number,
   lz: number,
+  casterTop?: Float32Array,
+  casterBottom?: Float32Array,
+  sourceBuilding = -1,
+  sourceTower = -1,
+  selfTower = -1,
 ): number {
   const dx = lx - wx;
   const dy = ly - wy;
-  const dist2 = dx * dx + dy * dy;
-  if (dist2 < 2.25) return 1;
-  const { w, h } = world.grid;
-  const { buildingAt } = world;
   const dz = lz - wz;
-  let vis = 1;
+  let cx = Math.floor(wx + 0.5);
+  let cy = Math.floor(wy + 0.5);
+  const endX = Math.floor(lx + 0.5);
+  const endY = Math.floor(ly + 0.5);
+  const sx = dx < 0 ? -1 : 1;
+  const sy = dy < 0 ? -1 : 1;
+  const stepX = 1 / Math.abs(dx);
+  const stepY = 1 / Math.abs(dy);
+  let nextX = dx === 0 ? Infinity : (cx + sx * 0.5 - wx) / dx;
+  let nextY = dy === 0 ? Infinity : (cy + sy * 0.5 - wy) / dy;
+  const { w, h } = world.grid;
+  const { buildingAt, towerAt } = world;
+  const raySpan = Math.max(Math.abs(dx), Math.abs(dy));
+  let visibility = 1;
+  while (cx !== endX || cy !== endY) {
+    const entry = Math.min(nextX, nextY);
+    if (entry >= 1) break;
+    if (nextX === entry) { cx += sx; nextX += stepX; }
+    if (nextY === entry) { cy += sy; nextY += stepY; }
+    if (cx === endX && cy === endY) break;
+    if (cx < 0 || cx >= w || cy < 0 || cy >= h) break;
 
-  // 4-step height-field march along the segment from target to light
-  const steps = dist2 > 144 ? 5 : 4;
-  const invSteps = 1 / (steps + 1);
-  for (let s = 1; s <= steps; s++) {
-    const t = s * invSteps;
-    const cx = (wx + dx * t + 0.5) | 0;
-    const cy = (wy + dy * t + 0.5) | 0;
-    if (cx < 0 || cx >= w || cy < 0 || cy >= h) continue;
-    const cIdx = cy * w + cx;
-    const occElev = groundElev[cIdx];
-    if (occElev <= wz) continue;
-    if (selfBldId >= 0 && buildingAt[cIdx] === selfBldId) continue;
-    const rayZ = wz + dz * t;
-    if (occElev > rayZ + 0.35) {
-      if (occElev > rayZ + 1.45) {
-        return 0;
+    const idx = cy * w + cx;
+    const staticTop = groundElev[idx];
+    const movingTop = casterTop?.[idx] ?? 0;
+    if (staticTop === 0 && movingTop === 0) continue;
+    const exit = Math.min(nextX, nextY, 1);
+    const rayZ = wz + dz * ((entry + exit) * 0.5);
+    const softness = 0.24 + (1 - entry) * 0.45;
+    const coverage = Math.min(1, (exit - entry) * raySpan * 2.5);
+    let block = 0;
+    if (staticTop > rayZ - softness) {
+      const building = buildingAt[idx];
+      const tower = towerAt[idx];
+      if ((building < 0 || (building !== selfBldId && building !== sourceBuilding)) &&
+          (tower < 0 || (tower !== sourceTower && tower !== selfTower))) {
+        block = (staticTop - rayZ + softness) / (2 * softness);
       }
-      vis = 0.28;
     }
+    if (movingTop > 0 && movingTop > rayZ - softness) {
+      const bottom = casterBottom![idx];
+      const topCover = (movingTop - rayZ + softness) / (2 * softness);
+      const bottomCover = bottom <= 0 ? 1 : (rayZ - bottom + softness) / (2 * softness);
+      block = Math.max(block, Math.min(topCover, bottomCover));
+    }
+    visibility = Math.min(visibility, 1 - Math.min(1, block) * coverage);
+    if (visibility < 0.01) return 0;
   }
-  return vis;
+  return visibility;
 }
 
 /** Gathers and prioritizes all active dynamic light sources in the scene (explosions, Void portals,
@@ -272,7 +282,7 @@ export function collectSceneLights(
     buildingHeight === "flat" ? 0 : buildingHeight === "low" ? 1 : TOWER_ELEVATION_PX;
   const lights: PointLight[] = [];
 
-  // 1. Explosions & expanding impact/strike shockwaves (highest priority, strong shadows & bloom)
+  // 1. Explosions & expanding impact/strike shockwaves (highest priority, strong shadows and soft surface light)
   for (let i = 0; i < physics.shockwaves.length; i++) {
     const s = physics.shockwaves[i];
     const t = Math.min(1, Math.max(0, s.life / Math.max(0.01, s.maxLife)));
@@ -285,7 +295,7 @@ export function collectSceneLights(
     lights.push({
       x: s.x,
       y: s.y,
-      z: 5.5 + s.maxRadius * 0.35 * (1 - t * 0.4),
+      z: 1.5 + Math.min(1.2, s.maxRadius * 0.06) * (1 - t * 0.4),
       r: (cr * 0.65 + sr * 0.35) * boost,
       g: (cg * 0.65 + sg * 0.35) * boost,
       b: (cb * 0.65 + sb * 0.35) * boost,
@@ -293,8 +303,6 @@ export function collectSceneLights(
       specular: 0.95,
       castsShadows: true,
       shadowStrength: 0.52 * flash,
-      bloom: 0.95 * flash,
-      bloomScale: 1.35,
       priority: 100 + radius,
     });
   }
@@ -313,8 +321,6 @@ export function collectSceneLights(
       specular: 0.85,
       castsShadows: true,
       shadowStrength: 0.42,
-      bloom: 0.85,
-      bloomScale: 1.25,
       priority: 96,
     });
   }
@@ -331,7 +337,6 @@ export function collectSceneLights(
       specular: 0.6,
       castsShadows: true,
       shadowStrength: 0.25,
-      bloom: 0.45,
       priority: 72,
     });
   }
@@ -352,8 +357,6 @@ export function collectSceneLights(
       specular: 0.8,
       castsShadows: true,
       shadowStrength: 0.38 * fade,
-      bloom: 0.8 * fade,
-      bloomScale: 1.25,
       priority: 94,
     });
   }
@@ -375,8 +378,6 @@ export function collectSceneLights(
         specular: 0.72,
         castsShadows: true,
         shadowStrength: 0.36,
-        bloom: 0.62 * pulse,
-        bloomScale: 1.35,
         priority: 92,
       });
     } else {
@@ -391,7 +392,6 @@ export function collectSceneLights(
         specular: 0.4,
         castsShadows: false,
         shadowStrength: 0,
-        bloom: 0.28 * pulse,
         priority: 60,
       });
     }
@@ -412,7 +412,6 @@ export function collectSceneLights(
       specular: 0.9,
       castsShadows: true,
       shadowStrength: 0.32,
-      bloom: 0.68,
       priority: 88,
     });
     lights.push({
@@ -426,7 +425,6 @@ export function collectSceneLights(
       specular: 0.5,
       castsShadows: false,
       shadowStrength: 0,
-      bloom: 0.32,
       priority: 64,
     });
   }
@@ -449,7 +447,6 @@ export function collectSceneLights(
       specular: 0.8,
       castsShadows: true,
       shadowStrength: 0.26,
-      bloom: 0.52,
       priority: 84,
     });
   }
@@ -478,7 +475,6 @@ export function collectSceneLights(
         specular: 0.55,
         castsShadows: true,
         shadowStrength: 0.34,
-        bloom: 0.52 * flick,
         priority: 82,
       });
     }
@@ -505,7 +501,6 @@ export function collectSceneLights(
         specular: 0.65,
         castsShadows: true,
         shadowStrength: 0.28,
-        bloom: 0.55 * beat,
         priority: 78,
       });
     } else if (t.type === "shieldProjector") {
@@ -522,7 +517,6 @@ export function collectSceneLights(
           specular: 0.75,
           castsShadows: true,
           shadowStrength: 0.22,
-          bloom: 0.45,
           priority: 74,
         });
       }
@@ -540,7 +534,6 @@ export function collectSceneLights(
         specular: 0.7,
         castsShadows: true,
         shadowStrength: 0.22,
-        bloom: venting ? 0.55 : 0.38,
         priority: 73,
       });
     } else if (t.type === "boundaryPrism") {
@@ -555,7 +548,6 @@ export function collectSceneLights(
         specular: 0.85,
         castsShadows: true,
         shadowStrength: 0.2,
-        bloom: 0.44,
         priority: 72,
       });
     } else if (t.type === "chronoCannon") {
@@ -570,7 +562,6 @@ export function collectSceneLights(
         specular: 0.7,
         castsShadows: true,
         shadowStrength: 0.2,
-        bloom: 0.38,
         priority: 71,
       });
     } else if (justFired) {
@@ -587,7 +578,6 @@ export function collectSceneLights(
         specular: 0.75,
         castsShadows: true,
         shadowStrength: 0.25,
-        bloom: 0.5,
         priority: 79,
       });
     }
@@ -608,7 +598,6 @@ export function collectSceneLights(
         specular: 0.65,
         castsShadows: true,
         shadowStrength: 0.24,
-        bloom: 0.42,
         priority: 76,
       });
     } else if (a.kind === "heavyMech" || a.kind === "wallSerpent") {
@@ -623,7 +612,6 @@ export function collectSceneLights(
         specular: 0.6,
         castsShadows: false,
         shadowStrength: 0,
-        bloom: 0.24,
         priority: 52,
       });
     }
@@ -643,7 +631,6 @@ export function collectSceneLights(
       specular: 0.75,
       castsShadows: true,
       shadowStrength: 0.26,
-      bloom: 0.5,
       priority: 75,
     });
   }
@@ -669,7 +656,6 @@ export function collectSceneLights(
         specular: 0.65,
         castsShadows: isBoss,
         shadowStrength: isBoss ? 0.24 : 0,
-        bloom: isBoss ? 0.46 : 0.28,
         priority: isBoss ? 74 : 56,
       });
     }
@@ -697,7 +683,6 @@ export function collectSceneLights(
           specular: 0.85,
           castsShadows: true,
           shadowStrength: 0.34 * flick,
-          bloom: 0.55 * flick,
           priority: 80,
         });
       }
@@ -723,7 +708,6 @@ export function collectSceneLights(
         specular: 0.55,
         castsShadows: true,
         shadowStrength: 0.25 * intensity,
-        bloom: 0.24 * intensity,
         priority: 65 + intensity * 10,
       });
     }
@@ -746,7 +730,6 @@ export function collectSceneLights(
         specular: 0.5,
         castsShadows: false,
         shadowStrength: 0,
-        bloom: 0.26,
         priority: 58,
       });
     }
@@ -764,8 +747,7 @@ export class LightingEngine {
   private mode: BuildingHeightMode = "full";
   private w = 0;
   private h = 0;
-  private tilesW = 0;
-  private tilesH = 0;
+  private chunksW = 0;
 
   /** Terrain normal and elevation buffers (`w * h`). */
   terrainNx = new Int8Array(0);
@@ -774,8 +756,24 @@ export class LightingEngine {
   terrainElev = new Uint8Array(0);
   /** Ground-footprint height-field (`w * h`) for 2.5D shadow raycasting. */
   groundElev = new Uint8Array(0);
-  /** Building-to-building static NW sun shadow factor (`0..100` on screen coordinates `w * h`). */
-  buildingSunShadow = new Uint8Array(0);
+  private terrainRelief = new Float32Array(0);
+  private roofSunShadow = new Uint8Array(0);
+  private casterTop = new Float32Array(0);
+  private casterBottom = new Float32Array(0);
+  private casterCells: number[] = [];
+  private oldCasterCells: number[] = [];
+  private readonly oldCasterTop: number[] = [];
+  private readonly oldCasterBottom: number[] = [];
+  private previousCasterCell = new Uint8Array(0);
+  private compiledLights: CompiledLight[] = [];
+  private readonly shadowCaches: (ShadowCache | undefined)[] = [];
+  private shadowRevision = 0;
+  private geometryRevision = 0;
+  private shadowTileRevision = new Float64Array(0);
+  private casterTick = -1;
+  private casterGeometryRevision = -1;
+  private includeFallingCasters = false;
+  private readonly surfaceLight = new Float64Array(7);
 
   /** Offscreen 1:1 world-pixel lighting overlay buffers & canvases. */
   terrainLightU32 = new Uint32Array(0);
@@ -812,9 +810,6 @@ export class LightingEngine {
     hasBuilding: false,
   };
 
-  /** Cached 64x64 radial bloom gradient stamps keyed by quantized RGB. */
-  private readonly bloomStamps = new Map<string, HTMLCanvasElement>();
-
   /** Ensures buffers match `world` dimensions and incrementally updates terrain normals &
    * ground occluder elevations for dirtied 16x16 chunks. */
   syncChunks(
@@ -835,18 +830,24 @@ export class LightingEngine {
       this.mode = mode;
       this.w = w;
       this.h = h;
-      this.tilesW = chunksW;
-      this.tilesH = chunksH;
+      this.chunksW = chunksW;
       this.terrainNx = new Int8Array(count);
       this.terrainNy = new Int8Array(count);
       this.terrainNz = new Int8Array(count);
       this.terrainElev = new Uint8Array(count);
       this.groundElev = new Uint8Array(count);
-      this.buildingSunShadow = new Uint8Array(count);
+      this.terrainRelief = new Float32Array(count);
+      this.roofSunShadow = new Uint8Array(count).fill(255);
+      this.casterTop = new Float32Array(count);
+      this.casterBottom = new Float32Array(count);
+      this.casterCells.length = 0;
+      this.oldCasterCells.length = 0;
+      this.previousCasterCell = new Uint8Array(count);
       this.terrainLightU32 = new Uint32Array(count);
       this.buildingLightU32 = new Uint32Array(count);
 
       const tileCount = chunksW * chunksH;
+      this.shadowTileRevision = new Float64Array(tileCount);
       this.tileLightsLo = new Uint32Array(tileCount);
       this.tileLightsHi = new Uint32Array(tileCount);
       this.tileVisited = new Uint8Array(tileCount);
@@ -866,14 +867,26 @@ export class LightingEngine {
       rebuildAll = true;
     }
 
+    this.geometryRevision = ++this.shadowRevision;
+    if (rebuildAll || !dirtyChunkFlags) {
+      this.shadowTileRevision.fill(this.shadowRevision);
+      this.bakeChunkNormalsAndElev(world, mode, 0, 0, w, h);
+      return;
+    }
     for (let cy = 0; cy < chunksH; cy++) {
       for (let cx = 0; cx < chunksW; cx++) {
-        if (!rebuildAll && dirtyChunkFlags && !dirtyChunkFlags[cy * chunksW + cx]) continue;
+        if (!dirtyChunkFlags[cy * chunksW + cx]) continue;
         const x0 = cx * CHUNK_SIZE;
         const y0 = cy * CHUNK_SIZE;
         const x1 = Math.min(w, x0 + CHUNK_SIZE);
         const y1 = Math.min(h, y0 + CHUNK_SIZE);
         this.bakeChunkNormalsAndElev(world, mode, x0, y0, x1, y1);
+        // Atlas cutaways depend on nearby columns and may project one tile above the footprint.
+        const left = Math.max(0, cx - 1);
+        const right = Math.min(chunksW, cx + 2);
+        for (let row = Math.max(0, cy - 1); row <= Math.min(chunksH - 1, cy + 1); row++) {
+          this.shadowTileRevision.fill(this.shadowRevision, row * chunksW + left, row * chunksW + right);
+        }
       }
     }
   }
@@ -886,23 +899,41 @@ export class LightingEngine {
     x1: number,
     y1: number,
   ): void {
-    const { w } = world.grid;
+    const { w, h } = world.grid;
     const { material, landCover, buildingAt, buildings, columnFloors, towerAt } = world;
     const effMode = mode === "flat" ? "full" : mode;
-    const tElev = mode === "flat" ? 0 : mode === "low" ? 1 : TOWER_ELEVATION_PX;
-
+    const tElev = mode === "flat" ? 1 : mode === "low" ? 2 : TOWER_ELEVATION_PX + 1;
+    // A changed column can project a roof upward or a sun shadow down and right.
+    const sunX0 = Math.max(0, x0 - 2);
+    const sunX1 = Math.min(w, x1 + 10);
+    for (let y = Math.max(0, y0 - MAX_ELEVATION_PX - 2); y < Math.min(h, y1 + 10); y++) {
+      this.roofSunShadow.fill(255, y * w + sunX0, y * w + sunX1);
+    }
+    const relief = this.terrainRelief;
+    for (let y = Math.max(0, y0 - 3); y < Math.min(h, y1 + 3); y++) {
+      for (let x = Math.max(0, x0 - 3); x < Math.min(w, x1 + 3); x++) {
+        relief[y * w + x] = terrainReliefAt(world, x, y);
+      }
+    }
+    x0 = Math.max(0, x0 - 2);
+    y0 = Math.max(0, y0 - 2);
+    x1 = Math.min(w, x1 + 2);
+    y1 = Math.min(h, y1 + 2);
     for (let y = y0; y < y1; y++) {
       const row = y * w;
       for (let x = x0; x < x1; x++) {
         const idx = row + x;
-        const [nx, ny, nz] = computeTerrainNormalAt(world, x, y);
-        this.terrainNx[idx] = Math.max(-127, Math.min(127, Math.round(nx * 127)));
-        this.terrainNy[idx] = Math.max(-127, Math.min(127, Math.round(ny * 127)));
-        this.terrainNz[idx] = Math.max(-127, Math.min(127, Math.round(nz * 127)));
+        const dx = (relief[row + Math.min(w - 1, x + 1)] - relief[row + Math.max(0, x - 1)]) * 1.45;
+        const dy = (relief[Math.min(h - 1, y + 1) * w + x] - relief[Math.max(0, y - 1) * w + x]) * 1.45;
+        const nz = 127 / Math.sqrt(1 + dx * dx + dy * dy);
+        this.terrainNx[idx] = Math.round(-dx * nz);
+        this.terrainNy[idx] = Math.round(-dy * nz);
+        this.terrainNz[idx] = Math.round(nz);
 
         const mat = material[idx];
         const cover = landCover[idx];
         const tGround =
+          mat === CellMaterial.VOID || mat === CellMaterial.EMPTY ? 0 :
           mat === CellMaterial.WALL || mat === CellMaterial.BARRIER || cover === LandCover.SILO
             ? 2
             : cover === LandCover.FOREST || cover === LandCover.ORCHARD
@@ -920,13 +951,148 @@ export class LightingEngine {
           } else {
             this.groundElev[idx] = 0;
           }
-        } else if (towerAt && towerAt[idx] >= 0) {
-          this.groundElev[idx] = tElev;
         } else {
           this.groundElev[idx] = tGround;
         }
+        if (towerAt[idx] >= 0) this.groundElev[idx] = Math.max(this.groundElev[idx], tElev);
       }
     }
+  }
+
+  private roofShadowAt(world: VoidWorld, index: number, x: number, y: number, z: number, self: number): number {
+    const cached = this.roofSunShadow[index];
+    if (cached !== 255) return cached * 0.01;
+    let shadow = 0;
+    const limit = Math.min(8, x, y);
+    for (let step = 1; step <= limit; step++) {
+      const caster = (y - step) * this.w + x - step;
+      const building = world.buildingAt[caster];
+      if (building < 0 || building === self) continue;
+      const reach = Math.ceil((this.groundElev[caster] - z) * 0.65);
+      if (step <= reach) shadow = Math.max(shadow, 0.36 - (step - 1) * (0.22 / reach));
+    }
+    const rounded = Math.round(shadow * 100);
+    this.roofSunShadow[index] = rounded;
+    return rounded * 0.01;
+  }
+
+  /** Refresh only cells occupied by moving casters, independent of the static terrain cache. */
+  syncMovingCasters(agents: readonly Agent[], chunks: readonly FallingChunk[], tick?: number): void {
+    const includeFalling = chunks.length > 0;
+    if (tick !== undefined && this.casterTick === tick &&
+        this.casterGeometryRevision === this.geometryRevision && this.includeFallingCasters === includeFalling) return;
+    this.casterTick = tick ?? -1;
+    this.includeFallingCasters = includeFalling;
+    this.casterGeometryRevision = this.geometryRevision;
+
+    const oldCells = this.casterCells;
+    this.casterCells = this.oldCasterCells;
+    this.casterCells.length = 0;
+    this.oldCasterCells = oldCells;
+    for (let i = 0; i < oldCells.length; i++) {
+      const idx = oldCells[i];
+      this.oldCasterTop[i] = this.casterTop[idx];
+      this.oldCasterBottom[i] = this.casterBottom[idx];
+      this.previousCasterCell[idx] = 1;
+      this.casterTop[idx] = 0;
+    }
+    for (const agent of agents) {
+      if (agent.hp <= 0) continue;
+      const x = Math.floor(agent.x);
+      const y = Math.floor(agent.y);
+      if (agent.kind === "heavyMech" || agent.kind === "wallSerpent") {
+        this.stampCaster(x - 1, y, 2, 2, 0, agent.kind === "heavyMech" ? 2.8 : 1.5);
+      } else if (agent.layer === "air") {
+        this.stampCaster(x, y, 1, 1, 1.2, 2.5);
+      } else {
+        this.stampCaster(x, y, 1, 1, 0, 1.8);
+      }
+    }
+    for (const chunk of chunks) {
+      if (!chunk.active || chunk.z < 0) continue;
+      this.stampCaster(Math.round(chunk.x), Math.round(chunk.y), chunk.w, chunk.h,
+        chunk.z, chunk.z + Math.min(3, chunk.h));
+    }
+
+    this.shadowRevision++;
+    for (const idx of this.casterCells) {
+      if (!this.previousCasterCell[idx]) this.invalidateCasterCell(idx);
+    }
+    for (let i = 0; i < oldCells.length; i++) {
+      const idx = oldCells[i];
+      this.previousCasterCell[idx] = 0;
+      if (this.casterTop[idx] !== this.oldCasterTop[i] || this.casterBottom[idx] !== this.oldCasterBottom[i]) {
+        this.invalidateCasterCell(idx);
+      }
+    }
+  }
+
+  private invalidateCasterCell(idx: number): void {
+    const x = Math.floor((idx % this.w) / CHUNK_SIZE);
+    const y = Math.floor(idx / (this.w * CHUNK_SIZE));
+    this.shadowTileRevision[y * this.chunksW + x] = this.shadowRevision;
+  }
+
+  private stampCaster(x: number, y: number, width: number, height: number, bottom: number, top: number): void {
+    const x1 = Math.min(this.w, x + width);
+    const y1 = Math.min(this.h, y + height);
+    for (let cy = Math.max(0, y); cy < y1; cy++) {
+      for (let cx = Math.max(0, x); cx < x1; cx++) {
+        const idx = cy * this.w + cx;
+        if (this.casterTop[idx] === 0) {
+          this.casterCells.push(idx);
+          this.casterBottom[idx] = bottom;
+        } else {
+          this.casterBottom[idx] = Math.min(this.casterBottom[idx], bottom);
+        }
+        this.casterTop[idx] = Math.max(this.casterTop[idx], top);
+      }
+    }
+  }
+
+  /** Samples the light on an actor's procedural surface normal once, then shades its palette. */
+  surfacePalette(x: number, y: number, z: number, nx: number, ny: number, nz: number, tower = -1):
+    (color: string) => string {
+    const world = this.world;
+    if (!world) return unlitColor;
+    if (!this.illuminate(world, this.compiledLights, x, y, z, nx, ny, nz, 0.3, -1, tower, 0)) return unlitColor;
+    const [r, g, b, sr, sg, sb, shadow] = this.surfaceLight;
+    return (color) => {
+      const [red, green, blue] = parseColorRgb01(color);
+      return `rgb(${litChannel(red * 255, r, sr, shadow)} ${litChannel(green * 255, g, sg, shadow)} ${litChannel(blue * 255, b, sb, shadow)})`;
+    };
+  }
+
+  // Cache only on the native raster. Actor samples use arbitrary heights and normals.
+  private shadowCacheFor(slot: number, light: PointLight, tx0: number, ty0: number, tx1: number, ty1: number): ShadowCache {
+    let revision = 0;
+    for (let ty = ty0; ty <= ty1; ty++) {
+      const row = ty * this.chunksW;
+      for (let tx = tx0; tx <= tx1; tx++) revision = Math.max(revision, this.shadowTileRevision[row + tx]);
+    }
+    const x0 = tx0 * CHUNK_SIZE;
+    const y0 = ty0 * CHUNK_SIZE;
+    const w = (tx1 - tx0 + 1) * CHUNK_SIZE;
+    const h = (ty1 - ty0 + 1) * CHUNK_SIZE;
+    let cache = this.shadowCaches[slot];
+    const length = w * h;
+    if (!cache || cache.visibility.length < length) {
+      cache = { x: 0, y: 0, z: 0, x0: 0, y0: 0, w: 0, h: 0, revision: -1, visibility: new Uint8Array(length) };
+      this.shadowCaches[slot] = cache;
+    }
+    if (cache.revision !== revision || cache.x !== light.x || cache.y !== light.y || cache.z !== light.z ||
+        cache.x0 !== x0 || cache.y0 !== y0 || cache.w !== w || cache.h !== h) {
+      cache.x = light.x;
+      cache.y = light.y;
+      cache.z = light.z;
+      cache.x0 = x0;
+      cache.y0 = y0;
+      cache.w = w;
+      cache.h = h;
+      cache.revision = revision;
+      cache.visibility.fill(255, 0, length);
+    }
+    return cache;
   }
 
   /** Evaluates tiled 2.5D bump-mapped lighting and dynamic building cast shadows across
@@ -945,7 +1111,6 @@ export class LightingEngine {
       terrainNy,
       terrainNz,
       terrainElev,
-      groundElev,
       tileLightsLo,
       tileLightsHi,
       tileVisited,
@@ -988,25 +1153,34 @@ export class LightingEngine {
 
     this.dirtyBounds = { x0: w, y0: h, x1: 0, y1: 0, hasTerrain: false, hasBuilding: false };
     const lightCount = Math.min(MAX_DYNAMIC_LIGHTS, lights.length);
+    const compiled = this.compiledLights;
+    compiled.length = lightCount;
     if (lightCount === 0) return;
 
     // 2. Compile lights and bin them into 16x16 tiles via 64-bit bitmasks
-    const compiled: CompiledLight[] = new Array(lightCount);
     curActiveTiles.length = 0;
 
     for (let k = 0; k < lightCount; k++) {
       const l = lights[k];
       const R = l.radius;
-      compiled[k] = {
-        ...l,
-        radiusSq: R * R,
-        invRadius: 1 / Math.max(1, R),
-      };
+      const x = Math.floor(l.x + 0.5);
+      const y = Math.floor(l.y + 0.5);
+      const src = world.grid.inBounds(x, y) ? y * w + x : -1;
       const tx0 = Math.max(0, Math.floor((l.x - R) / CHUNK_SIZE));
       const tx1 = Math.min(chunksW - 1, Math.floor((l.x + R) / CHUNK_SIZE));
       // Raised roofs at ground y project upward to sy = y - MAX_ELEVATION_PX
       const ty0 = Math.max(0, Math.floor((l.y - R - MAX_ELEVATION_PX) / CHUNK_SIZE));
       const ty1 = Math.min(chunksH - 1, Math.floor((l.y + R) / CHUNK_SIZE));
+      const shadowCache = l.castsShadows && tx0 <= tx1 && ty0 <= ty1 ?
+        this.shadowCacheFor(k, l, tx0, ty0, tx1, ty1) : undefined;
+      compiled[k] = {
+        ...l,
+        radiusSq: R * R,
+        invRadius: 1 / Math.max(1, R),
+        sourceBuilding: world.buildingAt[src] ?? -1,
+        sourceTower: world.towerAt[src] ?? -1,
+        shadowCache,
+      };
       const isHi = k >= 32;
       const bit = 1 << (k & 31);
 
@@ -1033,7 +1207,7 @@ export class LightingEngine {
       atlasSpec,
       atlasBldId,
     } = spriteCache;
-    const { material, buildingAt } = world;
+    const { material } = world;
     const localLights: CompiledLight[] = [];
 
     let minX = w;
@@ -1108,110 +1282,23 @@ export class LightingEngine {
 
           // Reconstruct 3D world ground position from oblique screen coordinate (sy = wy - wz)
           const wx = sx;
-          const wy = Math.min(h - 1, sy + wz);
+          const wy = isBuilding ? Math.min(h - 1, sy + wz) : sy;
 
-          let totR = 0;
-          let totG = 0;
-          let totB = 0;
-          let specR = 0;
-          let specG = 0;
-          let specB = 0;
-          let shadowDarken = 0;
+          const shadowDarken = isBuilding && wz > 0 ?
+            this.roofShadowAt(world, i, wx, wy, wz, selfBldId) : 0;
 
-          // Check building-to-building static directional NW sun shadow on shorter buildings
-          if (isBuilding && wz > 0) {
-            for (let step = 1; step <= 8; step++) {
-              const sNx = wx - step;
-              const sNy = wy - step;
-              if (sNx < 0 || sNy < 0) break;
-              const sIdx = sNy * w + sNx;
-              const casterBld = buildingAt[sIdx];
-              if (casterBld >= 0 && casterBld !== selfBldId) {
-                const casterElev = groundElev[sIdx];
-                const deltaE = casterElev - wz;
-                const reach = Math.ceil(deltaE * 0.65);
-                if (deltaE > 0 && step <= reach) {
-                  shadowDarken = Math.max(
-                    shadowDarken,
-                    0.36 - (step - 1) * (0.22 / Math.max(1, reach)),
-                  );
-                }
-              }
-            }
-          }
+          if (!this.illuminate(world, localLights, wx, wy, wz, nx, ny, nz, specWeight,
+            selfBldId, -1, shadowDarken, sy)) continue;
 
-          for (let m = 0; m < nLocal; m++) {
-            const L = localLights[m];
-            const dx = L.x - wx;
-            const dy = L.y - wy;
-            const d2 = dx * dx + dy * dy;
-            if (d2 >= L.radiusSq) continue;
-
-            const dist2D = Math.sqrt(d2);
-            const linAtten = 1 - dist2D * L.invRadius;
-            const atten = linAtten * linAtten;
-
-            let vis = 1;
-            if (L.castsShadows && dist2D > 1.5) {
-              vis = traceLightOcclusion(world, groundElev, wx, wy, wz, selfBldId, L.x, L.y, L.z);
-              if (vis < 1 && L.shadowStrength > 0) {
-                shadowDarken = Math.min(
-                  0.62,
-                  shadowDarken + (1 - vis) * linAtten * L.shadowStrength,
-                );
-              }
-              if (vis <= 0.01) continue;
-            }
-
-            const dz = L.z - wz;
-            const inv3D = 1 / (Math.sqrt(d2 + dz * dz) + 0.001);
-            const lx = dx * inv3D;
-            const ly = dy * inv3D;
-            const lz = dz * inv3D;
-
-            const ndotl = nx * lx + ny * ly + nz * lz;
-            if (ndotl <= 0) {
-              // Subtle bump self-shadowing on facets angled away from a strong nearby light
-              if (isBuilding && ndotl < -0.15) {
-                shadowDarken = Math.min(0.55, shadowDarken + -ndotl * atten * vis * 0.16);
-              }
-              continue;
-            }
-
-            const diff = ndotl * atten * vis;
-            totR += L.r * diff;
-            totG += L.g * diff;
-            totB += L.b * diff;
-
-            if (specWeight > 0.05 && L.specular > 0) {
-              // Halfway vector between light ray and oblique viewer (0, 0.35, 0.94)
-              const hx = lx;
-              const hy = ly + 0.35;
-              const hz = lz + 0.94;
-              const hInv = 1 / Math.sqrt(hx * hx + hy * hy + hz * hz);
-              const ndoth = Math.max(0, (nx * hx + ny * hy + nz * hz) * hInv);
-              if (ndoth > 0.5) {
-                const s2 = ndoth * ndoth;
-                const s4 = s2 * s2;
-                const kSpec = s4 * s4 * atten * vis * specWeight * L.specular * 135;
-                specR += L.r * kSpec;
-                specG += L.g * kSpec;
-                specB += L.b * kSpec;
-              }
-            }
-          }
-
-          if (totR + totG + totB < 0.015 && specR + specG + specB < 0.5 && shadowDarken < 0.015) {
-            continue;
-          }
-
-          const [br, bg, bb] = unpackRgb(baseAbgr);
-          const shadeMul = Math.max(0.28, 1 - shadowDarken);
-          // Warm ambient bounce + direct colored diffuse + specular glint
-          const r = Math.min(255, Math.max(0, Math.round(br * (shadeMul + totR * 1.15) + totR * 18 + specR)));
-          const g = Math.min(255, Math.max(0, Math.round(bg * (shadeMul + totG * 1.15) + totG * 18 + specG)));
-          const b = Math.min(255, Math.max(0, Math.round(bb * (shadeMul + totB * 1.15) + totB * 18 + specB)));
-          const packed = packRgba(r, g, b, 255);
+          const br = IS_LITTLE_ENDIAN ? baseAbgr & 255 : baseAbgr >>> 24;
+          const bg = (baseAbgr >>> (IS_LITTLE_ENDIAN ? 8 : 16)) & 255;
+          const bb = (baseAbgr >>> (IS_LITTLE_ENDIAN ? 16 : 8)) & 255;
+          const light = this.surfaceLight;
+          const packed = packRgba(
+            litChannel(br, light[0], light[3], light[6]),
+            litChannel(bg, light[1], light[4], light[6]),
+            litChannel(bb, light[2], light[5], light[6]),
+          );
 
           if (isBuilding) {
             buildingLightU32[i] = packed;
@@ -1237,102 +1324,84 @@ export class LightingEngine {
     }
   }
 
-  private getBloomStamp(r01: number, g01: number, b01: number): HTMLCanvasElement | null {
-    if (typeof document === "undefined" || typeof document.createElement !== "function") {
-      return null;
-    }
-    const peak = Math.max(0.01, r01, g01, b01);
-    const qr = Math.min(15, Math.round((r01 / peak) * 15));
-    const qg = Math.min(15, Math.round((g01 / peak) * 15));
-    const qb = Math.min(15, Math.round((b01 / peak) * 15));
-    const key = `${qr},${qg},${qb}`;
-    let stamp = this.bloomStamps.get(key);
-    if (!stamp) {
-      stamp = document.createElement("canvas");
-      stamp.width = 64;
-      stamp.height = 64;
-      const c = stamp.getContext("2d")!;
-      const r255 = Math.round((qr / 15) * 255);
-      const g255 = Math.round((qg / 15) * 255);
-      const b255 = Math.round((qb / 15) * 255);
-      const grad = c.createRadialGradient(32, 32, 0, 32, 32, 32);
-      grad.addColorStop(0, `rgba(${r255},${g255},${b255},0.92)`);
-      grad.addColorStop(0.28, `rgba(${r255},${g255},${b255},0.36)`);
-      grad.addColorStop(0.65, `rgba(${r255},${g255},${b255},0.10)`);
-      grad.addColorStop(1, `rgba(${r255},${g255},${b255},0)`);
-      c.fillStyle = grad;
-      c.fillRect(0, 0, 64, 64);
-      this.bloomStamps.set(key, stamp);
-    }
-    return stamp;
-  }
+  private illuminate(
+    world: VoidWorld, lights: readonly CompiledLight[],
+    wx: number, wy: number, wz: number, nx: number, ny: number, nz: number,
+    specWeight: number, selfBuilding: number, selfTower: number, shadow: number, screenY = -1,
+  ): boolean {
+    let red = 0;
+    let green = 0;
+    let blue = 0;
+    let specRed = 0;
+    let specGreen = 0;
+    let specBlue = 0;
+    for (let m = 0; m < lights.length; m++) {
+      const light = lights[m];
+      const dx = light.x - wx;
+      const dy = light.y - wy;
+      const d2 = dx * dx + dy * dy;
+      if (d2 >= light.radiusSq) continue;
 
-  /** Composites soft additive screen-space bloom halos over the scaled display canvas
-   * for explosions, portals, frontier surges, shells, lasers, fires, towers, and skyscraper beacons. */
-  drawBloom(
-    ctx: CanvasRenderingContext2D,
-    camX: number,
-    camY: number,
-    scale: number,
-    world: VoidWorld,
-    lights: readonly PointLight[],
-    reduceEffects: boolean,
-  ): void {
-    const cw = ctx.canvas.width;
-    const ch = ctx.canvas.height;
-    ctx.save();
-    ctx.globalCompositeOperation = "lighter";
-    ctx.imageSmoothingEnabled = true;
-
-    // 1. Dynamic light source blooms (explosions, portals, lasers, shells, fires, towers, nodes)
-    for (let i = 0; i < lights.length; i++) {
-      const l = lights[i];
-      if (l.bloom <= 0.02) continue;
-      if (reduceEffects && l.bloom < 0.35) continue;
-
-      const stamp = this.getBloomStamp(l.r, l.g, l.b);
-      if (!stamp) continue;
-
-      // Project 3D light position `(l.x, l.y, l.z)` to oblique screen coordinates
-      const wyScreen = l.y - l.z * 0.45;
-      const sx = camX + l.x * scale;
-      const sy = camY + wyScreen * scale;
-      const rad = l.radius * (l.bloomScale ?? 0.85) * scale;
-      if (sx + rad < 0 || sx - rad > cw || sy + rad < 0 || sy - rad > ch) continue;
-
-      const alpha = Math.min(0.88, l.bloom * (reduceEffects ? 0.45 : 0.72));
-      ctx.globalAlpha = alpha;
-      ctx.drawImage(stamp, sx - rad, sy - rad, rad * 2, rad * 2);
-
-      // High-energy explosions and portals get a tight hot core bloom
-      if (!reduceEffects && l.bloom >= 0.65) {
-        const coreRad = rad * 0.42;
-        ctx.globalAlpha = Math.min(0.75, l.bloom * 0.55);
-        ctx.drawImage(stamp, sx - coreRad, sy - coreRad, coreRad * 2, coreRad * 2);
+      const dz = light.z - wz;
+      const falloff = 1 - Math.sqrt(d2) * light.invRadius;
+      const attenuation = falloff * falloff / (1 + dz * dz * 0.035);
+      let visible = 1;
+      if (light.castsShadows && d2 > 1) {
+        const cache = screenY < 0 ? undefined : light.shadowCache;
+        const index = cache ? (screenY - cache.y0) * cache.w + wx - cache.x0 : 0;
+        const cached = cache ? cache.visibility[index] : 255;
+        if (cached < 255) {
+          visible = cached / 254;
+        } else {
+          visible = traceLightOcclusion(world, this.groundElev, wx, wy, wz, selfBuilding,
+            light.x, light.y, light.z, this.casterTop, this.casterBottom,
+            light.sourceBuilding, light.sourceTower, selfTower);
+          if (cache) {
+            const packed = Math.round(visible * 254);
+            cache.visibility[index] = packed;
+            visible = packed / 254;
+          }
+        }
+        shadow = Math.min(0.62, shadow + (1 - visible) * falloff * light.shadowStrength);
+        if (visible === 0) continue;
       }
-    }
 
-    // 2. Subtle warm rooftop beacon & neon lobby bloom on intact developed city skyscrapers
-    if (!reduceEffects) {
-      const amberStamp = this.getBloomStamp(1.0, 0.72, 0.32);
-      if (amberStamp) {
-        const mode = this.mode;
-        ctx.globalAlpha = 0.22;
-        for (let i = 0; i < world.buildings.length; i += 2) {
-          const b = world.buildings[i];
-          if (!b.isSkyscraper && b.development <= 1.05) continue;
-          const headCell = b.cells[0];
-          if (headCell === undefined || world.material[headCell] === CellMaterial.VOID) continue;
-          const elev = elevationOf(b, mode);
-          const bx = camX + (b.x + 1.5) * scale;
-          const by = camY + (b.y + 1.5 - elev) * scale;
-          const bRad = Math.max(4, 3.8 * scale);
-          if (bx + bRad < 0 || bx - bRad > cw || by + bRad < 0 || by - bRad > ch) continue;
-          ctx.drawImage(amberStamp, bx - bRad, by - bRad, bRad * 2, bRad * 2);
+      const invDistance = 1 / (Math.sqrt(d2 + dz * dz) + 0.001);
+      const lx = dx * invDistance;
+      const ly = dy * invDistance;
+      const lz = dz * invDistance;
+      // A broad diffuse lobe gives nearby surfaces a soft glow, gated by the same shadow ray.
+      const facing = nx * lx + ny * ly + nz * lz;
+      const diffuse = (0.24 + Math.max(0, facing) * 0.76) * attenuation * visible;
+      red += light.r * diffuse;
+      green += light.g * diffuse;
+      blue += light.b * diffuse;
+
+      if (facing > 0 && specWeight > 0.05 && light.specular > 0) {
+        const hy = ly + 0.35;
+        const hz = lz + 0.94;
+        const ndoth = (nx * lx + ny * hy + nz * hz) / Math.sqrt(lx * lx + hy * hy + hz * hz);
+        if (ndoth > 0.5) {
+          const squared = ndoth * ndoth;
+          const fourth = squared * squared;
+          const specular = fourth * fourth * attenuation * visible * specWeight * light.specular * 135;
+          specRed += light.r * specular;
+          specGreen += light.g * specular;
+          specBlue += light.b * specular;
         }
       }
     }
 
-    ctx.restore();
+    if (red + green + blue < 0.015 && specRed + specGreen + specBlue < 0.5 && shadow < 0.015) return false;
+    const out = this.surfaceLight;
+    out[0] = red;
+    out[1] = green;
+    out[2] = blue;
+    out[3] = specRed;
+    out[4] = specGreen;
+    out[5] = specBlue;
+    out[6] = shadow;
+    return true;
   }
+
 }

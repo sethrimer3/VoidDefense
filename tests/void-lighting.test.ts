@@ -117,7 +117,6 @@ test("3. 2.5D height-field shadow raycasting: buildings block light and cast sha
   const { world } = sim;
   const { w } = world.grid;
   const engine = new LightingEngine();
-  engine.syncChunks(world, "full");
 
   // Pick a tall skyscraper
   const sky = world.buildings.find(
@@ -134,6 +133,15 @@ test("3. 2.5D height-field shadow raycasting: buildings block light and cast sha
   // Target point on the ground due West of the skyscraper (on the shadow side)
   const shadowX = sky.x - 3;
   const shadowY = midY;
+  // Isolate the tested caster. Exact traversal also sees neighbouring buildings on this row.
+  for (let x = shadowX; x <= lightX; x++) {
+    const idx = midY * w + x;
+    if (world.buildingAt[idx] === sky.id) continue;
+    world.material[idx] = CellMaterial.STREET;
+    world.buildingAt[idx] = -1;
+    world.landCover[idx] = LandCover.NONE;
+  }
+  engine.syncChunks(world, "full");
   const visBlocked = traceLightOcclusion(
     world,
     engine.groundElev,
@@ -234,7 +242,6 @@ test("4. Tiled deferred 2.5D lighting: explosions and Void light up facing build
     specular: 0.9,
     castsShadows: true,
     shadowStrength: 0.52,
-    bloom: 0.9,
   };
 
   const matSnap = world.material.slice();
@@ -313,7 +320,7 @@ test("5. collectSceneLights gathers lights from explosions, portals, frontier, s
   const lights = collectSceneLights(sim, 1.5, false, "full");
   assert.ok(lights.length >= 6, `Expected >= 6 scene lights, got ${lights.length}`);
   assert.ok(lights.length <= MAX_DYNAMIC_LIGHTS, `Lights must be capped at ${MAX_DYNAMIC_LIGHTS}`);
-  assert.ok(lights.some((l) => l.bloom >= 0.6 && l.castsShadows), "Expected high-bloom shadow-casting explosion/portal light");
+  assert.ok(lights.some((l) => l.shadowStrength >= 0.4 && l.castsShadows), "Expected strong shadow-casting explosion/portal light");
 });
 
 test("6. Sucked-in Void debris retains original color at detachment, heats into molten hues, and smoothly ramps from no glow to slight glow near the core", () => {
@@ -520,4 +527,82 @@ test("Saturated whirlpool debris keeps existing fragments and resumes emission w
   assert.equal(physics.debris.length, MAX_DEBRIS);
   assert.equal(physics.debris[0], existing[1]);
   assert.equal(physics.debris.at(-1)?.life, 0);
+});
+
+test("Street lights resolve single-pixel infantry, tower and airborne debris shadows", () => {
+  const sim = new VoidSim("tutorialBreach", "underSiege", emptyTechWallet());
+  const { world } = sim;
+  const { w, count } = world.grid;
+  world.material.fill(CellMaterial.STREET);
+  world.landCover.fill(LandCover.NONE);
+  world.buildingAt.fill(-1);
+  world.columnFloors.fill(0);
+
+  const engine = new LightingEngine();
+  const cache = new BuildingSpriteCache();
+  cache.syncAtlasGbuffer(world, "full");
+  engine.syncChunks(world, "full");
+  world.grid.clearDirtyFlags();
+  const terrain = new Uint32Array(count).fill(0xff707070);
+  const light: PointLight = {
+    x: 50, y: 60, z: 2, radius: 23,
+    r: 2, g: 0.8, b: 0.3, specular: 0.7, castsShadows: true, shadowStrength: 0.55,
+  };
+  const receiver = 60 * w + 65;
+  const brightness = () => {
+    engine.renderLighting(world, terrain, cache, [light]);
+    return engine.terrainLightU32[receiver] & 0xff;
+  };
+  const clear = brightness();
+
+  const rifleman = {
+    id: 1, kind: "rifleman" as const, homeUid: -1, x: 60.5, y: 60.5, vx: 0, vy: 0, hp: 40,
+    maxHp: 40, cooldown: 0, carryingMatter: 0, state: "patrol" as const, targetCell: -1, targetNodeId: -1,
+  };
+  engine.syncMovingCasters([rifleman], []);
+  const infantryShadow = brightness();
+  assert.ok(infantryShadow + 10 < clear, "An infantry-width caster interrupts the street light");
+  assert.equal(brightness(), infantryShadow, "A reused shadow trace gives the same output");
+  light.y += 4;
+  assert.ok(brightness() > infantryShadow, "Moving light re-traces the shadow");
+  light.y -= 4;
+  rifleman.y += 2;
+  engine.syncMovingCasters([rifleman], []);
+  assert.equal(brightness(), clear, "Moving infantry clears its previous shadow");
+
+  const chunk = sim.physics.spawnFallingChunk(60, 60, 3, 0, 0, 0, 1, 2, "#aaaaaa", "#bbbbbb", "salvage");
+  engine.syncMovingCasters([], [chunk]);
+  assert.equal(brightness(), clear, "A ray can pass beneath high debris");
+  chunk.z = 0.3;
+  engine.syncMovingCasters([], [chunk]);
+  assert.ok(brightness() + 10 < clear, "Lowered debris casts a shadow");
+  engine.syncMovingCasters([], []);
+
+  const towerCell = 60 * w + 60;
+  world.towerAt[towerCell] = 12;
+  world.grid.markIndexDirty(towerCell);
+  engine.syncChunks(world, "full", world.grid.dirtyChunks);
+  assert.ok(brightness() + 10 < clear, "Placed towers cast shadows with no moving casters");
+  world.towerAt[towerCell] = -1;
+  engine.syncChunks(world, "full", world.grid.dirtyChunks);
+  assert.equal(brightness(), clear, "Removing a tower clears its cached caster");
+});
+
+test("Dirty terrain normals update across a chunk boundary", () => {
+  const { world } = new VoidSim("tutorialBreach", "underSiege", emptyTechWallet());
+  world.material.fill(CellMaterial.STREET);
+  world.landCover.fill(LandCover.NONE);
+  world.buildingAt.fill(-1);
+  const engine = new LightingEngine();
+  engine.syncChunks(world, "full");
+  world.grid.clearDirtyFlags();
+
+  const neighbor = world.grid.index(15, 40);
+  assert.equal(engine.terrainNx[neighbor], 0);
+  const wall = world.grid.index(16, 40);
+  world.material[wall] = CellMaterial.WALL;
+  world.grid.markIndexDirty(wall);
+  engine.syncChunks(world, "full", world.grid.dirtyChunks);
+  assert.ok(engine.terrainNx[neighbor] < -40);
+  assert.equal(engine.terrainNx[world.grid.index(12, 40)], 0);
 });
