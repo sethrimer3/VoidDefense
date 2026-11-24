@@ -657,9 +657,9 @@ export function isBoulevardOrAvenueLaneAt(world: VoidWorld, x: number, y: number
     return false;
   }
   if (tier === 2) {
-    // Medium avenue: dashed 1-px centerline 4 px inside the block curb
-    const curbW = (x & 1) === 0 && x >= 4 && world.buildingAt[idx - 4] >= 0 && world.streetTier[idx - 1] === 2;
-    const curbN = (y & 1) === 0 && y >= 4 && world.buildingAt[idx - w * 4] >= 0 && world.streetTier[idx - w] === 2;
+    // Medium avenue: dashed 1-px centerline 4 px inside the original block curb
+    const curbW = (x & 1) === 0 && x >= 4 && world.originalBuildingAt[idx - 4] >= 0 && world.streetTier[idx - 1] === 2;
+    const curbN = (y & 1) === 0 && y >= 4 && world.originalBuildingAt[idx - w * 4] >= 0 && world.streetTier[idx - w] === 2;
     if (curbW && (y & 7) < 2) return true;
     if (curbN && (x & 7) < 2) return true;
   }

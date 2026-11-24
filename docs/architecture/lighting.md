@@ -33,10 +33,12 @@ All world surfaces—terrain, buildings, placed towers, and infantry—generate 
 
 `collectSceneLights` gathers and prioritizes all active light sources each frame, scaled by the active `TimeOfDayPreset`:
 
-- **Larger Coherent Building Neon Features (`roofColorAt`, `facadeColorAt` in `src/void/elevation.ts`):**
-  - Urban buildings replace scattered 1-px window speckles with larger, readable emissive features: wide 3–5 px ground-floor storefront canopies, upper-cornice neon bars, full-height vertical neon sign strips, and 2-row horizontal neon signs / warm amber window bays.
-  - All emissive building pixels are tagged in `specMap` / `atlasSpec` with values `>= 240` (`242..250`).
-  - Building point lights are offset `0.8 px` south of the south facade (`b.y + b.h + 0.8`, radius `18..23 px`) so storefront canopies cast wide pools of Tron blue (and occasional warm amber) light across the street without self-occlusion.
+- **Light Restraint, Hero Landmarks & District Accents (`getLandmarkBuildingIds`, `buildingNeonTier`, `districtNeonAccentFor`, `roofColorAt`, `facadeColorAt` in `src/void/elevation.ts`):**
+  - To preserve deep blue-purple night darkness and visual hierarchy, only ~20–30% of urban buildings (`buildingNeonTier(world, b) !== "dark"`) carry strong neon signs, cornice bars, or glowing storefront canopies (`specMap` / `atlasSpec >= 240`). The remaining ~70–80% of buildings have calm, unlit facades and clean dark roofs (with a single HVAC core, helipad, or solar/garden deck), and lit windows appear only in small localized clusters (`(lx >> 2, fRow >> 1)`) rather than on every floor.
+  - Each map deterministically selects 2–4 spaced **hero landmark** skyscrapers (`getLandmarkBuildingIds(world)`) that receive the brightest, largest full-height vertical neon strips, crown beacons, wide storefront canopies, and top priority in `priorityBuildingLights`.
+  - District sectors (`districtNeonAccentFor`) are predominantly Tron cyan (`#00c8ff` / `#7afcff`), accented by 1–2 districts using cyber magenta (`#d838e8` / `#ff94f2`), electric violet (`#7c4dff` / `#c8b8ff`), or cool white-ice (`#8ce8ff` / `#eafaff`), while placed Resistance towers remain uniquely Tron orange.
+  - Spaced boulevard median streetlights (`isBoulevardStreetlightAt`) seed soft cool-cyan/white pools into the half-resolution halo buffer, and dashed boulevard/avenue orange lane markings (`isBoulevardOrAvenueLaneAt`, cached in `terrainLane`) add a faint warm ground sheen that slightly illuminates wet pavement in rain.
+  - Building point lights are offset `0.8 px` south of the south facade (`b.y + b.h + 0.8`, radius `12..16 px`) so storefront canopies cast pools of district-colored neon light across the street without self-occlusion.
 - **Low-Res (`1/2` Res) Emissive Halo Spill Buffer (`halo` in `LightingEngine`):**
   - Extracts `atlasSpec >= 240` emissive pixels into a half-resolution (`(w/2) × (h/2)`) world light buffer and runs a separable 5-tap horizontal + vertical pass (`~4..5 world px` spill radius).
   - The building atlas supplies emissive pixels and stable building IDs. Every surviving emissive fixture contributes unshadowed spill, including buildings outside the point-light budget. Each world-space halo tile samples a two-texel border so the kernel gives the same result at viewport and tile boundaries.
