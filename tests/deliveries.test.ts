@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { PARKING_STREET_TIER, TICK_HZ } from "../src/void/config.ts";
-import { deliveryPayout } from "../src/void/deliveries.ts";
+import { deliveryPayout, depotLinks, depotSpeedMultiplier, depotTargetCount } from "../src/void/deliveries.ts";
+import type { PlacedTower } from "../src/void/model.ts";
 import { CellMaterial } from "../src/void/model.ts";
 import { VoidSim } from "../src/void/sim.ts";
 import { emptyTechWallet } from "../src/void/tech/wallet.ts";
@@ -35,8 +36,10 @@ test("Delivery depots earn Supplies on arrival and stop paying when a street is 
   assert.ok(route?.path);
   assert.equal(route.payout, deliveryPayout(62));
 
+  // Each depot sends its own car to the other (its furthest depot); both loaded arrivals pay.
+  assert.equal(sim.deliveries.routes.length, 2);
   sim.stepTicks(TICK_HZ * 3);
-  assert.equal(sim.supplies, paid + route.payout);
+  assert.equal(sim.supplies, paid + route.payout * 2);
   assert.equal(sim.deliveries.arrivals.at(-1)?.amount, route.payout);
   assert.equal(sim.deliveries.arrivals.at(-1)?.y, y);
 
@@ -47,16 +50,16 @@ test("Delivery depots earn Supplies on arrival and stop paying when a street is 
   }
   sim.stepTicks(TICK_HZ * 8);
   assert.equal(route.path, null);
-  assert.equal(sim.supplies, paid + route.payout, "A broken trip never pays");
+  assert.equal(sim.supplies, paid + route.payout * 2, "A broken trip never pays");
 
   const restored = world.grid.index(78, y);
   world.material[restored] = CellMaterial.RECLAIMED;
   world.hp[restored] = world.maxHp[restored];
   sim.stepTicks(TICK_HZ * 10);
-  assert.ok(sim.supplies > paid + route.payout, "Repairing the road lets deliveries resume");
+  assert.ok(sim.supplies > paid + route.payout * 2, "Repairing the road lets deliveries resume");
   b.hp = 0;
   sim.stepTicks(1);
-  assert.equal(sim.deliveries.routes.length, 0, "Losing a depot removes its truck");
+  assert.equal(sim.deliveries.routes.length, 0, "Losing a depot removes its cars");
 });
 
 test("Longer deliveries pay progressively more and generated parking is drivable", () => {
@@ -74,4 +77,39 @@ test("Longer deliveries pay progressively more and generated parking is drivable
     }
   }
   assert.ok(parking >= 120);
+});
+
+const depot = (uid: number, x: number, y: number, level = 1): PlacedTower =>
+  ({ uid, type: "deliveryDepot", x, y, w: 6, h: 6, hp: 100, level } as unknown as PlacedTower);
+
+test("Depots deliver to their furthest depots: 1, then 2, then 3 with upgrades", () => {
+  const a = depot(1, 0, 0);
+  const b = depot(2, 40, 0);
+  const c = depot(3, 100, 0);
+  const d = depot(4, 200, 0);
+  const targets = (from: PlacedTower, all: PlacedTower[]) =>
+    depotLinks(all).filter((l) => l.from === from).map((l) => l.to.uid);
+  assert.deepEqual(targets(a, [a, b]), [2]);
+  assert.deepEqual(targets(a, [a, b, c, d]), [4], "Base depot links only to the single furthest depot");
+  assert.deepEqual(targets(c, [a, b, c, d]), [1]);
+  a.level = 2;
+  assert.deepEqual(targets(a, [a, b, c, d]), [4, 3], "First upgrade adds the second furthest");
+  a.level = 3;
+  assert.deepEqual(targets(a, [a, b, c, d]), [4, 3, 2], "Second upgrade adds the third furthest");
+  assert.deepEqual(targets(a, [a, b]), [2], "Never more links than other depots");
+  d.hp = 0;
+  assert.deepEqual(targets(a, [a, b, c, d]), [3, 2], "Destroyed depots drop out of the link set");
+  assert.equal(depotTargetCount(undefined), 1);
+  assert.equal(depotSpeedMultiplier(1), 1);
+  assert.equal(depotSpeedMultiplier(2), 1);
+  assert.equal(depotSpeedMultiplier(3), 3);
+});
+
+test("Placing a new furthest depot relinks existing depots", () => {
+  const a = depot(1, 0, 0);
+  const b = depot(2, 50, 0);
+  const keys = (all: PlacedTower[]) => depotLinks(all).map((l) => l.key).sort();
+  assert.deepEqual(keys([a, b]), ["1>2", "2>1"]);
+  const c = depot(3, 150, 0);
+  assert.deepEqual(keys([a, b, c]), ["1>3", "2>3", "3>1"]);
 });

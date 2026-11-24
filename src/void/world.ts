@@ -60,6 +60,14 @@ const ROOF_FEATURES_LOW: readonly RoofFeatureKind[] = [
   "reactorDome",
 ];
 
+/** Street corridor widths in coarse layout cells (each becomes 2x2 world pixels). Horizontal
+ * corridors are one cell wider than vertical ones so they read the same width under the
+ * oblique building faces. */
+export const V_AVENUE_W = 5;
+export const H_AVENUE_W = 6;
+export const V_BOULEVARD_W = 9;
+export const H_BOULEVARD_W = 10;
+
 export class VoidWorld {
   readonly grid: VoidGrid;
   readonly seed: number;
@@ -259,8 +267,11 @@ export class VoidWorld {
     }
 
     // 2. Define 3-tier street hierarchy:
-    //    Tier 1: Wide boulevards (7 coarse cells = 14 world px wide, with a 1-cell = 2 px central median `streetTier = 3`)
-    //    Tier 2: Medium avenues (4 coarse cells = 8 world px wide, `streetTier = 2`)
+    //    Tier 1: Wide boulevards (vertical 9 coarse cells = 18 world px with a 2 px central median `streetTier = 3`;
+    //            horizontal 10 coarse cells = 20 world px with a 4 px median)
+    //    Tier 2: Medium avenues (vertical 5 coarse cells = 10 world px, horizontal 6 = 12 world px, `streetTier = 2`)
+    //    Horizontal streets are one coarse cell (2 world px) wider than vertical streets of the same tier, because
+    //    the oblique building faces overhang the street to their south and would otherwise make them look narrower.
     //    Tier 3: Narrow alleys inside blocks (1 coarse cell = 2 world px wide, `streetTier = 4`, used sparingly)
     const xBlocks: { x0: number; x1: number; afterTier: 1 | 2; afterW: number }[] = [];
     let cx = 4;
@@ -274,7 +285,7 @@ export class VoidWorld {
             : 20 + (hash(seed, 101, colIdx) % 7); // 19..26 coarse cells (38..52 world px)
       const x1 = Math.min(w - 4, cx + bw);
       const isBlvd = colIdx % 2 === 1;
-      const afterW = isBlvd ? 7 : 4;
+      const afterW = isBlvd ? V_BOULEVARD_W : V_AVENUE_W;
       if (x1 - cx >= 10) xBlocks.push({ x0: cx, x1, afterTier: isBlvd ? 1 : 2, afterW });
       cx = x1 + afterW;
       colIdx++;
@@ -294,7 +305,7 @@ export class VoidWorld {
               : 15 + (hash(seed, 202, rowIdx) % 6); // 15..20 coarse cells (30..40 world px)
       const y1 = Math.min(h - 4, cy + bh);
       const isBlvd = rowIdx >= 2 && rowIdx % 2 === 0;
-      const afterW = rowIdx === 0 ? 3 : isBlvd ? 7 : 4;
+      const afterW = isBlvd ? H_BOULEVARD_W : H_AVENUE_W;
       if (y1 - cy >= 8) yBlocks.push({ y0: cy, y1, afterTier: isBlvd ? 1 : 2, afterW });
       cy = y1 + afterW;
       rowIdx++;
@@ -342,13 +353,15 @@ export class VoidWorld {
       if (blk.afterTier !== 1) continue;
       const sy0 = blk.y1;
       const sy1 = Math.min(h, sy0 + blk.afterW);
+      // Even-width horizontal boulevards get a two-cell median so both carriageways match.
       const midY = sy0 + (blk.afterW >> 1);
+      const isMedianRow = (y: number): boolean => y === midY || ((blk.afterW & 1) === 0 && y === midY - 1);
       for (let y = sy0; y < sy1; y++) {
         for (let x = 0; x < w; x++) {
           const idx = y * w + x;
           if (this.material[idx] !== CellMaterial.STREET) continue;
           const isSegmentBetweenAvenues = inXBlock(x);
-          if (y === midY && isSegmentBetweenAvenues && (x & 7) !== 0) {
+          if (isMedianRow(y) && isSegmentBetweenAvenues && (x & 7) !== 0) {
             this.streetTier[idx] = 3;
           } else if (this.streetTier[idx] !== 3) {
             this.streetTier[idx] = 1;

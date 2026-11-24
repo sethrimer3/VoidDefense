@@ -3,6 +3,8 @@ import test from "node:test";
 import {
   ARCH_PALETTES,
   buildingNeonTier,
+  buildingSignAccentFor,
+  RED_SIGN_ACCENT,
   BuildingSpriteCache,
   districtNeonAccentFor,
   getLandmarkBuildingIds,
@@ -955,25 +957,33 @@ test("10. City hierarchy & light restraint: 3 street tiers, boulevard medians/st
   assert.ok(tier3Median > 100, `Expected boulevard central medians (tier 3), got ${tier3Median}`);
   assert.ok(tier4Alley > 200, `Expected sparse alleys/setbacks (tier 4), got ${tier4Alley}`);
   assert.ok(streetlights >= 12, `Expected spaced boulevard streetlights, got ${streetlights}`);
-  assert.ok(laneLines >= 100, `Expected faint orange boulevard/avenue lane lines, got ${laneLines}`);
+  assert.ok(laneLines >= 100, `Expected solid orange curb lines, got ${laneLines}`);
 
   const landmarks = getLandmarkBuildingIds(world);
   assert.ok(landmarks.size >= 2 && landmarks.size <= 4, `Expected 2-4 hero landmark buildings, got ${landmarks.size}`);
 
   const urbanBlds = world.buildings.filter((b) => b.archStyle !== "homestead" && b.archStyle !== "barn");
   let litCount = 0;
+  let neonCount = 0;
+  let redSigns = 0;
   const accentCores = new Set<string>();
   for (const b of urbanBlds) {
     const tier = buildingNeonTier(world, b);
-    if (tier === "landmark" || tier === "lit") litCount++;
+    if (tier === "landmark" || tier === "sign") litCount++;
+    if (tier !== "dark") neonCount++;
     const pal = ARCH_PALETTES[b.archStyle][0];
     accentCores.add(districtNeonAccentFor(world, b, pal).neonCore);
+    if (tier === "sign" && buildingSignAccentFor(world, b, pal) === RED_SIGN_ACCENT) redSigns++;
   }
   const litRatio = litCount / Math.max(1, urbanBlds.length);
+  const neonRatio = neonCount / Math.max(1, urbanBlds.length);
   assert.ok(
-    litRatio >= 0.18 && litRatio <= 0.34,
-    `Expected ~20-30% of urban buildings to carry strong neon, got ${(litRatio * 100).toFixed(1)}% (${litCount}/${urbanBlds.length})`,
+    litRatio >= 0.12 && litRatio <= 0.26,
+    `Expected ~15-20% of urban buildings to carry a strong neon sign, got ${(litRatio * 100).toFixed(1)}% (${litCount}/${urbanBlds.length})`,
   );
+  assert.ok(neonRatio >= 0.42 && neonRatio <= 0.64,
+    `Expected ~45-60% of urban buildings to carry some neon, got ${(neonRatio * 100).toFixed(1)}%`);
+  assert.ok(redSigns > 0, "Expected some red neon signs");
   assert.ok(accentCores.size >= 2, `Expected multiple district neon accent colors, got ${[...accentCores].join(", ")}`);
   assert.ok(w > 0 && h > 0);
 });

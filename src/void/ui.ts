@@ -1297,10 +1297,14 @@ export class VoidApp {
     let rotateBtn = "";
     let hasRotate = false;
     if (t.type === "deliveryDepot") {
-      const route = this.sim.deliveries.routeFor(t.uid);
-      extraInfo = route?.path ? `<span><b>+${route.payout} Supplies</b> per delivery</span>`
-        : route ? "<span>Route blocked. Looking for open roads.</span>"
-        : this.sim.phase === "prep" ? "<span>Pairs with another depot at deployment.</span>"
+      const routes = this.sim.deliveries.routesFrom(t.uid);
+      const reach = lvl >= 3 ? "3 furthest depots, 3x faster" : lvl === 2 ? "2 furthest depots" : "furthest depot";
+      const next = lvl === 1 ? " Upgrade to reach the 2 furthest." : lvl === 2 ? " Upgrade to reach the 3 furthest, 3x faster." : "";
+      const open = routes.filter((r) => r.path);
+      extraInfo = open.length > 0
+        ? `<span>Delivers to its ${reach}: <b>+${open.map((r) => r.payout).join(", +")} Supplies</b> per delivery.${next}</span>`
+        : routes.length > 0 ? "<span>Route blocked. Looking for open roads.</span>"
+        : this.sim.phase === "prep" ? `<span>Delivers to its ${reach} once deployed.${next}</span>`
         : "<span>Build another depot to start deliveries.</span>";
     } else if (t.type === "voidSiphon") {
       const s = this.sim.combat.siphonStates.get(t.uid);

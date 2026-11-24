@@ -16,6 +16,7 @@ import type {
 } from "./model.ts";
 import { DeliveryNetwork } from "./deliveries.ts";
 import { FarmFires } from "./farms.ts";
+import { StreetFires } from "./street-fires.ts";
 import { VoidPhysics } from "./physics.ts";
 import { computeCityIncomePerCycle, evaluateRunOutcome } from "./scoring.ts";
 import { evaluateTech, type EvaluatedTech, type VoidTechWallet } from "./tech/wallet.ts";
@@ -30,6 +31,8 @@ export class VoidSim {
   readonly world: VoidWorld;
   readonly physics: VoidPhysics;
   readonly farms: FarmFires;
+  /** Persistent trash-can, debris and trash-heap fires that burn all level until destroyed. */
+  readonly streetFires: StreetFires;
   readonly deliveries = new DeliveryNetwork();
   readonly voidField: VoidField;
   readonly combat: VoidCombatManager;
@@ -78,6 +81,7 @@ export class VoidSim {
     });
     this.physics = new VoidPhysics();
     this.farms = new FarmFires(this.world);
+    this.streetFires = new StreetFires(this.world);
     this.voidField = new VoidField(this.world, this.scenario);
     this.combat = new VoidCombatManager(this.world.grid.count);
 
@@ -327,6 +331,7 @@ export class VoidSim {
 
     this.supplies += this.deliveries.step(this.world, this.combat.towers, this.tick, TICK_DT);
     this.farms.step(TICK_DT, this.combat.lasers);
+    this.streetFires.step(this.world);
 
     this.reason = statusReason;
 

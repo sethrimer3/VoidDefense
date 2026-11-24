@@ -223,6 +223,8 @@ test("Countervoid Heart: grows finite-budget orange frontier in stepTicks and de
 
   const heart = sim.placeTower("countervoidHeart", cx, cy);
   assert.ok(heart, "placeTower(countervoidHeart) should succeed");
+  // Hold the purple frontier still so the test measures the Heart, not how fast this layout's Void eats it.
+  sim.voidField.suppressedSeconds = 1.6;
 
   sim.stepTicks(45); // 1.5s
   assert.ok(sim.voidField.countervoidCells.size > 1, "Countervoid Heart grows orange frontier via VoidSim.stepTicks");

@@ -85,6 +85,8 @@ import {
 } from "./physics.ts";
 import { reflectionColor, SurfaceReflections } from "./reflections.ts";
 import { findStreetPath, isCityStreet, type StreetBfsScratch } from "./street-routes.ts";
+import { depotBoltPixels, depotLinks, type DeliveryRoute } from "./deliveries.ts";
+import { streetFireFlicker } from "./street-fires.ts";
 import type { VoidSim } from "./sim.ts";
 import { STRIKE_SPECS, TOWER_SPECS } from "./towers.ts";
 import type { VoidWorld } from "./world.ts";
@@ -196,6 +198,22 @@ export interface BuildingDoor {
   x: number;
   y: number;
 }
+
+/** Delivery car light-trail length in world pixels. */
+const DELIVERY_TRAIL_LEN = 12;
+/** Depot bolt timing: the bolt races out over `GROW`, crackles until `STRIKE`, then fades over `FADE` to its rest opacity. */
+const DEPOT_BOLT_GROW_S = 0.16;
+const DEPOT_BOLT_STRIKE_S = 0.45;
+const DEPOT_BOLT_FADE_S = 0.9;
+/** A settled depot link stays as a faint glowing trace at this opacity. */
+export const DEPOT_LINK_REST_ALPHA = 0.05;
+
+/** Whole-pixel bodies for street fire props (3 columns x 2 rows; trash cans use the first 2 columns). */
+const STREET_FIRE_BODY: readonly (readonly string[])[] = [
+  ["#7a828e", "#5d646f", "#000000", "#3b4049", "#2a2e35", "#000000"],
+  ["#2f2a27", "#4a3f38", "#3d342e", "#5a4a3e", "#4a3f38", "#332c28"],
+  ["#55524a", "#6a5d44", "#3a3a36", "#3a3d33", "#4b4a3a", "#2f3330"],
+];
 
 export interface TronCycle {
   fromDoorIdx: number;
@@ -373,6 +391,9 @@ export class VoidRenderer {
   // Tron light cycle trails along streets connecting random buildings across the map
   private buildingDoors: BuildingDoor[] = [];
   private cycles: TronCycle[] = [];
+  /** When each live depot link last fired its bolt (seconds of wall-clock time), keyed `from>to`. */
+  private depotLinkFired = new Map<string, number>();
+  private depotBoltCache = new Map<string, { x: number; y: number }[]>();
   private cyclesWorld: VoidWorld | null = null;
   private bfsScratch: StreetBfsScratch | null = null;
   private lastTimeMs = 0;
@@ -616,6 +637,172 @@ export class VoidRenderer {
           }
         }
       }
+    }
+  }
+
+  /** Draws a 2x2 orange Tron delivery car with a long fading light trail and a bright street glow. */
+  private paintDeliveryCar(
+    world: VoidWorld,
+    c: CanvasRenderingContext2D,
+    car: DeliveryRoute,
+    inner: string,
+    outer: string,
+  ): void {
+    const path = car.path;
+    if (!path) return;
+    const { x, y, dx, dy } = car;
+    // Across-axis offset: the second lane pixel of the 2-wide car, on whichever side is street
+    let ox = dy !== 0 ? 1 : 0;
+    let oy = dx !== 0 || dy === 0 ? 1 : 0;
+    if (!isCityStreet(world, x + ox, y + oy, true)) { ox = -ox; oy = -oy; }
+    this.paintVehicleSpill(world, x, y, inner, outer);
+    this.paintVehicleSpill(world, x + ox, y + oy, inner, outer);
+    const step = car.reverse ? 1 : -1;
+    c.globalCompositeOperation = "lighter";
+    for (let t = 2; t <= DELIVERY_TRAIL_LEN + 1; t++) {
+      const p = path[car.head + step * t];
+      if (!p) break;
+      const a = (1 - (t - 1) / (DELIVERY_TRAIL_LEN + 1)) * 0.85;
+      c.fillStyle = `rgba(255, 128, 26, ${a.toFixed(3)})`;
+      c.fillRect(p.x, p.y, 1, 1);
+      c.fillRect(p.x + ox, p.y + oy, 1, 1);
+    }
+    c.globalCompositeOperation = "source-over";
+    const back = path[car.head + step] ?? { x: x - dx, y: y - dy };
+    c.fillStyle = "#ff7a14";
+    c.fillRect(back.x, back.y, 1, 1);
+    c.fillRect(back.x + ox, back.y + oy, 1, 1);
+    c.fillStyle = "#ffd28a";
+    c.fillRect(x, y, 1, 1);
+    c.fillRect(x + ox, y + oy, 1, 1);
+  }
+
+  /** Fires a crisp whole-pixel bolt along every new depot link, then leaves it as a 5% glowing trace. */
+  private paintDepotLinks(sim: VoidSim, c: CanvasRenderingContext2D, now: number): void {
+    const links = depotLinks(sim.combat.towers);
+    const live = new Set<string>();
+    for (const link of links) {
+      live.add(link.key);
+      if (!this.depotLinkFired.has(link.key)) this.depotLinkFired.set(link.key, now);
+    }
+    for (const key of this.depotLinkFired.keys()) if (!live.has(key)) this.depotLinkFired.delete(key);
+    if (this.depotBoltCache.size > 256) this.depotBoltCache.clear();
+    if (links.length === 0) return;
+    c.globalCompositeOperation = "lighter";
+    for (const link of links) {
+      const age = this.reduceEffects ? 99 : now - (this.depotLinkFired.get(link.key) ?? now);
+      const { from, to } = link;
+      const striking = age < DEPOT_BOLT_STRIKE_S;
+      // While striking the bolt re-forks every 70 ms like lightning; afterwards it settles into one trace.
+      const variant = striking ? 1 + Math.floor(age / 0.07) : 0;
+      const cacheKey = `${link.key}|${from.x},${from.y}|${to.x},${to.y}|${variant}`;
+      let px = this.depotBoltCache.get(cacheKey);
+      if (!px) {
+        px = depotBoltPixels(from.x + from.w * 0.5 - 0.5, from.y + from.h * 0.5 - 0.5,
+          to.x + to.w * 0.5 - 0.5, to.y + to.h * 0.5 - 0.5, from.uid * 7919 + to.uid * 104729 + variant * 31);
+        this.depotBoltCache.set(cacheKey, px);
+      }
+      const grow = Math.min(1, age / DEPOT_BOLT_GROW_S);
+      const fade = age <= DEPOT_BOLT_STRIKE_S ? 1 :
+        Math.max(0, 1 - (age - DEPOT_BOLT_STRIKE_S) / DEPOT_BOLT_FADE_S) ** 2;
+      const alpha = DEPOT_LINK_REST_ALPHA + (1 - DEPOT_LINK_REST_ALPHA) * fade;
+      const count = Math.max(1, Math.ceil(px.length * grow));
+      // Soft glow on the four neighbours, then the crisp core on top
+      c.fillStyle = `rgba(255, 106, 18, ${(alpha * 0.32).toFixed(3)})`;
+      for (let i = 0; i < count; i++) {
+        const p = px[i];
+        c.fillRect(p.x - 1, p.y, 1, 1);
+        c.fillRect(p.x + 1, p.y, 1, 1);
+        c.fillRect(p.x, p.y - 1, 1, 1);
+        c.fillRect(p.x, p.y + 1, 1, 1);
+      }
+      c.fillStyle = striking ? `rgba(255, 214, 150, ${alpha.toFixed(3)})` : `rgba(255, 150, 52, ${alpha.toFixed(3)})`;
+      for (let i = 0; i < count; i++) c.fillRect(px[i].x, px[i].y, 1, 1);
+      // Leading spark at the bolt's head while it travels, and an impact flare on arrival
+      if (striking) {
+        const head = px[count - 1];
+        c.fillStyle = "rgba(255, 246, 220, 0.95)";
+        c.fillRect(head.x, head.y, 1, 1);
+        if (grow >= 1) {
+          c.fillStyle = `rgba(255, 170, 70, ${(0.6 * (1 - age / DEPOT_BOLT_STRIKE_S)).toFixed(3)})`;
+          c.fillRect(head.x - 2, head.y, 5, 1);
+          c.fillRect(head.x, head.y - 2, 1, 5);
+        }
+      }
+    }
+    c.globalCompositeOperation = "source-over";
+  }
+
+  /** Draws each persistent street fire as a whole-pixel prop with flickering flames, sparks and smoke,
+   * or as charred remains once destroyed. All motion is a pure function of `time` and the fire's phase. */
+  private paintStreetFires(
+    sim: VoidSim,
+    c: CanvasRenderingContext2D,
+    time: number,
+    view: { x0: number; y0: number; x1: number; y1: number },
+    glow: number,
+  ): void {
+    const { world } = sim;
+    for (const fire of sim.streetFires.fires) {
+      const { x, y, w: fw } = fire;
+      if (x < view.x0 - 8 || x > view.x1 + 8 || y < view.y0 - 8 || y > view.y1 + 8) continue;
+      const base = fire.cells[0];
+      if (world.towerAt[base] >= 0) continue;
+      if (!fire.alive) {
+        // Charred remains stay where the footprint is still street.
+        for (let k = 0; k < fire.cells.length; k++) {
+          const i = fire.cells[k];
+          if (world.material[i] !== CellMaterial.STREET) continue;
+          c.fillStyle = (k + fire.kind) % 3 === 0 ? "#2b2523" : "#1a1716";
+          c.fillRect(i % world.grid.w, Math.floor(i / world.grid.w), 1, 1);
+        }
+        continue;
+      }
+      // Cheap additive warm glow on the street around the fire (always on, so low quality keeps it)
+      const flick = this.reduceEffects ? 0.84 : streetFireFlicker(fire, time);
+      this.paintVehicleSpill(world, x + (fw >> 1), y,
+        `rgba(255, 120, 30, ${(glow * 0.42 * flick).toFixed(3)})`, `rgba(255, 96, 20, ${(glow * 0.18 * flick).toFixed(3)})`);
+      // Prop body
+      const body = STREET_FIRE_BODY[fire.kind];
+      for (let dy = 0; dy < 2; dy++) {
+        for (let dx = 0; dx < fw; dx++) {
+          c.fillStyle = body[dy * 3 + dx];
+          c.fillRect(x + dx, y + dy, 1, 1);
+        }
+      }
+      // Glowing coals along the top row
+      const ph = fire.phase;
+      const coal = 0.5 + 0.5 * Math.sin(time * 6.3 + ph);
+      c.fillStyle = coal > 0.5 ? "#ff8a2a" : "#e0561c";
+      c.fillRect(x + (fire.kind === 0 ? 0 : 1), y, 1, 1);
+      if (fire.kind === 0) c.fillRect(x + 1, y, 1, 1);
+      // Flame columns: 1..3 px tall, each column on its own deterministic flicker
+      const cols = fire.kind === 1 ? [1] : fire.kind === 0 ? [0, 1] : [0, 1, 2];
+      let top = y;
+      for (let k = 0; k < cols.length; k++) {
+        const fx = x + cols[k];
+        const v = 0.5 + 0.5 * Math.sin(time * 9.1 + ph + k * 1.7) * (0.7 + 0.3 * Math.sin(time * 17.3 + k));
+        const fh = fire.kind === 2 && k !== 1 ? (v > 0.55 ? 1 : 0) : 1 + Math.min(2, Math.floor(v * 3));
+        for (let j = 1; j <= fh; j++) {
+          c.fillStyle = j === fh ? (fh >= 3 ? "#ffe8b0" : "#ffc35a") : j === 1 ? "#ff5a1a" : "#ff9a2e";
+          c.fillRect(fx, y - j, 1, 1);
+        }
+        top = Math.min(top, y - fh);
+      }
+      if (this.reduceEffects) continue;
+      // Rising spark
+      const sparkT = (time * 1.25 + ph * 0.37) % 1;
+      if (sparkT < 0.7) {
+        c.globalAlpha = 1 - sparkT / 0.7;
+        c.fillStyle = "#ffd27a";
+        c.fillRect(x + ((Math.floor(time * 1.25 + ph) & 1) ? fw - 1 : 0), top - 1 - Math.floor(sparkT * 6), 1, 1);
+      }
+      // Drifting smoke puff
+      const smokeT = (time * 0.55 + ph * 0.21) % 1;
+      c.globalAlpha = 0.32 * (1 - smokeT);
+      c.fillStyle = "#6a6461";
+      c.fillRect(x + (fw >> 1) + Math.floor(smokeT * 2.4), top - 2 - Math.floor(smokeT * 7), 1, 1);
+      c.globalAlpha = 1;
     }
   }
 
@@ -1428,8 +1615,8 @@ export class VoidRenderer {
         if (kerb) {
           color = "#2e353e";
         } else if (isBoulevardOrAvenueLaneAt(world, x, y)) {
-          // Faint warm-orange lane / edge line on boulevards and avenues (subtle, much dimmer than tower orange)
-          color = world.streetTier[idx] === 1 ? "#59351e" : "#4a2c1a";
+          // Solid orange curb line along both sides of boulevards and avenues (dimmer than tower orange)
+          color = "#a8541e";
         } else {
           color = world.streetTier[idx] === 4 ? "#1d242e" : r < 0.07 ? "#191f28" : "#151a22";
         }
@@ -1700,8 +1887,8 @@ export class VoidRenderer {
     const glow = Math.min(1, activePreset.neonIntensity * 0.65 + 0.12);
     const blueInner = `rgba(7, 125, 255, ${glow * 0.28})`;
     const blueOuter = `rgba(7, 95, 245, ${glow * 0.12})`;
-    const amberInner = `rgba(255, 133, 30, ${glow * 0.35})`;
-    const amberOuter = `rgba(255, 112, 22, ${glow * 0.15})`;
+    const amberInner = `rgba(255, 140, 34, ${Math.min(0.85, glow * 0.6)})`;
+    const amberOuter = `rgba(255, 112, 22, ${glow * 0.28})`;
     const vehicleVisible = (x: number, y: number) => x >= viewBounds.x0 - 10 && x <= viewBounds.x1 + 10 &&
       y >= viewBounds.y0 - 10 && y <= viewBounds.y1 + 10;
     const TRAIL_LEN = closeZoom ? pixels(4) : pixels(2);
@@ -1763,17 +1950,9 @@ export class VoidRenderer {
         if (vehicleVisible(p.x, p.y) && isCityStreet(world, p.x, p.y, true)) rawScene.fillRect(p.x, p.y, 1, 1);
       }
     }
-    for (const truck of sim.deliveries.routes) {
-      if (!truck.path || !vehicleVisible(truck.x, truck.y)) continue;
-      this.paintVehicleSpill(world, truck.x, truck.y, amberInner, amberOuter);
-      const tx = truck.x - truck.dx;
-      const ty = truck.y - truck.dy;
-      if (isCityStreet(world, tx, ty, true)) {
-        rawScene.fillStyle = "#d95824";
-        rawScene.fillRect(tx, ty, 1, 1);
-      }
-      rawScene.fillStyle = "#ffbc60";
-      rawScene.fillRect(truck.x, truck.y, 1, 1);
+    for (const car of sim.deliveries.routes) {
+      if (!car.path || !vehicleVisible(car.x, car.y)) continue;
+      this.paintDeliveryCar(world, rawScene, car, amberInner, amberOuter);
     }
 
     const { w, h } = world.grid;
@@ -2786,6 +2965,9 @@ export class VoidRenderer {
       }
     }
 
+    // Persistent street fires: trash cans, debris piles and trash heaps that burn all level until destroyed
+    this.paintStreetFires(sim, rawScene, animTime, viewBounds, glow);
+
     // Draw above-ground falling chunks (`z >= 0`) and fleeing street civilians (`z >= 0`)
     if (!this.reduceEffects) {
       for (let i = 0; i < physics.fallingChunks.length; i++) {
@@ -2937,6 +3119,9 @@ export class VoidRenderer {
         }
       }
     }
+
+    // Delivery Depot links: a crisp orange Tron bolt fires whenever a link appears, then lingers as a faint glowing trace
+    this.paintDepotLinks(sim, rawScene, nowMs * 0.001);
 
     lap("towers");
 

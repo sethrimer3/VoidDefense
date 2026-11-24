@@ -16,6 +16,7 @@ import {
 import { hash, hash01 } from "./grid.ts";
 import { type Agent, CellMaterial, type FallingChunk, LandCover, SurfaceMaterial } from "./model.ts";
 import { valueNoise } from "./portal-noise.ts";
+import { streetFireFlicker } from "./street-fires.ts";
 import type { VoidSim } from "./sim.ts";
 import { TOWER_SPECS } from "./towers.ts";
 import type { VoidWorld } from "./world.ts";
@@ -597,6 +598,13 @@ export function traceLightOcclusion(
   return visibility;
 }
 
+/** Most delivery-car point lights per frame, by quality tier. Every car and fire also paints a cheap
+ * additive street glow in the renderer, so low quality keeps their glow without point-light cost. */
+export const DELIVERY_CAR_LIGHT_CAP: Record<LightingQualityMode, number> = { low: 0, medium: 1, high: 8 };
+
+/** Most street-fire point lights per frame, by quality tier. */
+export const STREET_FIRE_LIGHT_CAP: Record<LightingQualityMode, number> = { low: 0, medium: 2, high: 8 };
+
 export const BUILDING_LIGHT_BUDGET: Record<LightingQualityMode, number> = { low: 4, medium: 7, high: 10 };
 
 const buildingLightOrder = new WeakMap<VoidWorld, VoidWorld["buildings"]>();
@@ -641,29 +649,33 @@ export function isBoulevardStreetlightAt(world: VoidWorld, x: number, y: number)
   return false;
 }
 
-/** True when street cell `(x, y)` lies on a faint glowing orange boulevard/avenue lane or median edge line. */
+/** Inset of the glowing orange curb line from the block edge, in world pixels (the sidewalk lies between). */
+export const CURB_LINE_INSET = 2;
+
+function isStreetCorridor(world: VoidWorld, x: number, y: number): boolean {
+  const { w, h } = world.grid;
+  if (x < 0 || y < 0 || x >= w || y >= h) return true;
+  const tier = world.streetTier[y * w + x];
+  return tier === 1 || tier === 2 || tier === 3;
+}
+
+/** True when street cell `(x, y)` lies on a solid glowing orange curb line. Every boulevard and avenue
+ * carries one line along each side, `CURB_LINE_INSET` pixels out from the block edge so a sidewalk
+ * strip separates it from the buildings. Lines stop at intersections, where no block edge runs beside them. */
 export function isBoulevardOrAvenueLaneAt(world: VoidWorld, x: number, y: number): boolean {
   const { w, h } = world.grid;
-  if (x < 1 || x >= w - 1 || y < 1 || y >= h - 1) return false;
+  if (x < 0 || x >= w || y < 0 || y >= h) return false;
   const idx = y * w + x;
   if (world.material[idx] !== CellMaterial.STREET) return false;
   const tier = world.streetTier[idx];
-  if (tier === 1) {
-    // Boulevard: faint dashed orange edge line next to the central median (`streetTier === 3`)
-    const adjVertMedian = (x & 1) === 1 && world.streetTier[idx + 1] === 3;
-    const adjHorizMedian = (y & 1) === 1 && world.streetTier[idx + w] === 3;
-    if (adjVertMedian && (y & 7) < 3) return true;
-    if (adjHorizMedian && (x & 7) < 3) return true;
-    return false;
+  if (tier !== 1 && tier !== 2) return false;
+  const d = CURB_LINE_INSET + 1;
+  for (let k = 1; k < d; k++) {
+    if (!isStreetCorridor(world, x - k, y) || !isStreetCorridor(world, x + k, y) ||
+      !isStreetCorridor(world, x, y - k) || !isStreetCorridor(world, x, y + k)) return false;
   }
-  if (tier === 2) {
-    // Medium avenue: dashed 1-px centerline 4 px inside the original block curb
-    const curbW = (x & 1) === 0 && x >= 4 && world.originalBuildingAt[idx - 4] >= 0 && world.streetTier[idx - 1] === 2;
-    const curbN = (y & 1) === 0 && y >= 4 && world.originalBuildingAt[idx - w * 4] >= 0 && world.streetTier[idx - w] === 2;
-    if (curbW && (y & 7) < 2) return true;
-    if (curbN && (x & 7) < 2) return true;
-  }
-  return false;
+  return !isStreetCorridor(world, x - d, y) || !isStreetCorridor(world, x + d, y) ||
+    !isStreetCorridor(world, x, y - d) || !isStreetCorridor(world, x, y + d);
 }
 
 /** Gathers and prioritizes all active dynamic light sources in the scene (explosions, Void portals,
@@ -918,6 +930,59 @@ export function collectSceneLights(
         castsShadows: true,
         shadowStrength: 0.34,
         priority: 82,
+      });
+    }
+  }
+
+  // 7b. Persistent street fires (trash cans, debris piles, trash heaps): small warm flickering point lights.
+  //     Medium keeps two without shadows; high lets eight cast soft shadows; low relies on the painted glow.
+  {
+    const fireCap = STREET_FIRE_LIGHT_CAP[quality] ?? STREET_FIRE_LIGHT_CAP.high;
+    let fireLights = 0;
+    for (const fire of sim.streetFires.fires) {
+      if (fireLights >= fireCap) break;
+      if (!fire.alive || world.towerAt[fire.cells[0]] >= 0) continue;
+      const fx = fire.x + fire.w * 0.5;
+      const fy = fire.y + fire.h * 0.5;
+      if (!inView(fx, fy, 14)) continue;
+      const flick = reduceEffects ? 0.84 : streetFireFlicker(fire, animTime);
+      fireLights++;
+      lights.push({
+        x: fx,
+        y: fy,
+        z: 3,
+        r: 1.3 * flick,
+        g: 0.58 * flick,
+        b: 0.14 * flick,
+        radius: 14,
+        specular: 0.6,
+        castsShadows: quality === "high",
+        shadowStrength: 0.3 * shadowScale,
+        priority: 71,
+      });
+    }
+  }
+
+  // 7c. Orange Tron delivery cars: bright moving point lights that wash nearby buildings and wet roads.
+  {
+    const carCap = DELIVERY_CAR_LIGHT_CAP[quality] ?? DELIVERY_CAR_LIGHT_CAP.high;
+    let carLights = 0;
+    for (const car of sim.deliveries.routes) {
+      if (carLights >= carCap) break;
+      if (!car.path || !inView(car.x, car.y, 12)) continue;
+      carLights++;
+      lights.push({
+        x: car.x + 0.5,
+        y: car.y + 0.5,
+        z: 1.8,
+        r: 1.55,
+        g: 0.66,
+        b: 0.14,
+        radius: 12,
+        specular: 0.85,
+        castsShadows: quality === "high",
+        shadowStrength: 0.2 * shadowScale,
+        priority: 67,
       });
     }
   }
@@ -1440,17 +1505,16 @@ export class LightingEngine {
         }
         this.terrainSurface[idx] = surface;
         const stTier = world.streetTier[idx];
-        this.terrainLane[idx] =
-          mat === CellMaterial.STREET && (stTier === 1 || stTier === 2)
-            ? isBoulevardOrAvenueLaneAt(world, x, y)
-              ? 2
-              : isBoulevardOrAvenueLaneAt(world, x - 1, y) ||
-                  isBoulevardOrAvenueLaneAt(world, x + 1, y) ||
-                  isBoulevardOrAvenueLaneAt(world, x, y - 1) ||
-                  isBoulevardOrAvenueLaneAt(world, x, y + 1)
-                ? 1
-                : 0
-            : 0;
+        // Curb line glow falloff: 3 on the line, 2 one pixel away, 1 two pixels away (road and sidewalk)
+        let lane = 0;
+        if (mat === CellMaterial.STREET && (stTier === 1 || stTier === 2)) {
+          if (isBoulevardOrAvenueLaneAt(world, x, y)) lane = 3;
+          else if (isBoulevardOrAvenueLaneAt(world, x - 1, y) || isBoulevardOrAvenueLaneAt(world, x + 1, y) ||
+            isBoulevardOrAvenueLaneAt(world, x, y - 1) || isBoulevardOrAvenueLaneAt(world, x, y + 1)) lane = 2;
+          else if (isBoulevardOrAvenueLaneAt(world, x - 2, y) || isBoulevardOrAvenueLaneAt(world, x + 2, y) ||
+            isBoulevardOrAvenueLaneAt(world, x, y - 2) || isBoulevardOrAvenueLaneAt(world, x, y + 2)) lane = 1;
+        }
+        this.terrainLane[idx] = lane;
         const tGround =
           mat === CellMaterial.VOID || mat === CellMaterial.EMPTY ? 0 :
           mat === CellMaterial.WALL || mat === CellMaterial.BARRIER || cover === LandCover.SILO
@@ -2171,16 +2235,15 @@ export class LightingEngine {
             }
           }
 
-          // Faint glowing orange lane markings on boulevards & avenues, slightly lighting the wet street in rain
+          // Solid orange curb lines glow onto the road and sidewalk beside them, and sheen on wet streets
           const lane = isBuilding ? 0 : this.terrainLane[i];
           if (lane > 0 && preset.neonIntensity > 0.2) {
-            if (lane === 2) {
-              const laneGlow = preset.neonIntensity * (0.14 + localWet * 0.08);
-              ptR += laneGlow;
-              ptG += laneGlow * 0.45;
-              ptB += laneGlow * 0.08;
-            } else if (localWet > 0.05) {
-              const wetLaneSpill = localWet * preset.neonIntensity * 0.09;
+            const laneGlow = preset.neonIntensity * (lane === 3 ? 0.2 + localWet * 0.08 : lane === 2 ? 0.075 : 0.032);
+            ptR += laneGlow;
+            ptG += laneGlow * 0.45;
+            ptB += laneGlow * 0.08;
+            if (localWet > 0.05 && lane < 3) {
+              const wetLaneSpill = localWet * preset.neonIntensity * (lane === 2 ? 0.1 : 0.05);
               ptR += wetLaneSpill;
               ptG += wetLaneSpill * 0.44;
               ptB += wetLaneSpill * 0.08;

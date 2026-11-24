@@ -179,9 +179,9 @@ export const ENTRANCE_PURPLE_ACCENT: DistrictNeonAccent = {
 };
 
 export const RED_SIGN_ACCENT: DistrictNeonAccent = {
-  neonEdge: "#d9183b",
-  neonCore: "#ff5c7a",
-  lightRgb: [1.42, 0.14, 0.28],
+  neonEdge: "#c8102e",
+  neonCore: "#ff3a4a",
+  lightRgb: [1.5, 0.12, 0.16],
 };
 
 const landmarkIdsCache = new WeakMap<VoidWorld, Set<number>>();
@@ -223,8 +223,9 @@ export function buildingNeonTier(world: VoidWorld, b: MetroBuilding): BuildingNe
   return "dark";
 }
 
-/** Returns the district neon accent color for building `b`:
- * cyan, cyber magenta, electric violet, cool white-ice, or crimson-red neon signs.
+/** Returns the district neon accent color for building `b`'s outlines and cornices:
+ * mostly Tron cyan, with some district sectors in cyber magenta, electric violet or cool white-ice.
+ * Red appears on signs only (`buildingSignAccentFor`).
  * (Tower lights stay uniquely warm orange.) */
 export function districtNeonAccentFor(world: VoidWorld, b: MetroBuilding, pal: ArchPalette): DistrictNeonAccent {
   if (b.archStyle === "homestead" || b.archStyle === "barn") {
@@ -233,11 +234,7 @@ export function districtNeonAccentFor(world: VoidWorld, b: MetroBuilding, pal: A
   const sectorX = Math.floor(b.x / 84);
   const sectorY = Math.floor(b.y / 88);
   const sectorRoll = (sectorX * 3 + sectorY * 2 + (world.seed & 3)) % 5;
-  const bldRoll = hash(world.seed, 924, b.id) % 7;
-  if (bldRoll === 0 && (b.w >= 6 || b.isSkyscraper)) {
-    return RED_SIGN_ACCENT;
-  }
-  if (sectorRoll === 1 || bldRoll === 1) {
+  if (sectorRoll === 1) {
     // Cyber magenta district accent
     return {
       neonEdge: "#d838e8",
@@ -245,7 +242,7 @@ export function districtNeonAccentFor(world: VoidWorld, b: MetroBuilding, pal: A
       lightRgb: [1.26, 0.26, 1.38],
     };
   }
-  if (sectorRoll === 3 || bldRoll === 2) {
+  if (sectorRoll === 3) {
     // Electric violet / cool white-ice district accent
     if (b.district === "plaza" || b.archStyle === "civicDome" || b.archStyle === "solarTerrace") {
       return {
@@ -267,9 +264,9 @@ export function districtNeonAccentFor(world: VoidWorld, b: MetroBuilding, pal: A
   };
 }
 
-/** Returns the neon sign color for a sign-bearing building (~38% crimson red neon, rest district cyan/magenta/violet). */
+/** Returns the neon sign color for a sign-bearing building (~60% crimson red neon, rest district cyan/magenta/violet). */
 export function buildingSignAccentFor(world: VoidWorld, b: MetroBuilding, pal: ArchPalette): DistrictNeonAccent {
-  if ((hash(world.seed, 929, b.id) % 5) <= 1) {
+  if ((hash(world.seed, 929, b.id) % 5) <= 2) {
     return RED_SIGN_ACCENT;
   }
   return districtNeonAccentFor(world, b, pal);
@@ -485,27 +482,30 @@ export function roofColorAt(
       b.archStyle === "artDecoSetback" ||
       b.archStyle === "solarTerrace" ||
       (b.isSkyscraper && baseElev >= 6);
-    // Rim inset of the top crown deck (or main roof deck on unstepped buildings)
-    const crownRimInset = stepped && Math.min(b.w, b.h) >= pixels(5) ? pixels(2) : 1;
+    // Rim inset of the deck that carries the roof neon: the crown deck when it is wide enough to read
+    // as a shape (6+ px), else the next tier down. Tiny crowns get no roof neon at all, so a roof never
+    // shows a cramped neon blob or a fragment.
+    const span = (k: number): number => Math.min(b.w, b.h) - 2 * k;
+    let crownRimInset = stepped && Math.min(b.w, b.h) >= pixels(5) ? pixels(2) : 1;
+    if (span(crownRimInset) < 6 && crownRimInset > 1) crownRimInset = stepped ? pixels(1) : 1;
+    if (span(crownRimInset) < 6) crownRimInset = 1;
+    const deckSpan = span(crownRimInset);
+    const onRim = inset === crownRimInset && deckSpan >= 6;
+    const isCorner =
+      (lx === crownRimInset || right === crownRimInset) && (ly === crownRimInset || bottom === crownRimInset);
 
-    if (neonTier === "landmark" && b.w >= 6 && b.h >= 6) {
-      // Full symmetrical crown perimeter outline on hero landmarks
-      if (inset === crownRimInset) {
-        const isCorner =
-          (lx === crownRimInset || right === crownRimInset) &&
-          (ly === crownRimInset || bottom === crownRimInset);
+    if (neonTier === "landmark") {
+      // Full symmetrical deck perimeter outline on hero landmarks
+      if (onRim) color = isCorner ? accent.neonEdge : accent.neonCore;
+    } else if (neonTier === "sign" || neonTier === "outline") {
+      // Corner brackets need room for their 3 px arms; smaller decks take a clean full outline instead.
+      const rawRoofStyle = (b.id * 5 + b.variant) & 3;
+      const roofStyle = rawRoofStyle === 1 && deckSpan < 10 ? 0 : rawRoofStyle;
+      if (roofStyle === 0 && onRim) {
+        // Full 4-sided roof edge outline around the deck
         color = isCorner ? accent.neonEdge : accent.neonCore;
-      }
-    } else if ((neonTier === "sign" || neonTier === "outline") && b.w >= 6 && b.h >= 6) {
-      const roofStyle = (b.id * 5 + b.variant) & 3;
-      if (roofStyle === 0 && inset === crownRimInset) {
-        // Full 4-sided roof edge outline around the crown deck
-        const isCorner =
-          (lx === crownRimInset || right === crownRimInset) &&
-          (ly === crownRimInset || bottom === crownRimInset);
-        color = isCorner ? accent.neonEdge : accent.neonCore;
-      } else if (roofStyle === 1 && inset === crownRimInset) {
-        // Symmetrical L-shaped corner brackets at all 4 roof corners (3 px arms)
+      } else if (roofStyle === 1 && onRim) {
+        // Symmetrical L-shaped corner brackets at all 4 deck corners (3 px arms)
         const nearWest = lx - crownRimInset <= 2;
         const nearEast = right - crownRimInset <= 2;
         const nearNorth = ly - crownRimInset <= 2;
@@ -518,18 +518,18 @@ export function roofColorAt(
             bottom - crownRimInset === 2;
           color = isTip ? accent.neonEdge : accent.neonCore;
         }
-      } else if (roofStyle === 2 && inset === crownRimInset && bottom === crownRimInset) {
-        // Symmetrical front cornice roof bar along the entire south crown edge
+      } else if (roofStyle === 2 && onRim && bottom === crownRimInset) {
+        // Symmetrical front cornice bar along the whole south deck edge
         color = lx === crownRimInset || right === crownRimInset ? accent.neonEdge : accent.neonCore;
       }
     }
 
-    // Rooftop neon sign box (centered 3x2 plaque near the front of the crown deck on sign/landmark buildings)
-    if ((neonTier === "landmark" || (neonTier === "sign" && (b.id & 1) === 1)) && b.w >= 8 && b.h >= 8) {
+    // Rooftop neon sign box: a framed 3x2 plaque centred on a deck big enough to keep it clear of the rim
+    if ((neonTier === "landmark" || (neonTier === "sign" && (b.id & 1) === 1)) && deckSpan >= 9) {
       const dx = x - cx;
-      const signRow0 = b.h - 1 - crownRimInset - 2;
-      if (Math.abs(dx) <= 1 && (ly === signRow0 || ly === signRow0 + 1)) {
-        color = Math.abs(dx) === 1 && ly === signRow0 ? signAccent.neonEdge : signAccent.neonCore;
+      const dy = y - cy;
+      if (Math.abs(dx) <= 1 && (dy === 0 || dy === 1)) {
+        color = Math.abs(dx) === 1 || dy === 1 ? signAccent.neonEdge : signAccent.neonCore;
       }
     }
   }
@@ -575,7 +575,7 @@ export function facadeColorAt(
       elev >= 4 &&
       fRow >= 1 &&
       fRow <= elev - 1 &&
-      (lx === tierInset || right === tierInset) &&
+      tierInset === 0 &&
       (neonTier === "landmark" || (neonTier === "outline" && (b.id & 1) === 0))
     ) {
       return fRow === 1 || fRow === elev - 1 ? accent.neonEdge : accent.neonCore;
@@ -620,6 +620,7 @@ export function facadeColorAt(
     // 2. Full-width symmetrical upper cornice neon bar directly under the tier's roof parapet
     if (
       fRow === elev - 1 &&
+      (isFrontWall || neonTier === "landmark") &&
       (neonTier === "landmark" || feat === 0 || (neonTier === "outline" && feat === 2)) &&
       lx >= tierLeft &&
       lx <= tierRight
@@ -630,6 +631,7 @@ export function facadeColorAt(
     // 3. Symmetrical twin vertical corner pillars framing both sides of the facade tier
     if (
       elev >= 4 &&
+      isFrontWall &&
       (neonTier === "landmark" || (neonTier === "outline" && (b.id & 1) === 1) || (neonTier === "sign" && feat === 1)) &&
       (lx === tierLeft || lx === tierRight) &&
       fRow >= 1 &&
@@ -639,7 +641,8 @@ export function facadeColorAt(
     }
 
     // 4. Readable architectural neon sign shapes on "landmark" and "sign" buildings (red, cyan, magenta, or violet)
-    if ((neonTier === "landmark" || neonTier === "sign") && elev >= 5 && tierSpan >= 6) {
+    // Signs hang on the street-facing front wall only, never on setback tiers where roofs would clip them.
+    if ((neonTier === "landmark" || neonTier === "sign") && isFrontWall && elev >= 5 && tierSpan >= 6) {
       const signShape = (b.id + b.variant) & 1;
       if (signShape === 0) {
         // Centered rectangular framed sign billboard plaque (3x2 or 5x2 box on upper-mid facade)

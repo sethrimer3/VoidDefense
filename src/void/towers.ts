@@ -53,7 +53,7 @@ export const TOWER_SPECS: Record<TowerTypeId, TowerSpec> = {
     id: "deliveryDepot",
     name: "Delivery Depot",
     shortName: "Delivery",
-    description: "Place two depots beside roads to dispatch a truck. Earn Supplies on arrival, with higher payouts for longer trips.",
+    description: "Place depots beside roads. Each sends a delivery car to its furthest depot and earns Supplies on arrival, with higher payouts for longer trips. Upgrades reach the 2, then 3 furthest depots, 3x faster.",
     cost: 45,
     w: pixels(3),
     h: pixels(3),
