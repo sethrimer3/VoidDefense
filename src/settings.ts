@@ -97,6 +97,8 @@ export const SETTINGS = {
   legacyWalls: { kind: "toggle", default: false, page: { id: "legacy-walls", label: "Legacy Walls" } },
   /** Oblique building height projection (`full` = 1 px per 2 floors, `low` = half height, `flat` = top-down only). */
   buildingHeight: { kind: "choice", default: "full", choices: [["full", "Full"], ["low", "Low"], ["flat", "Flat"]], page: { id: "building-height", label: "Building height" } },
+  /** 2.5D surface lighting & shadow quality (`high`, `medium`, `low`; auto-drops on slow devices). */
+  lightingQuality: { kind: "choice", default: "high", choices: [["high", "High"], ["medium", "Medium"], ["low", "Low"]], page: { id: "lighting-quality", label: "Lighting quality" } },
   /** Alembic, the game's own pixel font, for every word on the page; off, Cinzel. */
   pixelFont: { kind: "toggle", default: true, page: { id: "pixel-font", label: "Use Custom Font" } },
   /** Master switch for developer controls, including the enemy tester. */

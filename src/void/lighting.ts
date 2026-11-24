@@ -18,6 +18,30 @@ import type { VoidWorld } from "./world.ts";
 
 export const MAX_DYNAMIC_LIGHTS = 48;
 
+export type LightingQualityMode = "low" | "medium" | "high";
+
+export const LIGHTING_QUALITY_CAPS: Record<
+  LightingQualityMode,
+  { maxLights: number; maxShadowLights: number }
+> = {
+  low: { maxLights: 20, maxShadowLights: 6 },
+  medium: { maxLights: 34, maxShadowLights: 14 },
+  high: { maxLights: 48, maxShadowLights: 28 },
+};
+
+/** Warm directional sunlight vector `(lx, ly, lz)` coming from the North-West so south/east
+ * surfaces and long soft SE shadows read cleanly, paired with a cooler sky/Void ambient fill. */
+export const SUN_DIRECTION = (() => {
+  const rx = -0.52;
+  const ry = -0.52;
+  const rz = 0.68;
+  const inv = 1 / Math.hypot(rx, ry, rz);
+  return { x: rx * inv, y: ry * inv, z: rz * inv } as const;
+})();
+export const SUN_WARM_COLOR = [0.22, 0.17, 0.09] as const;
+export const AMBIENT_COOL_FILL = [0.05, 0.09, 0.16] as const;
+export const VOID_AMBIENT_FILL = [0.11, 0.05, 0.20] as const;
+
 export type PointLight = {
   /** World X coordinate in simulation cells / world pixels. */
   x: number;
@@ -39,6 +63,8 @@ export type PointLight = {
   shadowStrength: number;
   /** Priority score for capping to `MAX_DYNAMIC_LIGHTS`. */
   priority?: number;
+  /** Falloff exponent (`2` default; `3` for short-lived explosions, muzzle flashes and projectiles). */
+  falloffPower?: 2 | 3;
 };
 
 type CompiledLight = PointLight & {
@@ -177,22 +203,84 @@ export function terrainReliefAt(world: VoidWorld, x: number, y: number): number 
   return 0.15;
 }
 
-/** Computes the unit 3D surface normal `(nx, ny, nz)` for terrain cell `(x, y)` from its relief gradient. */
+/** Computes the unit 3D surface normal `(nx, ny, nz)` for terrain cell `(x, y)` using a 3x3 Sobel filter over `terrainReliefAt`. */
 export function computeTerrainNormalAt(
   world: VoidWorld,
   x: number,
   y: number,
 ): [number, number, number] {
-  const hL = terrainReliefAt(world, x - 1, y);
-  const hR = terrainReliefAt(world, x + 1, y);
-  const hU = terrainReliefAt(world, x, y - 1);
-  const hD = terrainReliefAt(world, x, y + 1);
-  const scale = 1.45;
-  const sx = (hR - hL) * scale;
-  const sy = (hD - hU) * scale;
+  const hNW = terrainReliefAt(world, x - 1, y - 1);
+  const hN = terrainReliefAt(world, x, y - 1);
+  const hNE = terrainReliefAt(world, x + 1, y - 1);
+  const hW = terrainReliefAt(world, x - 1, y);
+  const hE = terrainReliefAt(world, x + 1, y);
+  const hSW = terrainReliefAt(world, x - 1, y + 1);
+  const hS = terrainReliefAt(world, x, y + 1);
+  const hSE = terrainReliefAt(world, x + 1, y + 1);
+  const scale = 0.38;
+  const sx = (hNE + 2 * hE + hSE - (hNW + 2 * hW + hSW)) * scale;
+  const sy = (hSW + 2 * hS + hSE - (hNW + 2 * hN + hNE)) * scale;
   const inv = 1 / Math.sqrt(1 + sx * sx + sy * sy);
   return [-sx * inv, -sy * inv, inv];
 }
+
+/** Procedural 3x3 Sobel normal generator for a pixel-art sprite height matrix (for towers and infantry). */
+export function computeSpriteSobelNormals(
+  heights: ArrayLike<number>,
+  w: number,
+  h: number,
+  scale = 0.65,
+): { nx: Float32Array; ny: Float32Array; nz: Float32Array } {
+  const n = w * h;
+  const nx = new Float32Array(n);
+  const ny = new Float32Array(n);
+  const nz = new Float32Array(n);
+  const at = (x: number, y: number): number => {
+    const cx = x < 0 ? 0 : x >= w ? w - 1 : x;
+    const cy = y < 0 ? 0 : y >= h ? h - 1 : y;
+    return heights[cy * w + cx];
+  };
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const gx =
+        (at(x + 1, y - 1) + 2 * at(x + 1, y) + at(x + 1, y + 1) -
+          (at(x - 1, y - 1) + 2 * at(x - 1, y) + at(x - 1, y + 1))) *
+        scale;
+      const gy =
+        (at(x - 1, y + 1) + 2 * at(x, y + 1) + at(x + 1, y + 1) -
+          (at(x - 1, y - 1) + 2 * at(x, y - 1) + at(x + 1, y - 1))) *
+        scale;
+      const inv = 1 / Math.sqrt(1 + gx * gx + gy * gy);
+      const i = y * w + x;
+      nx[i] = -gx * inv;
+      ny[i] = -gy * inv;
+      nz[i] = inv;
+    }
+  }
+  return { nx, ny, nz };
+}
+
+/** Precomputed Sobel normal maps for infantry and tower sprite parts (helmet/roof dome, beveled armor edges, south face). */
+export const TOWER_SOBEL_NORMALS = computeSpriteSobelNormals(
+  [
+    0.2, 0.5, 0.2,
+    0.5, 1.0, 0.5,
+    0.1, 0.3, 0.1,
+  ],
+  3,
+  3,
+  0.72,
+);
+
+export const INFANTRY_SOBEL_NORMALS = computeSpriteSobelNormals(
+  [
+    0.35, 0.95, 0.35,
+    0.25, 0.70, 0.25,
+  ],
+  3,
+  2,
+  0.75,
+);
 
 /** Marches grid boundaries from a receiver toward the light so a one-pixel caster cannot
  * fall between ray samples. Height clearance and footprint coverage soften grazing edges. */
@@ -267,31 +355,48 @@ export function traceLightOcclusion(
 }
 
 /** Gathers and prioritizes all active dynamic light sources in the scene (explosions, Void portals,
- * active Void frontier & lightning, shells, lasers, farm fires, Countervoid, Lantern Bearers, towers,
- * Void Nodes, and cosmic organisms), capped to `MAX_DYNAMIC_LIGHTS`. */
+ * active Void frontier & lightning, shells, lasers, farm fires, Countervoid, Lantern Bearers,
+ * Tron-orange Resistance towers, Tron-blue metropolitan buildings, Void Nodes, and cosmic organisms),
+ * capped by `quality` and `viewBounds`. */
 export function collectSceneLights(
   sim: VoidSim,
   animTime: number,
   reduceEffects: boolean,
   buildingHeight: BuildingHeightMode = "full",
+  quality: LightingQualityMode = "high",
+  viewBounds?: { x0: number; y0: number; x1: number; y1: number },
 ): PointLight[] {
   const { world, voidField, combat, physics } = sim;
-  const { w } = world.grid;
+  const { w, h } = world.grid;
   const pulse = reduceEffects ? 0.78 : 0.68 + 0.32 * Math.sin(animTime * 5.2);
   const tElev =
     buildingHeight === "flat" ? 0 : buildingHeight === "low" ? 1 : TOWER_ELEVATION_PX;
   const lights: PointLight[] = [];
+  const caps = LIGHTING_QUALITY_CAPS[quality] ?? LIGHTING_QUALITY_CAPS.high;
 
-  // 1. Explosions & expanding impact/strike shockwaves (highest priority, strong shadows and soft surface light)
+  const inView = (lx: number, ly: number, radius: number): boolean => {
+    if (!viewBounds) return true;
+    const pad = radius + MAX_ELEVATION_PX + 2;
+    return (
+      lx + pad >= viewBounds.x0 &&
+      lx - pad <= viewBounds.x1 &&
+      ly + pad >= viewBounds.y0 &&
+      ly - pad <= viewBounds.y1
+    );
+  };
+
+  // 1. Explosions & expanding impact/strike shockwaves (highest priority, fast falloff, flicker, strong moving shadows)
   for (let i = 0; i < physics.shockwaves.length; i++) {
     const s = physics.shockwaves[i];
     const t = Math.min(1, Math.max(0, s.life / Math.max(0.01, s.maxLife)));
-    const flash = Math.pow(1 - t, 0.7);
+    const flash = Math.pow(1 - t, 0.85);
     if (flash <= 0.04) continue;
+    const radius = Math.min(44, Math.max(12, s.maxRadius * (1.45 + t * 0.85)));
+    if (!inView(s.x, s.y, radius)) continue;
     const [cr, cg, cb] = parseColorRgb01(s.color);
     const [sr, sg, sb] = parseColorRgb01(s.secondaryColor || s.color);
-    const boost = 1.85 * flash;
-    const radius = Math.min(44, Math.max(12, s.maxRadius * (1.45 + t * 0.95)));
+    const flicker = reduceEffects ? 1 : 0.84 + 0.16 * Math.sin(animTime * 42 + i * 7.3);
+    const boost = 1.95 * flash * flicker;
     lights.push({
       x: s.x,
       y: s.y,
@@ -302,14 +407,17 @@ export function collectSceneLights(
       radius,
       specular: 0.95,
       castsShadows: true,
-      shadowStrength: 0.52 * flash,
+      shadowStrength: 0.54 * flash,
       priority: 100 + radius,
+      falloffPower: 3,
     });
   }
 
   // 2. Echo Mine pending blasts & persistent echoes
   for (let i = 0; i < combat.echoPendingBlasts.length; i++) {
     const eb = combat.echoPendingBlasts[i];
+    const radius = Math.max(14, eb.radius * 1.6);
+    if (!inView(eb.x, eb.y, radius)) continue;
     lights.push({
       x: eb.x,
       y: eb.y,
@@ -317,15 +425,18 @@ export function collectSceneLights(
       r: 1.55,
       g: 0.72,
       b: 0.22,
-      radius: Math.max(14, eb.radius * 1.6),
+      radius,
       specular: 0.85,
       castsShadows: true,
       shadowStrength: 0.42,
       priority: 96,
+      falloffPower: 3,
     });
   }
   for (let i = 0; i < combat.persistentEchoes.length; i++) {
     const pe = combat.persistentEchoes[i];
+    const radius = Math.max(12, pe.radius * 1.3);
+    if (!inView(pe.x, pe.y, radius)) continue;
     lights.push({
       x: pe.x,
       y: pe.y,
@@ -333,7 +444,7 @@ export function collectSceneLights(
       r: 1.05 * pulse,
       g: 0.54 * pulse,
       b: 0.18 * pulse,
-      radius: Math.max(12, pe.radius * 1.3),
+      radius,
       specular: 0.6,
       castsShadows: true,
       shadowStrength: 0.25,
@@ -344,6 +455,8 @@ export function collectSceneLights(
   // 3. Chrono Cannon temporal reconstruction flashes
   for (let i = 0; i < combat.chronoEffects.length; i++) {
     const ef = combat.chronoEffects[i];
+    const radius = Math.max(14, ef.radius * 1.85);
+    if (!inView(ef.sx, ef.sy, radius)) continue;
     const p = Math.min(1, ef.life / Math.max(0.05, ef.maxLife));
     const fade = 1 - p * 0.75;
     lights.push({
@@ -353,7 +466,7 @@ export function collectSceneLights(
       r: 1.35 * fade,
       g: 1.08 * fade,
       b: 0.44 * fade,
-      radius: Math.max(14, ef.radius * 1.85),
+      radius,
       specular: 0.8,
       castsShadows: true,
       shadowStrength: 0.38 * fade,
@@ -362,11 +475,11 @@ export function collectSceneLights(
   }
 
   // 4. Void Portals (black hole event horizon accretion glow)
-  const activePortals = [];
   for (let i = 0; i < world.portals.length; i++) {
     const p = world.portals[i];
     if (p.active) {
-      activePortals.push(p);
+      const radius = Math.min(48, Math.max(20, p.radius * 2.4));
+      if (!inView(p.x, p.y, radius)) continue;
       lights.push({
         x: p.x,
         y: p.y,
@@ -374,13 +487,15 @@ export function collectSceneLights(
         r: 0.88 * pulse,
         g: 0.26 * pulse,
         b: 1.15 * pulse,
-        radius: Math.min(48, Math.max(20, p.radius * 2.4)),
+        radius,
         specular: 0.72,
         castsShadows: true,
         shadowStrength: 0.36,
         priority: 92,
       });
     } else {
+      const radius = Math.max(12, p.radius * 1.4);
+      if (!inView(p.x, p.y, radius)) continue;
       lights.push({
         x: p.x,
         y: p.y,
@@ -388,7 +503,7 @@ export function collectSceneLights(
         r: 0.55 * pulse,
         g: 0.18 * pulse,
         b: 0.72 * pulse,
-        radius: Math.max(12, p.radius * 1.4),
+        radius,
         specular: 0.4,
         castsShadows: false,
         shadowStrength: 0,
@@ -397,57 +512,67 @@ export function collectSceneLights(
     }
   }
 
-  // 5. Laser beams (muzzle & high-intensity target impact lights)
+  // 5. Laser beams (muzzle & high-intensity target impact lights with fast falloff and flicker)
   for (let i = 0; i < combat.lasers.length; i++) {
     const b = combat.lasers[i];
     const [cr, cg, cb] = parseColorRgb01(b.color);
-    lights.push({
-      x: b.x1,
-      y: b.y1,
-      z: 3.5,
-      r: Math.min(1.8, cr * 1.35 + 0.35),
-      g: Math.min(1.8, cg * 1.35 + 0.28),
-      b: Math.min(1.8, cb * 1.35 + 0.15),
-      radius: 13,
-      specular: 0.9,
-      castsShadows: true,
-      shadowStrength: 0.32,
-      priority: 88,
-    });
-    lights.push({
-      x: b.x0,
-      y: b.y0,
-      z: 2.8,
-      r: cr * 0.85,
-      g: cg * 0.85,
-      b: cb * 0.85,
-      radius: 8,
-      specular: 0.5,
-      castsShadows: false,
-      shadowStrength: 0,
-      priority: 64,
-    });
+    const flick = reduceEffects ? 1 : 0.82 + 0.18 * Math.sin(animTime * 55 + i * 5.1);
+    if (inView(b.x1, b.y1, 13)) {
+      lights.push({
+        x: b.x1,
+        y: b.y1,
+        z: 3.5,
+        r: Math.min(1.8, (cr * 1.35 + 0.35) * flick),
+        g: Math.min(1.8, (cg * 1.35 + 0.28) * flick),
+        b: Math.min(1.8, (cb * 1.35 + 0.15) * flick),
+        radius: 13,
+        specular: 0.9,
+        castsShadows: true,
+        shadowStrength: 0.32,
+        priority: 88,
+        falloffPower: 3,
+      });
+    }
+    if (inView(b.x0, b.y0, 8)) {
+      lights.push({
+        x: b.x0,
+        y: b.y0,
+        z: 2.8,
+        r: cr * 0.95 * flick,
+        g: cg * 0.95 * flick,
+        b: cb * 0.95 * flick,
+        radius: 8,
+        specular: 0.5,
+        castsShadows: false,
+        shadowStrength: 0,
+        priority: 64,
+        falloffPower: 3,
+      });
+    }
   }
 
-  // 6. Parabolic artillery & rocket shells in flight (3D height rises along arc)
+  // 6. Parabolic artillery & rocket shells in flight (3D height rises along arc, fast falloff & flicker)
   for (let i = 0; i < combat.pellets.length; i++) {
     const p = combat.pellets[i];
     const arcLift = Math.sin(p.progress * Math.PI) * 3.8;
     const wx = p.x + (p.tx - p.x) * p.progress;
     const wy = p.y + (p.ty - p.y) * p.progress;
+    if (!inView(wx, wy, 12)) continue;
     const wz = 2.5 + arcLift * 1.45;
+    const flick = reduceEffects ? 1 : 0.86 + 0.14 * Math.sin(animTime * 48 + i * 3.7);
     lights.push({
       x: wx,
       y: wy,
       z: wz,
-      r: p.wallPayload ? 0.28 : 1.15,
-      g: p.wallPayload ? 0.92 : 0.64,
-      b: p.wallPayload ? 1.15 : 0.22,
+      r: (p.wallPayload ? 0.28 : 1.25) * flick,
+      g: (p.wallPayload ? 0.92 : 0.62) * flick,
+      b: (p.wallPayload ? 1.15 : 0.18) * flick,
       radius: 12,
       specular: 0.8,
       castsShadows: true,
       shadowStrength: 0.26,
       priority: 84,
+      falloffPower: 3,
     });
   }
 
@@ -460,6 +585,7 @@ export function collectSceneLights(
       if (world.material[idx] === CellMaterial.VOID) continue;
       const fx = idx % w;
       const fy = (idx / w) | 0;
+      if (!inView(fx + 0.5, fy + 0.5, 15)) continue;
       const bId = world.buildingAt[idx];
       const b = bId >= 0 ? world.buildings[bId] : undefined;
       const rise = b ? elevationOf(b, buildingHeight) : 0;
@@ -480,105 +606,69 @@ export function collectSceneLights(
     }
   }
 
-  // 8. Placed Resistance Towers & Lantern Bearer / Heavy Mech agents
+  // 8. Placed Resistance Towers: every tower emits Tron-style neon orange light (#ff8c1a / #ff6b18),
+  //    casts shadows, and lights nearby surfaces through the normal maps; muzzle flashes boost intensity
   for (let i = 0; i < combat.towers.length; i++) {
     const t = combat.towers[i];
     const cx = t.x + t.w * 0.5;
     const cy = t.y + t.h * 0.5;
     const spec = TOWER_SPECS[t.type];
     const justFired = spec.cooldownSeconds > 0 && t.cooldown > spec.cooldownSeconds * 0.72;
+    const flick = reduceEffects
+      ? 1
+      : justFired
+        ? 0.85 + 0.15 * Math.sin(animTime * 50 + t.uid)
+        : 0.93 + 0.07 * Math.sin(animTime * 6.5 + t.uid);
+    const boost = (justFired ? 1.45 : 1.0) * flick;
+    const radius = t.type === "countervoidHeart" ? 18 : justFired ? 16 : 14;
+    if (!inView(cx, cy, radius)) continue;
 
-    if (t.type === "countervoidHeart") {
-      const beat = reduceEffects ? 0.85 : 0.7 + 0.3 * Math.sin(sim.tick * 0.16);
+    lights.push({
+      x: cx,
+      y: cy,
+      z: tElev + 3.4,
+      r: 1.22 * boost,
+      g: 0.54 * boost,
+      b: 0.12 * boost,
+      radius,
+      specular: 0.78,
+      castsShadows: true,
+      shadowStrength: justFired ? 0.32 : 0.24,
+      priority: justFired ? 81 : t.type === "countervoidHeart" ? 78 : 74,
+      falloffPower: justFired ? 3 : 2,
+    });
+  }
+
+  // 8b. Metropolitan buildings: Tron-style neon blue lights (#00d8ff / #18e5ff) that emit light,
+  //     cast shadows, and illuminate nearby surfaces and facades through the normal maps
+  if (world.buildings.length > 0) {
+    const bCount = world.buildings.length;
+    const targetBldLights = quality === "low" ? 4 : quality === "medium" ? 8 : 10;
+    const bStride = Math.max(1, Math.floor(bCount / targetBldLights));
+    for (let i = 0; i < bCount; i += bStride) {
+      const b = world.buildings[i];
+      if (b.archStyle === "homestead" || b.archStyle === "barn" || b.cells.length === 0) continue;
+      const sampleIdx = b.cells[0];
+      if (world.material[sampleIdx] === CellMaterial.VOID || world.hp[sampleIdx] <= 0) continue;
+      if (world.columnFloors && world.columnFloors[sampleIdx] <= 0) continue;
+      const bx = b.x + b.w * 0.5;
+      const by = b.y + b.h - 0.5;
+      const radius = b.isSkyscraper ? 16 : 13;
+      if (!inView(bx, by, radius)) continue;
+      const bElev = elevationOf(b, buildingHeight);
+      const hum = reduceEffects ? 0.92 : 0.86 + 0.14 * Math.sin(animTime * 3.8 + b.id);
       lights.push({
-        x: cx,
-        y: cy,
-        z: tElev + 3.5,
-        r: 1.15 * beat,
-        g: 0.58 * beat,
-        b: 0.16 * beat,
-        radius: 18,
-        specular: 0.65,
-        castsShadows: true,
-        shadowStrength: 0.28,
-        priority: 78,
-      });
-    } else if (t.type === "shieldProjector") {
-      const pool = combat.shieldPools.get(t.uid) ?? 0;
-      if (pool > 5) {
-        lights.push({
-          x: cx,
-          y: cy,
-          z: tElev + 3.5,
-          r: 0.25,
-          g: 0.88,
-          b: 1.05,
-          radius: 16,
-          specular: 0.75,
-          castsShadows: true,
-          shadowStrength: 0.22,
-          priority: 74,
-        });
-      }
-    } else if (t.type === "voidSiphon") {
-      const s = combat.siphonStates.get(t.uid);
-      const venting = s?.phase === "venting";
-      lights.push({
-        x: cx,
-        y: cy,
-        z: tElev + 4.0,
-        r: venting ? 1.1 : 0.62,
-        g: venting ? 0.68 : 0.36,
-        b: venting ? 0.25 : 1.05,
-        radius: 15,
-        specular: 0.7,
-        castsShadows: true,
-        shadowStrength: 0.22,
-        priority: 73,
-      });
-    } else if (t.type === "boundaryPrism") {
-      lights.push({
-        x: cx,
-        y: cy,
-        z: tElev + 3.5,
-        r: 0.38,
-        g: 0.92,
-        b: 1.0,
-        radius: 14,
+        x: bx,
+        y: by,
+        z: Math.max(2.5, Math.min(7.5, bElev * 0.55 + 1.5)),
+        r: 0.08 * hum,
+        g: 0.82 * hum,
+        b: 1.25 * hum,
+        radius,
         specular: 0.85,
         castsShadows: true,
-        shadowStrength: 0.2,
-        priority: 72,
-      });
-    } else if (t.type === "chronoCannon") {
-      lights.push({
-        x: cx,
-        y: cy,
-        z: tElev + 3.2,
-        r: 0.95,
-        g: 0.76,
-        b: 0.3,
-        radius: 13,
-        specular: 0.7,
-        castsShadows: true,
-        shadowStrength: 0.2,
-        priority: 71,
-      });
-    } else if (justFired) {
-      // Muzzle blast light when Matter Cannon / Rocket Team fires
-      const [cr, cg, cb] = parseColorRgb01(spec.color);
-      lights.push({
-        x: cx,
-        y: cy,
-        z: tElev + 3.2,
-        r: Math.min(1.5, cr * 1.2 + 0.4),
-        g: Math.min(1.5, cg * 1.2 + 0.3),
-        b: Math.min(1.5, cb * 1.2 + 0.15),
-        radius: 13,
-        specular: 0.75,
-        castsShadows: true,
-        shadowStrength: 0.25,
-        priority: 79,
+        shadowStrength: 0.24,
+        priority: b.isSkyscraper ? 70 : 66,
       });
     }
   }
@@ -587,6 +677,8 @@ export function collectSceneLights(
     const a = combat.agents[i];
     if (a.kind === "lanternBearer") {
       const haloR = a.coverageRadius ?? pixels(2 + sim.tech.lanternRadiusBonus);
+      const radius = Math.max(11, haloR * 2.1);
+      if (!inView(a.x, a.y, radius)) continue;
       lights.push({
         x: a.x,
         y: a.y,
@@ -594,13 +686,14 @@ export function collectSceneLights(
         r: 0.98,
         g: 0.78,
         b: 0.38,
-        radius: Math.max(11, haloR * 2.1),
+        radius,
         specular: 0.65,
         castsShadows: true,
         shadowStrength: 0.24,
         priority: 76,
       });
     } else if (a.kind === "heavyMech" || a.kind === "wallSerpent") {
+      if (!inView(a.x, a.y, 9)) continue;
       lights.push({
         x: a.x,
         y: a.y,
@@ -620,6 +713,7 @@ export function collectSceneLights(
   // 9. Crystalline Void Nodes & Luminous Cosmic Organisms
   for (let i = 0; i < voidField.nodes.length; i++) {
     const node = voidField.nodes[i];
+    if (!inView(node.x, node.y, 15)) continue;
     lights.push({
       x: node.x,
       y: node.y,
@@ -645,6 +739,8 @@ export function collectSceneLights(
       o.kind === "nebulaWorm"
     ) {
       const isBoss = o.kind === "nebulaQueen" || o.kind === "nexusCrystal";
+      const radius = isBoss ? 15 : 10;
+      if (!inView(o.x, o.y, radius)) continue;
       lights.push({
         x: o.x,
         y: o.y,
@@ -652,7 +748,7 @@ export function collectSceneLights(
         r: o.kind === "voidBloom" ? 0.95 : 0.72,
         g: o.kind === "nexusCrystal" ? 0.78 : 0.28,
         b: 1.05,
-        radius: isBoss ? 15 : 10,
+        radius,
         specular: 0.65,
         castsShadows: isBoss,
         shadowStrength: isBoss ? 0.24 : 0,
@@ -671,6 +767,7 @@ export function collectSceneLights(
         const cIdx = voidField.frontierCells[hash(world.seed, 760, slot, b) % fLen];
         const sx = (cIdx % w) + 0.5;
         const sy = ((cIdx / w) | 0) + 0.5;
+        if (!inView(sx, sy, 16)) continue;
         const flick = 0.55 + 0.45 * hash01(world.seed, 762, slot, b);
         lights.push({
           x: sx,
@@ -684,12 +781,13 @@ export function collectSceneLights(
           castsShadows: true,
           shadowStrength: 0.34 * flick,
           priority: 80,
+          falloffPower: 3,
         });
       }
     }
 
-    // Clustered frontier perimeter glow (up to 12 evenly strided samples around the breach)
-    const clusterTarget = 12;
+    // Clustered frontier perimeter glow (up to 10 evenly strided samples around the breach)
+    const clusterTarget = 10;
     const fStride = Math.max(1, Math.floor(fLen / clusterTarget));
     for (let i = 0; i < fLen; i += fStride) {
       const cIdx = voidField.frontierCells[i];
@@ -697,6 +795,8 @@ export function collectSceneLights(
       const fy = ((cIdx / w) | 0) + 0.5;
       const micro = voidField.cellMicroWork[cIdx];
       const intensity = Math.min(1, 0.35 + micro / 1400);
+      const radius = 14 + intensity * 5;
+      if (!inView(fx, fy, radius)) continue;
       lights.push({
         x: fx,
         y: fy,
@@ -704,7 +804,7 @@ export function collectSceneLights(
         r: 0.64 * intensity * pulse,
         g: 0.18 * intensity * pulse,
         b: 0.92 * intensity * pulse,
-        radius: 14 + intensity * 5,
+        radius,
         specular: 0.55,
         castsShadows: true,
         shadowStrength: 0.25 * intensity,
@@ -719,9 +819,12 @@ export function collectSceneLights(
     const stride = Math.max(1, Math.floor(cvArr.length / 6));
     for (let i = 0; i < cvArr.length; i += stride) {
       const idx = cvArr[i];
+      const cx = (idx % w) + 0.5;
+      const cy = ((idx / w) | 0) + 0.5;
+      if (!inView(cx, cy, 12)) continue;
       lights.push({
-        x: (idx % w) + 0.5,
-        y: ((idx / w) | 0) + 0.5,
+        x: cx,
+        y: cy,
         z: 3.0,
         r: 0.95,
         g: 0.52,
@@ -735,9 +838,23 @@ export function collectSceneLights(
     }
   }
 
-  if (lights.length > MAX_DYNAMIC_LIGHTS) {
-    lights.sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
-    lights.length = MAX_DYNAMIC_LIGHTS;
+  lights.sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
+  if (lights.length > caps.maxLights) {
+    lights.length = caps.maxLights;
+  }
+  // Cap shadow-casting lights per frame and fade the remaining lights to unshadowed glow
+  let shadowCasters = 0;
+  for (let i = 0; i < lights.length; i++) {
+    const l = lights[i];
+    if (!l.castsShadows) continue;
+    shadowCasters++;
+    if (shadowCasters > caps.maxShadowLights) {
+      l.castsShadows = false;
+      l.shadowStrength = 0;
+    } else if (shadowCasters > caps.maxShadowLights - 3) {
+      const fade = (caps.maxShadowLights - shadowCasters + 1) / 3;
+      l.shadowStrength *= fade;
+    }
   }
   return lights;
 }
@@ -923,8 +1040,20 @@ export class LightingEngine {
       const row = y * w;
       for (let x = x0; x < x1; x++) {
         const idx = row + x;
-        const dx = (relief[row + Math.min(w - 1, x + 1)] - relief[row + Math.max(0, x - 1)]) * 1.45;
-        const dy = (relief[Math.min(h - 1, y + 1) * w + x] - relief[Math.max(0, y - 1) * w + x]) * 1.45;
+        const xW = Math.max(0, x - 1);
+        const xE = Math.min(w - 1, x + 1);
+        const yN = Math.max(0, y - 1) * w;
+        const yS = Math.min(h - 1, y + 1) * w;
+        const hNW = relief[yN + xW];
+        const hN = relief[yN + x];
+        const hNE = relief[yN + xE];
+        const hW = relief[row + xW];
+        const hE = relief[row + xE];
+        const hSW = relief[yS + xW];
+        const hS = relief[yS + x];
+        const hSE = relief[yS + xE];
+        const dx = (hNE + 2 * hE + hSE - (hNW + 2 * hW + hSW)) * 0.38;
+        const dy = (hSW + 2 * hS + hSE - (hNW + 2 * hN + hNE)) * 0.38;
         const nz = 127 / Math.sqrt(1 + dx * dx + dy * dy);
         this.terrainNx[idx] = Math.round(-dx * nz);
         this.terrainNy[idx] = Math.round(-dy * nz);
@@ -963,13 +1092,30 @@ export class LightingEngine {
     const cached = this.roofSunShadow[index];
     if (cached !== 255) return cached * 0.01;
     let shadow = 0;
-    const limit = Math.min(8, x, y);
+    const limit = Math.min(10, x, y);
     for (let step = 1; step <= limit; step++) {
       const caster = (y - step) * this.w + x - step;
       const building = world.buildingAt[caster];
-      if (building < 0 || building === self) continue;
-      const reach = Math.ceil((this.groundElev[caster] - z) * 0.65);
-      if (step <= reach) shadow = Math.max(shadow, 0.36 - (step - 1) * (0.22 / reach));
+      const tower = world.towerAt[caster];
+      if ((building >= 0 && building !== self) || tower >= 0) {
+        const reach = Math.ceil((this.groundElev[caster] - z) * 0.72);
+        if (step <= reach) shadow = Math.max(shadow, 0.38 - (step - 1) * (0.24 / reach));
+      }
+      if (step >= 2) {
+        // Soft penumbra flanks around the NW->SE sun ray
+        const flank1 = (y - step + 1) * this.w + x - step;
+        const b1 = world.buildingAt[flank1];
+        if (b1 >= 0 && b1 !== self) {
+          const reach1 = Math.ceil((this.groundElev[flank1] - z) * 0.62);
+          if (step <= reach1) shadow = Math.max(shadow, 0.22 - (step - 1) * (0.15 / reach1));
+        }
+        const flank2 = (y - step) * this.w + x - step + 1;
+        const b2 = world.buildingAt[flank2];
+        if (b2 >= 0 && b2 !== self) {
+          const reach2 = Math.ceil((this.groundElev[flank2] - z) * 0.62);
+          if (step <= reach2) shadow = Math.max(shadow, 0.22 - (step - 1) * (0.15 / reach2));
+        }
+      }
     }
     const rounded = Math.round(shadow * 100);
     this.roofSunShadow[index] = rounded;
@@ -1344,7 +1490,8 @@ export class LightingEngine {
 
       const dz = light.z - wz;
       const falloff = 1 - Math.sqrt(d2) * light.invRadius;
-      const attenuation = falloff * falloff / (1 + dz * dz * 0.035);
+      const fPow = light.falloffPower === 3 ? falloff * falloff * falloff : falloff * falloff;
+      const attenuation = fPow / (1 + dz * dz * 0.035);
       let visible = 1;
       if (light.castsShadows && d2 > 1) {
         const cache = screenY < 0 ? undefined : light.shadowCache;
@@ -1393,6 +1540,23 @@ export class LightingEngine {
     }
 
     if (red + green + blue < 0.015 && specRed + specGreen + specBlue < 0.5 && shadow < 0.015) return false;
+    // Blend warm directional sunlight on unshadowed sun-facing relief/bevels and cool sky/Void ambient fill
+    // on lit/shadowed tiles without mutating unlit static palette tests
+    const sunDot = Math.max(0, nx * SUN_DIRECTION.x + ny * SUN_DIRECTION.y + nz * SUN_DIRECTION.z);
+    const sunVis = Math.max(0, 1 - shadow * 1.45);
+    const sunTerm = Math.max(0, sunDot - 0.56) * 0.55 * sunVis;
+    const gIdx =
+      Math.min(this.h - 1, Math.max(0, Math.floor(wy))) * this.w +
+      Math.min(this.w - 1, Math.max(0, Math.floor(wx)));
+    const nearVoid =
+      world.material[gIdx] === CellMaterial.VOID ||
+      (gIdx > 0 && world.material[gIdx - 1] === CellMaterial.VOID) ||
+      (gIdx + 1 < world.material.length && world.material[gIdx + 1] === CellMaterial.VOID);
+    const amb = nearVoid ? VOID_AMBIENT_FILL : AMBIENT_COOL_FILL;
+    const ambScale = Math.min(0.22, (red + green + blue) * 0.14 + shadow * 0.32);
+    red += SUN_WARM_COLOR[0] * sunTerm + amb[0] * ambScale;
+    green += SUN_WARM_COLOR[1] * sunTerm + amb[1] * ambScale;
+    blue += SUN_WARM_COLOR[2] * sunTerm + amb[2] * ambScale;
     const out = this.surfaceLight;
     out[0] = red;
     out[1] = green;

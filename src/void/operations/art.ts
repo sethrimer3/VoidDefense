@@ -9,8 +9,9 @@
  * its console screens and the captured Void in each containment chamber,
  * glowing and pulsing behind the glass. A viewport above the chambers looks
  * out on stars and drifting nebula. Crew, the crane's load, sparks and dust
- * go over the lit image, lit by the same light without the bevels. Soft
- * lamp cones and light blooms are composited over the scaled image. */
+ * go over the lit image, lit by the same light without the bevels. Every light
+ * casts a soft surface glow that falls off over nearby bump-mapped plates and
+ * consoles at native pixel resolution, with zero blurred post-scale bloom. */
 
 import {
   BAY, BULKHEAD, CEIL, CHAMBER, CHAMBER_SLOTS, CRANE, CRATES, DECKS, FLOOR, LAB, LADDER_X, OPS_H, OPS_W,
@@ -100,7 +101,6 @@ export class OperationsRenderer {
   private sparks: Spark[] = [];
   private motes: Mote[] = [];
   private readonly stars: { x: number; y: number; b: number; phase: number }[] = [];
-  private readonly glows = new Map<string, HTMLCanvasElement>();
   private fx = 0x51ab1e;
 
   view = { scale: 1, ox: 0, oy: 0 };
@@ -576,7 +576,6 @@ export class OperationsRenderer {
     c.fillRect(0, 0, this.canvas.width, this.canvas.height);
     c.imageSmoothingEnabled = false;
     c.drawImage(this.off, ox, oy, W * scale, H * scale);
-    this.drawAtmosphere(lights, t, motion);
   }
 
   /** Lights every pixel: with the bevels (`lit`) and without (`flat`). */
@@ -799,60 +798,6 @@ export class OperationsRenderer {
       this.emit(s.x, s.y, rgb, Math.min(1, 0.4 + k));
     }
     for (const m of this.motes) if (m.alpha > 0.02) this.add(m.x, m.y, [255, 236, 200], m.alpha * 0.22);
-  }
-
-  private glow(rgb: RGB): HTMLCanvasElement {
-    const key = rgb.map((v) => Math.round(Math.min(1, v) * 15)).join(",");
-    let g = this.glows.get(key);
-    if (!g) {
-      g = document.createElement("canvas");
-      g.width = g.height = 64;
-      const c = g.getContext("2d")!;
-      const q = key.split(",").map((v) => Math.round((Number(v) / 15) * 255));
-      const grad = c.createRadialGradient(32, 32, 0, 32, 32, 32);
-      grad.addColorStop(0, `rgba(${q[0]},${q[1]},${q[2]},0.9)`);
-      grad.addColorStop(0.35, `rgba(${q[0]},${q[1]},${q[2]},0.28)`);
-      grad.addColorStop(1, `rgba(${q[0]},${q[1]},${q[2]},0)`);
-      c.fillStyle = grad;
-      c.fillRect(0, 0, 64, 64);
-      this.glows.set(key, g);
-    }
-    return g;
-  }
-
-  /** Soft lamp cones and the lights' bloom, over the scaled image. */
-  private drawAtmosphere(lights: Light[], t: number, motion: boolean): void {
-    const c = this.ctx;
-    const { scale, ox, oy } = this.view;
-    c.save();
-    c.globalCompositeOperation = "lighter";
-    c.setTransform(scale, 0, 0, scale, ox, oy);
-    const cones: [number, number, string][] = [
-      ...BAY_LAMPS.map((x) => [x, CEIL + 4, "255,214,150"] as [number, number, string]),
-      ...LAB_LAMPS.map((x) => [x, CEIL + 3, "180,215,255"] as [number, number, string]),
-    ];
-    for (const [x, y, rgb] of cones) {
-      const sway = motion ? Math.sin(t * 0.3 + x) * 0.015 : 0;
-      const grad = c.createLinearGradient(0, y, 0, FLOOR);
-      grad.addColorStop(0, `rgba(${rgb},${0.11 + sway})`);
-      grad.addColorStop(1, `rgba(${rgb},0)`);
-      c.fillStyle = grad;
-      c.beginPath();
-      c.moveTo(x - 3, y);
-      c.lineTo(x + 4, y);
-      c.lineTo(x + 26, FLOOR);
-      c.lineTo(x - 25, FLOOR);
-      c.closePath();
-      c.fill();
-    }
-    for (const l of lights) {
-      if (!l.bloom) continue;
-      const peak = Math.max(l.c[0], l.c[1], l.c[2]) || 1;
-      const size = Math.min(40, l.radius * 0.5) * (0.6 + 0.4 * Math.min(1.5, peak));
-      c.globalAlpha = Math.min(1, l.bloom);
-      c.drawImage(this.glow([l.c[0] / peak, l.c[1] / peak, l.c[2] / peak]), l.x - size, l.y - size, size * 2, size * 2);
-    }
-    c.restore();
   }
 
   /** The crew member nearest world point (x, y), if any is close. */

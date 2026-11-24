@@ -353,6 +353,8 @@ export class VoidApp {
     this.renderer = new VoidRenderer(canvas);
     this.renderer.reduceEffects = this.save.settings.reduceMotion;
     this.renderer.buildingHeight = this.save.settings.buildingHeight;
+    this.renderer.lightingQuality = this.save.settings.lightingQuality;
+    this.renderer.effectiveLightingQuality = this.save.settings.lightingQuality;
     this.bindBoardPointers(canvas);
 
     this.towerMenu = new TowerMenuController({
@@ -1675,6 +1677,13 @@ export class VoidApp {
                 <option value="flat" ${this.save.settings.buildingHeight === "flat" ? "selected" : ""}>Flat (Top-Down)</option>
               </select>
             </label>
+            <label class="void-select-row"><span>${t("void.settings.lquality")}</span>
+              <select data-set-lquality>
+                <option value="high" ${this.save.settings.lightingQuality === "high" ? "selected" : ""}>High</option>
+                <option value="medium" ${this.save.settings.lightingQuality === "medium" ? "selected" : ""}>Medium</option>
+                <option value="low" ${this.save.settings.lightingQuality === "low" ? "selected" : ""}>Low</option>
+              </select>
+            </label>
             ${
               showDev
                 ? `<label><input type="checkbox" data-set-dev ${this.save.settings.devMode ? "checked" : ""} /> Developer Mode (Unlock All &amp; Unlimited Supplies)</label>`
@@ -1751,6 +1760,13 @@ export class VoidApp {
       const v = (e.target as HTMLSelectElement).value;
       this.save.settings.buildingHeight = v === "low" || v === "flat" ? v : "full";
       this.renderer.buildingHeight = this.save.settings.buildingHeight;
+      this.persist();
+    };
+    dlg.querySelector<HTMLSelectElement>("[data-set-lquality]")!.onchange = (e) => {
+      const v = (e.target as HTMLSelectElement).value;
+      this.save.settings.lightingQuality = v === "low" || v === "medium" ? v : "high";
+      this.renderer.lightingQuality = this.save.settings.lightingQuality;
+      this.renderer.effectiveLightingQuality = this.save.settings.lightingQuality;
       this.persist();
     };
     const devInput = dlg.querySelector<HTMLInputElement>("[data-set-dev]");

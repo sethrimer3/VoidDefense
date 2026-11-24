@@ -38,8 +38,8 @@ export const ARCH_PALETTES: Record<MetroBuilding["archStyle"], readonly ArchPale
       crown: "#475973",
       litEdge: "#6882a6",
       shadeEdge: "#171e29",
-      neonEdge: "#c98038",
-      neonCore: "#e8be72",
+      neonEdge: "#00c8ff",
+      neonCore: "#7afcff",
       roofAccent: "#566b8a",
     },
     {
@@ -48,8 +48,8 @@ export const ARCH_PALETTES: Record<MetroBuilding["archStyle"], readonly ArchPale
       crown: "#415673",
       litEdge: "#617ea6",
       shadeEdge: "#141b26",
-      neonEdge: "#c98642",
-      neonCore: "#edd08c",
+      neonEdge: "#18d8ff",
+      neonCore: "#8cf5ff",
       roofAccent: "#50698a",
     },
   ],
@@ -60,8 +60,8 @@ export const ARCH_PALETTES: Record<MetroBuilding["archStyle"], readonly ArchPale
       crown: "#63544a",
       litEdge: "#857265",
       shadeEdge: "#211c18",
-      neonEdge: "#bf7839",
-      neonCore: "#e6b86e",
+      neonEdge: "#00c8ff",
+      neonCore: "#7afcff",
       roofAccent: "#736256",
     },
     {
@@ -70,8 +70,8 @@ export const ARCH_PALETTES: Record<MetroBuilding["archStyle"], readonly ArchPale
       crown: "#69594b",
       litEdge: "#8c7866",
       shadeEdge: "#241e19",
-      neonEdge: "#c47e3d",
-      neonCore: "#ecc47d",
+      neonEdge: "#18d8ff",
+      neonCore: "#8cf5ff",
       roofAccent: "#7a6858",
     },
   ],
@@ -82,8 +82,8 @@ export const ARCH_PALETTES: Record<MetroBuilding["archStyle"], readonly ArchPale
       crown: "#424d63",
       litEdge: "#5f6e8c",
       shadeEdge: "#141821",
-      neonEdge: "#c47739",
-      neonCore: "#e6b065",
+      neonEdge: "#00e5ff",
+      neonCore: "#8cf5ff",
       roofAccent: "#505d78",
     },
     {
@@ -92,8 +92,8 @@ export const ARCH_PALETTES: Record<MetroBuilding["archStyle"], readonly ArchPale
       crown: "#4a4663",
       litEdge: "#69648a",
       shadeEdge: "#181621",
-      neonEdge: "#bf6843",
-      neonCore: "#e3a174",
+      neonEdge: "#00d8ff",
+      neonCore: "#7afcff",
       roofAccent: "#595475",
     },
   ],
@@ -104,8 +104,8 @@ export const ARCH_PALETTES: Record<MetroBuilding["archStyle"], readonly ArchPale
       crown: "#63433b",
       litEdge: "#825a4f",
       shadeEdge: "#211512",
-      neonEdge: "#cf692d",
-      neonCore: "#eb9f5b",
+      neonEdge: "#00c8ff",
+      neonCore: "#7afcff",
       roofAccent: "#734e44",
     },
     {
@@ -114,8 +114,8 @@ export const ARCH_PALETTES: Record<MetroBuilding["archStyle"], readonly ArchPale
       crown: "#614839",
       litEdge: "#80604d",
       shadeEdge: "#1f1712",
-      neonEdge: "#c97434",
-      neonCore: "#e8ac64",
+      neonEdge: "#18d8ff",
+      neonCore: "#8cf5ff",
       roofAccent: "#705342",
     },
   ],
@@ -126,8 +126,8 @@ export const ARCH_PALETTES: Record<MetroBuilding["archStyle"], readonly ArchPale
       crown: "#495b69",
       litEdge: "#688094",
       shadeEdge: "#171e24",
-      neonEdge: "#c47e3d",
-      neonCore: "#e6b86e",
+      neonEdge: "#00c8ff",
+      neonCore: "#7afcff",
       roofAccent: "#586d7d",
     },
     {
@@ -136,8 +136,8 @@ export const ARCH_PALETTES: Record<MetroBuilding["archStyle"], readonly ArchPale
       crown: "#445666",
       litEdge: "#627b91",
       shadeEdge: "#151b21",
-      neonEdge: "#c78642",
-      neonCore: "#ebc37a",
+      neonEdge: "#18d8ff",
+      neonCore: "#8cf5ff",
       roofAccent: "#52687a",
     },
   ],
@@ -148,8 +148,8 @@ export const ARCH_PALETTES: Record<MetroBuilding["archStyle"], readonly ArchPale
       crown: "#596675",
       litEdge: "#7a8b9e",
       shadeEdge: "#1b2026",
-      neonEdge: "#c98b3e",
-      neonCore: "#edd084",
+      neonEdge: "#00d8ff",
+      neonCore: "#8cf5ff",
       roofAccent: "#69798a",
     },
   ],
@@ -556,6 +556,17 @@ export function buildBuildingSprite(
   const rustic = b.archStyle === "homestead" || b.archStyle === "barn";
   const isGlassStyle =
     b.archStyle === "glassTower" || b.archStyle === "cyberArcology" || b.archStyle === "solarTerrace";
+  const microHeight = new Float32Array(spriteSize);
+  const baseNx = new Float32Array(spriteSize);
+  const baseNy = new Float32Array(spriteSize);
+  const baseNz = new Float32Array(spriteSize);
+
+  const luma01 = (abgr: number): number => {
+    const r = IS_LITTLE_ENDIAN_ELEV ? abgr & 0xff : (abgr >>> 24) & 0xff;
+    const g = IS_LITTLE_ENDIAN_ELEV ? (abgr >>> 8) & 0xff : (abgr >>> 16) & 0xff;
+    const bl = IS_LITTLE_ENDIAN_ELEV ? (abgr >>> 16) & 0xff : (abgr >>> 8) & 0xff;
+    return (r * 0.299 + g * 0.587 + bl * 0.114) * (1 / 255);
+  };
 
   // Paint row by row from north (`ly = 0`) to south (`ly = b.h - 1`)
   for (let ly = 0; ly < b.h; ly++) {
@@ -598,7 +609,8 @@ export function buildBuildingSprite(
             : facadeColorAt(world, b, cx, cy, f, elev, isSideBorder, hpRatio, pal);
           const pIdx = sy * spriteW + lx;
           colorBuf[pIdx] = fCol;
-          colorU32[pIdx] = hexToElevAbgr(fCol);
+          const abgr = hexToElevAbgr(fCol);
+          colorU32[pIdx] = abgr;
           hitMask[pIdx] = 1;
           elevMap[pIdx] = Math.max(0, Math.min(255, f));
 
@@ -607,9 +619,15 @@ export function buildBuildingSprite(
           let ny = 0.86;
           let nz = 0.48;
           let spec = isGlassStyle ? 115 : 55;
+          let partRelief = 0.35 + luma01(abgr) * 0.28;
 
-          if (westBorder && !eastBorder) nx -= 0.72;
-          else if (eastBorder && !westBorder) nx += 0.72;
+          if (westBorder && !eastBorder) {
+            nx -= 0.72;
+            partRelief += 0.14;
+          } else if (eastBorder && !westBorder) {
+            nx += 0.72;
+            partRelief += 0.14;
+          }
 
           if (isCutawayFace) {
             if (f % 2 === 0) {
@@ -617,41 +635,51 @@ export function buildBuildingSprite(
               ny = 0.54;
               nz = 0.84;
               spec = 40;
+              partRelief += 0.32;
             } else {
               // Recessed broken interior room with partition wall facets
               nx += ((cx * 7 + f * 13) & 2) === 0 ? -0.38 : 0.38;
               ny = 0.88;
               nz = 0.28;
               spec = fCol === "#48e5ff" ? 180 : 65;
+              partRelief -= 0.22;
             }
           } else if (rustic) {
             // Timber & clapboard siding bevels
             ny += (f & 1) === 0 ? 0.08 : -0.08;
             nz += (f & 1) === 0 ? -0.06 : 0.14;
             spec = lx % 3 === 1 ? 120 : 35;
+            partRelief += (f & 1) === 0 ? 0.12 : -0.08;
           } else if (f === 0 || f === elev - 1) {
             // Ground lobby awning or upper cornice band
             ny = 0.62;
             nz = 0.78;
             spec = 95;
+            partRelief += 0.24;
           } else if (lx % 2 === 1) {
-            // Window column: smooth glass panes with horizontal floor spandrels
+            // Window column: smooth recessed glass panes with horizontal floor spandrels
             if (f % 2 === 0) {
               ny = 0.76;
               nz = 0.65;
               spec = 110;
+              partRelief += 0.08;
             } else {
               ny = 0.94;
               nz = 0.34;
               spec = isGlassStyle ? 220 : 165;
+              partRelief -= 0.18;
             }
           } else {
             // Vertical structural pilaster / mullion rib
             nx += lx < b.w * 0.5 ? -0.26 : 0.26;
             ny = 0.82;
             nz = 0.50;
+            partRelief += 0.22;
           }
-          storeUnitNormal(nxMap, nyMap, nzMap, pIdx, nx, ny, nz);
+          baseNx[pIdx] = nx;
+          baseNy[pIdx] = ny;
+          baseNz[pIdx] = nz;
+          microHeight[pIdx] = f * 0.18 + partRelief;
           specMap[pIdx] = spec;
         }
       }
@@ -672,7 +700,8 @@ export function buildBuildingSprite(
           : roofColorAt(world, b, cx, cy, idx, pal);
         const pIdx = roofSy * spriteW + lx;
         colorBuf[pIdx] = rCol;
-        colorU32[pIdx] = hexToElevAbgr(rCol);
+        const abgr = hexToElevAbgr(rCol);
+        colorU32[pIdx] = abgr;
         hitMask[pIdx] = 1;
         elevMap[pIdx] = Math.max(0, Math.min(255, elev));
 
@@ -681,6 +710,7 @@ export function buildBuildingSprite(
         let ny = 0;
         let nz = 1.0;
         let spec = isGlassStyle ? 110 : 60;
+        let partRelief = 0.65 + luma01(abgr) * 0.25;
 
         if (spalledTop) {
           nx = (hash01(world.seed, 977, cx, cy) - 0.5) * 0.6;
@@ -694,10 +724,12 @@ export function buildBuildingSprite(
             ny = cy + 0.5 < midY ? -0.56 : cy + 0.5 > midY ? 0.56 : 0;
             nx = ((lx & 1) === 0 ? -0.08 : 0.08);
             nz = 0.82;
+            partRelief += (1 - Math.abs(cy + 0.5 - midY) / Math.max(1, b.h * 0.5)) * 0.35;
           } else {
             nx = cx + 0.5 < midX ? -0.56 : cx + 0.5 > midX ? 0.56 : 0;
             ny = ((ly & 1) === 0 ? -0.08 : 0.08);
             nz = 0.82;
+            partRelief += (1 - Math.abs(cx + 0.5 - midX) / Math.max(1, b.w * 0.5)) * 0.35;
           }
           spec = 45;
         } else if (b.archStyle === "civicDome") {
@@ -709,12 +741,13 @@ export function buildBuildingSprite(
           ny = dy * 0.75;
           nz = Math.sqrt(Math.max(0.22, 1 - r2));
           spec = 155;
+          partRelief += (1 - r2) * 0.45;
         } else {
           // Outer parapet and setback terrace bevels
-          if (elev > northElev) ny -= 0.62;
-          if (elev > southElev) ny += 0.62;
-          if (elev > westElev) nx -= 0.62;
-          if (elev > eastElev) nx += 0.62;
+          if (elev > northElev) { ny -= 0.62; partRelief += 0.16; }
+          if (elev > southElev) { ny += 0.62; partRelief += 0.16; }
+          if (elev > westElev) { nx -= 0.62; partRelief += 0.16; }
+          if (elev > eastElev) { nx += 0.62; partRelief += 0.16; }
 
           // Interior rooftop feature bump mapping
           if (nx === 0 && ny === 0) {
@@ -722,6 +755,7 @@ export function buildBuildingSprite(
               ny = 0.46;
               nz = 0.88;
               spec = 210;
+              partRelief += 0.22;
             } else if (b.roofFeature === "helipad") {
               const hdx = cx - Math.floor(midX);
               const hdy = cy - Math.floor(midY);
@@ -729,6 +763,7 @@ export function buildBuildingSprite(
                 nx = hdx * 0.22;
                 ny = hdy * 0.22;
                 nz = 0.92;
+                partRelief += 0.18;
               }
             } else if (b.roofFeature === "skyGarden") {
               nx = ((lx & 1) === 0 ? -0.22 : 0.22);
@@ -747,9 +782,46 @@ export function buildBuildingSprite(
             }
           }
         }
-        storeUnitNormal(nxMap, nyMap, nzMap, pIdx, nx, ny, nz);
+        baseNx[pIdx] = nx;
+        baseNy[pIdx] = ny;
+        baseNz[pIdx] = nz;
+        microHeight[pIdx] = elev * 0.22 + partRelief;
         specMap[pIdx] = spec;
       }
+    }
+  }
+
+  // Blend 3x3 Sobel micro-relief gradient from authored sprite part heights + pixel luminance into the structural normals
+  const sampleH = (sx: number, sy: number, centerH: number): number => {
+    if (sx < 0 || sx >= spriteW || sy < 0 || sy >= spriteH) return centerH;
+    const qi = sy * spriteW + sx;
+    return hitMask[qi] ? microHeight[qi] : centerH;
+  };
+  for (let sy = 0; sy < spriteH; sy++) {
+    const row = sy * spriteW;
+    for (let sx = 0; sx < spriteW; sx++) {
+      const pIdx = row + sx;
+      if (!hitMask[pIdx]) continue;
+      const cH = microHeight[pIdx];
+      const hNW = sampleH(sx - 1, sy - 1, cH);
+      const hN = sampleH(sx, sy - 1, cH);
+      const hNE = sampleH(sx + 1, sy - 1, cH);
+      const hW = sampleH(sx - 1, sy, cH);
+      const hE = sampleH(sx + 1, sy, cH);
+      const hSW = sampleH(sx - 1, sy + 1, cH);
+      const hS = sampleH(sx, sy + 1, cH);
+      const hSE = sampleH(sx + 1, sy + 1, cH);
+      const gx = (hNE + 2 * hE + hSE - (hNW + 2 * hW + hSW)) * 0.14;
+      const gy = (hSW + 2 * hS + hSE - (hNW + 2 * hN + hNE)) * 0.14;
+      storeUnitNormal(
+        nxMap,
+        nyMap,
+        nzMap,
+        pIdx,
+        baseNx[pIdx] - gx,
+        baseNy[pIdx] - gy,
+        baseNz[pIdx],
+      );
     }
   }
 

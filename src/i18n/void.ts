@@ -106,6 +106,7 @@ export const VOID_TEXT = [
   ["void.settings.motion", "Reduce Motion & Ambient Flicker", "Reducir Movimiento", "Réduire les Animations", "Bewegung Reduzieren", "Reduzir Movimento", "Riduci Movimento", "モーション低減", "모션 줄이기", "减弱动态效果"],
   ["void.settings.pixelFont", "Custom Pixel Font (Alembic)", "Fuente Píxel (Alembic)", "Police Pixel (Alembic)", "Pixelschrift (Alembic)", "Fonte Pixel (Alembic)", "Font Pixel (Alembic)", "ピクセルフォント", "픽셀 글꼴 (Alembic)", "像素字体 (Alembic)"],
   ["void.settings.bheight", "Building Height", "Altura de Edificios", "Hauteur des Bâtiments", "Gebäudehöhe", "Altura dos Prédios", "Altezza Edifici", "建物の高さ", "건물 높이", "建筑高度"],
+  ["void.settings.lquality", "Lighting Quality", "Calidad de Iluminación", "Qualité d'Éclairage", "Beleuchtungsqualität", "Qualidade da Iluminação", "Qualità Illuminazione", "ライティング品質", "조명 품질", "光照质量"],
   ["void.settings.done", "Done", "Listo", "Terminé", "Fertig", "Concluir", "Fatto", "完了", "완료", "完成"],
   ["void.profile.welcome", "Welcome, Commander", "Bienvenido, Comandante", "Bienvenue, Commandant", "Willkommen, Commander", "Bem-vindo, Comandante", "Benvenuto, Comandante", "ようこそ、司令官", "환영합니다, 사령관님", "欢迎，指挥官"],
   ["void.profile.edit", "Commander Profile", "Perfil de Comandante", "Profil de Commandant", "Commander-Profil", "Perfil de Comandante", "Profilo Comandante", "司令官プロフィール", "사령관 프로필", "指挥官档案"],

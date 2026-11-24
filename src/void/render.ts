@@ -30,7 +30,13 @@ import {
   MAX_ELEVATION_PX,
   TOWER_ELEVATION_PX,
 } from "./elevation.ts";
-import { collectSceneLights, LightingEngine } from "./lighting.ts";
+import {
+  collectSceneLights,
+  INFANTRY_SOBEL_NORMALS,
+  LightingEngine,
+  type LightingQualityMode,
+  TOWER_SOBEL_NORMALS,
+} from "./lighting.ts";
 import { isOccludedByLedge, paintVoidLedge } from "./ledge.ts";
 import { valueNoise } from "./portal-noise.ts";
 import { computeOrganismContour, computeNodeContour, paintOrganismContour, paintNodeContour } from "./contour.ts";
@@ -323,6 +329,7 @@ export class VoidRenderer {
   private shadowMap = new Uint8Array(0);
   private prevBuildingAt = new Int32Array(0);
   private prevColumnFloors = new Uint8Array(0);
+  private prevTowerAt = new Int32Array(0);
   private buildingElevs = new Uint8Array(0);
   private livestockWorld: VoidWorld | null = null;
   private livestockList: { x: number; y: number; idx: number; isCow: boolean }[] = [];
@@ -355,6 +362,11 @@ export class VoidRenderer {
   reduceEffects = false;
   /** Oblique building height projection (`full`, `low`, or `flat`). */
   buildingHeight: BuildingHeightMode = "full";
+  /** User-selected lighting quality (`low`, `medium`, or `high`) and runtime auto-dropped tier. */
+  lightingQuality: LightingQualityMode = "high";
+  effectiveLightingQuality: LightingQualityMode = "high";
+  private slowLightFrames = 0;
+  private fastLightFrames = 0;
   /** Per-building elevated roof & south-facade sprite cache. */
   readonly spriteCache = new BuildingSpriteCache();
   /** Tiled 2.5D bump-mapped surface lighting, surface glows and dynamic cast shadows. */
@@ -782,8 +794,8 @@ export class VoidRenderer {
       return;
     }
 
-    // Incrementally update shadowMap when building footprints or columnFloors change in dirty chunks
-    const { buildingAt, columnFloors } = world;
+    // Incrementally update shadowMap when building footprints, columnFloors or placed towers change in dirty chunks
+    const { buildingAt, columnFloors, towerAt } = world;
     for (let cy = 0; cy < chunksH; cy++) {
       for (let cx = 0; cx < chunksW; cx++) {
         if (!dirtyChunks[cy * chunksW + cx]) continue;
@@ -797,9 +809,15 @@ export class VoidRenderer {
             const idx = row + x;
             const cur = buildingAt[idx];
             const curFloors = columnFloors ? columnFloors[idx] : 0;
-            if (cur !== this.prevBuildingAt[idx] || curFloors !== this.prevColumnFloors[idx]) {
+            const curTower = towerAt[idx];
+            if (
+              cur !== this.prevBuildingAt[idx] ||
+              curFloors !== this.prevColumnFloors[idx] ||
+              curTower !== this.prevTowerAt[idx]
+            ) {
               this.prevBuildingAt[idx] = cur;
               this.prevColumnFloors[idx] = curFloors;
+              this.prevTowerAt[idx] = curTower;
               this.refreshShadowAround(world, x, y, dirtyChunks, chunksW);
             }
           }
@@ -855,6 +873,7 @@ export class VoidRenderer {
     this.prevColumnFloors = world.columnFloors
       ? new Uint8Array(world.columnFloors)
       : new Uint8Array(count);
+    this.prevTowerAt = new Int32Array(world.towerAt);
     const { buildingAt, buildings, material } = world;
     for (let y = 0; y < h; y++) {
       const row = y * w;
@@ -903,7 +922,7 @@ export class VoidRenderer {
   }
 
   /** Computes elevation-based directional 2.5D volume shadow darkness (0..0.68) cast onto `(x, y)`
-   * toward the SE (umbra along `(-step, -step)` + soft penumbra flanks), respecting surviving `columnFloors`. */
+   * toward the SE (umbra along `(-step, -step)` + soft penumbra flanks), respecting surviving `columnFloors` and placed towers. */
   private computeShadowAt(
     world: VoidWorld,
     x: number,
@@ -913,23 +932,34 @@ export class VoidRenderer {
   ): number {
     const { w, h } = world.grid;
     const mode = this.buildingHeight === "flat" ? "full" : this.buildingHeight;
+    const tElev = this.buildingHeight === "flat" ? 1 : this.buildingHeight === "low" ? 2 : TOWER_ELEVATION_PX + 1;
     const selfElev = selfElevOverride !== undefined
       ? selfElevOverride
       : (selfHeight > 0 ? elevationOf({ height: selfHeight }, mode) : 0);
-    const { buildingAt, buildings, columnFloors } = world;
+    const { buildingAt, buildings, columnFloors, towerAt } = world;
+    const selfTower = towerAt[y * w + x];
     let maxShade = 0;
 
     const sampleCasterElev = (cx: number, cy: number): number => {
       if (cx < 0 || cy < 0 || cx >= w || cy >= h) return 0;
       const cIdx = cy * w + cx;
+      let elev = 0;
       const bId = buildingAt[cIdx];
-      if (bId < 0) return 0;
-      const b = buildings[bId];
-      if (!b) return 0;
-      const floors = columnFloors ? columnFloors[cIdx] : b.height;
-      if (floors <= 0) return 0;
-      const fullElev = elevationOf({ height: floors, archStyle: b.archStyle }, mode);
-      return cellTierElevation(b, cx, cy, fullElev);
+      if (bId >= 0) {
+        const b = buildings[bId];
+        if (b) {
+          const floors = columnFloors ? columnFloors[cIdx] : b.height;
+          if (floors > 0) {
+            const fullElev = elevationOf({ height: floors, archStyle: b.archStyle }, mode);
+            elev = cellTierElevation(b, cx, cy, fullElev);
+          }
+        }
+      }
+      const tw = towerAt[cIdx];
+      if (tw >= 0 && tw !== selfTower) {
+        elev = Math.max(elev, tElev);
+      }
+      return elev;
     };
 
     for (let step = 1; step <= 10; step++) {
@@ -1377,10 +1407,54 @@ export class VoidRenderer {
     const animTime = this.reduceEffects ? 0 : nowMs * 0.001;
     const pulse = this.reduceEffects ? 0.75 : 0.65 + 0.35 * Math.sin(animTime * 5.2);
     const atlas = this.spriteCache.getBoardAtlas(world, this.buildingHeight, this.lastDirtyChunks);
-    const sceneLights = collectSceneLights(sim, animTime, this.reduceEffects, this.buildingHeight);
+    const scale = this.pixelScale();
+    const viewBounds = {
+      x0: -this.cam.x / scale,
+      y0: -this.cam.y / scale,
+      x1: (this.canvas.width - this.cam.x) / scale,
+      y1: (this.canvas.height - this.cam.y) / scale,
+    };
+    if (
+      this.effectiveLightingQuality === "high" &&
+      this.lightingQuality !== "high"
+    ) {
+      this.effectiveLightingQuality = this.lightingQuality;
+    } else if (
+      this.effectiveLightingQuality === "medium" &&
+      this.lightingQuality === "low"
+    ) {
+      this.effectiveLightingQuality = "low";
+    }
+    const sceneLights = collectSceneLights(
+      sim,
+      animTime,
+      this.reduceEffects,
+      this.buildingHeight,
+      this.effectiveLightingQuality,
+      viewBounds,
+    );
     this.lighting.syncMovingCasters(combat.agents, this.reduceEffects ? [] : physics.fallingChunks, sim.tick);
     this.lighting.renderLighting(world, this.terrainU32, this.spriteCache, sceneLights);
     lap("lighting");
+
+    // Auto-drop lighting quality on slow devices when lighting + terrain exceeds frame budget
+    const lightMs = T["lighting"] ?? 0;
+    if (lightMs > 11.5) {
+      this.slowLightFrames++;
+      this.fastLightFrames = 0;
+      if (this.slowLightFrames >= 24) {
+        this.slowLightFrames = 0;
+        if (this.effectiveLightingQuality === "high") this.effectiveLightingQuality = "medium";
+        else if (this.effectiveLightingQuality === "medium") this.effectiveLightingQuality = "low";
+      }
+    } else if (lightMs < 4.5) {
+      this.fastLightFrames++;
+      this.slowLightFrames = 0;
+      if (this.fastLightFrames >= 90 && this.effectiveLightingQuality !== this.lightingQuality) {
+        this.fastLightFrames = 0;
+        this.effectiveLightingQuality = this.lightingQuality;
+      }
+    }
 
     rawScene.drawImage(this.terrainLayer, 0, 0, world.grid.w, world.grid.h);
     const lBounds = this.lighting.dirtyBounds;
@@ -2081,8 +2155,43 @@ export class VoidRenderer {
       const spec = TOWER_SPECS[t.type];
       const topY = t.y - tElev;
       const centerX = t.x + (t.w - 1) * 0.5;
-      const top = this.lighting.surfacePalette(centerX, t.y + (t.h - 1) * 0.5, tElev + 0.8, 0, 0, 1, t.uid);
-      const front = this.lighting.surfacePalette(centerX, t.y + t.h - 1, tElev * 0.5, 0, 0.94, 0.34, t.uid);
+      const centerY = t.y + (t.h - 1) * 0.5;
+      const top = this.lighting.surfacePalette(
+        centerX,
+        centerY,
+        tElev + 0.8,
+        TOWER_SOBEL_NORMALS.nx[4],
+        TOWER_SOBEL_NORMALS.ny[4],
+        TOWER_SOBEL_NORMALS.nz[4],
+        t.uid,
+      );
+      const front = this.lighting.surfacePalette(
+        centerX,
+        t.y + t.h - 1,
+        tElev * 0.5,
+        TOWER_SOBEL_NORMALS.nx[7],
+        TOWER_SOBEL_NORMALS.ny[7],
+        TOWER_SOBEL_NORMALS.nz[7],
+        t.uid,
+      );
+      const nwRim = this.lighting.surfacePalette(
+        t.x,
+        t.y,
+        tElev + 0.5,
+        TOWER_SOBEL_NORMALS.nx[0],
+        TOWER_SOBEL_NORMALS.ny[0],
+        TOWER_SOBEL_NORMALS.nz[0],
+        t.uid,
+      );
+      const seRim = this.lighting.surfacePalette(
+        t.x + t.w - 1,
+        t.y + t.h - 1,
+        tElev + 0.5,
+        TOWER_SOBEL_NORMALS.nx[8],
+        TOWER_SOBEL_NORMALS.ny[8],
+        TOWER_SOBEL_NORMALS.nz[8],
+        t.uid,
+      );
       // Armored shadow & south base facade (2 px tall)
       rawScene.fillStyle = front("#0d1118");
       rawScene.fillRect(t.x, topY, t.w, t.h + tElev);
@@ -2092,12 +2201,16 @@ export class VoidRenderer {
       }
       rawScene.fillStyle = top("#242c3a");
       rawScene.fillRect(t.x, topY, t.w, t.h);
-      // Corner rivets / mounting brackets
-      rawScene.fillStyle = top("#5c6b82");
+      // Corner rivets / mounting brackets lit via Sobel corner normals
+      rawScene.fillStyle = nwRim("#5c6b82");
       rawScene.fillRect(t.x, topY, 1, 1);
       rawScene.fillRect(t.x + t.w - 1, topY, 1, 1);
+      rawScene.fillStyle = seRim("#5c6b82");
       rawScene.fillRect(t.x, topY + t.h - 1, 1, 1);
       rawScene.fillRect(t.x + t.w - 1, topY + t.h - 1, 1, 1);
+      // Tron-style neon orange indicator accent on the south tower collar
+      rawScene.fillStyle = "#ff7b18";
+      rawScene.fillRect(t.x + Math.floor(t.w * 0.5), topY + t.h - 1, 1, 1);
       // Primary colored turret housing
       if (t.type === "voidSiphon") {
         const s = combat.siphonStates.get(t.uid);
@@ -2223,8 +2336,28 @@ export class VoidRenderer {
       const ax = Math.floor(a.x);
       const ay = Math.floor(a.y);
       const elevation = a.layer === "air" ? 2.3 : a.kind === "heavyMech" ? 2.4 : 1.4;
-      const head = this.lighting.surfacePalette(ax, ay, elevation, 0, 0, 1);
-      const body = this.lighting.surfacePalette(ax, ay, elevation - 0.7, 0, 0.85, 0.52);
+      const head = this.lighting.surfacePalette(
+        ax,
+        ay,
+        elevation,
+        INFANTRY_SOBEL_NORMALS.nx[1],
+        INFANTRY_SOBEL_NORMALS.ny[1],
+        INFANTRY_SOBEL_NORMALS.nz[1],
+      );
+      const body = this.lighting.surfacePalette(
+        ax,
+        ay,
+        elevation - 0.7,
+        INFANTRY_SOBEL_NORMALS.nx[4],
+        INFANTRY_SOBEL_NORMALS.ny[4],
+        INFANTRY_SOBEL_NORMALS.nz[4],
+      );
+      // Soft penumbra sun shadow cast toward the SE (+1, +1) on non-Void ground
+      const sIdx = world.grid.inBounds(ax + 1, ay + 1) ? world.grid.index(ax + 1, ay + 1) : -1;
+      if (sIdx >= 0 && world.material[sIdx] !== CellMaterial.VOID) {
+        rawScene.fillStyle = "rgba(8, 10, 16, 0.34)";
+        rawScene.fillRect(ax + 1, ay + 1, 1, 1);
+      }
       if (a.kind === "rifleman") {
         rawScene.fillStyle = "rgba(10, 12, 16, 0.65)";
         rawScene.fillRect(ax, ay + 1, 1, 1);
@@ -2661,7 +2794,6 @@ export class VoidRenderer {
 
     // At high densities the particles themselves provide the texture. Skip their extra overlays.
     const detailedDebris = !this.reduceEffects && physics.debris.length <= 1500;
-    const scale = this.pixelScale();
     const viewLeft = -this.cam.x / scale;
     const viewRight = (this.canvas.width - this.cam.x) / scale;
     const viewTop = -this.cam.y / scale;
