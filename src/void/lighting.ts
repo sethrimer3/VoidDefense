@@ -702,7 +702,9 @@ export function collectSceneLights(
 ): PointLight[] {
   const { world, voidField, combat, physics } = sim;
   const { w, h } = world.grid;
-  const pulse = reduceEffects ? 0.78 : 0.68 + 0.32 * Math.sin(animTime * 5.2);
+  // Quantize slow ambient hum/pulse to 10 Hz so stationary lit tiles hit the per-tile light cache between ticks
+  const slowTime = reduceEffects ? 0 : Math.floor(animTime * 10) * 0.1;
+  const pulse = reduceEffects ? 0.78 : 0.68 + 0.32 * Math.sin(slowTime * 5.2);
   const tElev =
     buildingHeight === "flat" ? 0 : buildingHeight === "low" ? 1 : TOWER_ELEVATION_PX;
   const lights: PointLight[] = [];
@@ -925,7 +927,7 @@ export function collectSceneLights(
       const bId = world.buildingAt[idx];
       const b = bId >= 0 ? world.buildings[bId] : undefined;
       const rise = b ? elevationOf(b, buildingHeight) : 0;
-      const flick = reduceEffects ? 0.85 : 0.72 + 0.28 * Math.sin(animTime * 13 + idx);
+      const flick = reduceEffects ? 0.85 : 0.72 + 0.28 * Math.sin(slowTime * 13 + idx);
       lights.push({
         x: fx + 0.5,
         y: fy + 0.5,
@@ -953,7 +955,7 @@ export function collectSceneLights(
       const fx = fire.x + fire.w * 0.5;
       const fy = fire.y + fire.h * 0.5;
       if (!inView(fx, fy, 14)) continue;
-      const flick = reduceEffects ? 0.84 : streetFireFlicker(fire, animTime);
+      const flick = reduceEffects ? 0.84 : streetFireFlicker(fire, slowTime);
       fireLights++;
       lights.push({
         x: fx,
@@ -1026,7 +1028,7 @@ export function collectSceneLights(
       ? 1
       : justFired
         ? 0.85 + 0.15 * Math.sin(animTime * 50 + t.uid)
-        : 0.93 + 0.07 * Math.sin(animTime * 6.5 + t.uid);
+        : 0.93 + 0.07 * Math.sin(slowTime * 6.5 + t.uid);
     const towerMult = Math.max(0.68, neonMult * 1.12);
     const boost = (justFired ? 1.65 : 1.18) * flick * towerMult;
     const radius = t.type === "countervoidHeart" ? 24 : justFired ? 22 : 19;
@@ -1069,7 +1071,7 @@ export function collectSceneLights(
       if (world.material[foot] === CellMaterial.VOID ||
           !b.cells.some((idx) => world.hp[idx] > 0 && world.columnFloors[idx] > 0)) continue;
       const bElev = elevationOf(b, buildingHeight);
-      const hum = (reduceEffects ? 0.94 : 0.88 + 0.12 * Math.sin(animTime * 3.8 + b.id)) * neonMult * weight;
+      const hum = (reduceEffects ? 0.94 : 0.88 + 0.12 * Math.sin(slowTime * 3.8 + b.id)) * neonMult * weight;
       const palettes = ARCH_PALETTES[b.archStyle] ?? ARCH_PALETTES.glassTower;
       const pal = palettes[b.variant % palettes.length];
       const accent = districtNeonAccentFor(world, b, pal);
@@ -1342,6 +1344,8 @@ export class LightingEngine {
   private tileLightsHi = new Uint32Array(0);
   private tileVisited = new Uint8Array(0);
   private tileAmbientClean = new Uint8Array(0);
+  private tileLightClean = new Uint8Array(0);
+  private tileLightSig = new Uint32Array(0);
   private tileHaloClean = new Uint8Array(0);
   /** Per-tile revision bumped whenever `bakeHaloTile` writes new values into a tile. */
   haloTileRevision = new Uint32Array(0);
@@ -1444,6 +1448,8 @@ export class LightingEngine {
       this.tileLightsHi = new Uint32Array(tileCount);
       this.tileVisited = new Uint8Array(tileCount);
       this.tileAmbientClean = new Uint8Array(tileCount);
+      this.tileLightClean = new Uint8Array(tileCount);
+      this.tileLightSig = new Uint32Array(tileCount);
       this.tileHaloClean = new Uint8Array(tileCount);
       this.haloTileRevision = new Uint32Array(tileCount);
       this.tileHaloHadFluid = new Uint8Array(tileCount);
@@ -1467,6 +1473,7 @@ export class LightingEngine {
     if (rebuildAll || !dirtyChunkFlags) {
       this.shadowTileRevision.fill(this.shadowRevision);
       this.tileAmbientClean.fill(0);
+      this.tileLightClean.fill(0);
       this.tileHaloClean.fill(0);
       this.bakeChunkNormalsAndElev(world, mode, 0, 0, w, h);
       return;
@@ -1487,6 +1494,7 @@ export class LightingEngine {
         for (let row = Math.max(0, cy - 2); row <= Math.min(chunksH - 1, cy + 1); row++) {
           if (row >= cy - 1) this.shadowTileRevision.fill(this.shadowRevision, row * chunksW + left, row * chunksW + right);
           this.tileAmbientClean.fill(0, row * chunksW + left, row * chunksW + right);
+          this.tileLightClean.fill(0, row * chunksW + left, row * chunksW + right);
           this.tileHaloClean.fill(0, row * chunksW + left, row * chunksW + right);
         }
       }
@@ -1498,7 +1506,10 @@ export class LightingEngine {
     if (paintDirtyChunkFlags) {
       const len = Math.min(paintDirtyChunkFlags.length, this.tileAmbientClean.length);
       for (let i = 0; i < len; i++) {
-        if (paintDirtyChunkFlags[i]) this.tileAmbientClean[i] = 0;
+        if (paintDirtyChunkFlags[i]) {
+          this.tileAmbientClean[i] = 0;
+          this.tileLightClean[i] = 0;
+        }
       }
     }
   }
@@ -1521,6 +1532,7 @@ export class LightingEngine {
         const row = cy * chunksW;
         this.tileHaloClean.fill(0, row + hLeft, row + hRight);
         this.tileAmbientClean.fill(0, row + hLeft, row + hRight);
+        this.tileLightClean.fill(0, row + hLeft, row + hRight);
         if (cy >= cy0 && cy <= cy1) {
           this.shadowTileRevision.fill(this.shadowRevision, row + cx0, row + cx1 + 1);
         }
@@ -2066,10 +2078,12 @@ export class LightingEngine {
         this.lastGroundShadows = groundShadowMap;
         this.roofSunShadow.fill(255);
         this.tileAmbientClean.fill(0);
+        this.tileLightClean.fill(0);
       }
     } else if (this.hasLastPreset) {
       this.hasLastPreset = false;
       this.tileAmbientClean.fill(0);
+      this.tileLightClean.fill(0);
       this.roofSunShadow.fill(255);
       terrainLightU32.fill(0);
       buildingLightU32.fill(0);
@@ -2266,17 +2280,19 @@ export class LightingEngine {
       }
       const nLocal = localLights.length;
       if (nLocal === 0 && !preset) continue;
+      const tx = tileIdx % chunksW;
+      const ty = (tileIdx / chunksW) | 0;
+      const x0 = tx * CHUNK_SIZE;
+      const y0 = ty * CHUNK_SIZE;
+      const x1 = Math.min(w, x0 + CHUNK_SIZE);
+      const y1 = Math.min(h, y0 + CHUNK_SIZE);
+
       if (preset && nLocal === 0) {
-        const tx = tileIdx % chunksW;
-        const ty = (tileIdx / chunksW) | 0;
         const fluidTouchesTile = Boolean(useHalo && voidFluid && voidFluid.hasHotFluidInTile(tx, ty));
         // A tile whose halo still holds glow from fluid that has since drained must be re-shaded once
         const fluidLeftTile = useHalo && !fluidTouchesTile && this.tileHaloHadFluid[tileIdx] === 1;
+        this.tileLightClean[tileIdx] = 0;
         if (this.tileAmbientClean[tileIdx] && !fluidTouchesTile && !fluidLeftTile) {
-          const x0 = tx * CHUNK_SIZE;
-          const y0 = ty * CHUNK_SIZE;
-          const x1 = Math.min(w, x0 + CHUNK_SIZE);
-          const y1 = Math.min(h, y0 + CHUNK_SIZE);
           if (x0 < minX) minX = x0;
           if (y0 < minY) minY = y0;
           if (x1 > maxX) maxX = x1;
@@ -2290,14 +2306,6 @@ export class LightingEngine {
         this.tileAmbientClean[tileIdx] = 0;
       }
 
-      this.surfaceTileRevision[tileIdx] = shadedFrame;
-      const tx = tileIdx % chunksW;
-      const ty = (tileIdx / chunksW) | 0;
-      const x0 = tx * CHUNK_SIZE;
-      const y0 = ty * CHUNK_SIZE;
-      const x1 = Math.min(w, x0 + CHUNK_SIZE);
-      const y1 = Math.min(h, y0 + CHUNK_SIZE);
-
       if (useHalo) {
         const fluidTouchesTile = Boolean(voidFluid && voidFluid.hasHotFluidInTile(tx, ty));
         if (!this.tileHaloClean[tileIdx] || fluidTouchesTile || this.tileHaloHadFluid[tileIdx] === 1) {
@@ -2307,6 +2315,41 @@ export class LightingEngine {
           this.tileHaloHadFluid[tileIdx] = fluidTouchesTile ? 1 : 0;
         }
       }
+
+      // Per-tile light signature cache: skip re-shading lit tiles whose touching lights, shadows, and halo are unchanged
+      if (preset && nLocal > 0) {
+        let sig = 2166136261 ^ nLocal;
+        sig = Math.imul(sig ^ this.haloTileRevision[tileIdx], 16777619);
+        for (let m = 0; m < nLocal; m++) {
+          const l = localLights[m];
+          sig = Math.imul(sig ^ Math.round(l.x * 4), 16777619);
+          sig = Math.imul(sig ^ Math.round(l.y * 4), 16777619);
+          sig = Math.imul(sig ^ Math.round(l.z * 4), 16777619);
+          sig = Math.imul(sig ^ Math.round(l.r * 64), 16777619);
+          sig = Math.imul(sig ^ Math.round(l.g * 64), 16777619);
+          sig = Math.imul(sig ^ Math.round(l.b * 64), 16777619);
+          sig = Math.imul(sig ^ Math.round(l.radius * 4), 16777619);
+          sig = Math.imul(sig ^ (l.falloffPower ?? 2), 16777619);
+          if (l.castsShadows) {
+            sig = Math.imul(sig ^ (l.shadowCache?.revision ?? 0), 16777619);
+            sig = Math.imul(sig ^ (Math.round(l.shadowStrength * 64) | (Math.round((l.shadowMix ?? 1) * 64) << 8)), 16777619);
+          }
+        }
+        sig = sig >>> 0;
+        if (this.tileLightClean[tileIdx] === 1 && this.tileLightSig[tileIdx] === sig) {
+          if (x0 < minX) minX = x0;
+          if (y0 < minY) minY = y0;
+          if (x1 > maxX) maxX = x1;
+          if (y1 > maxY) maxY = y1;
+          hasTerrain = true;
+          hasBuilding = true;
+          continue;
+        }
+        this.tileLightClean[tileIdx] = 1;
+        this.tileLightSig[tileIdx] = sig;
+      }
+
+      this.surfaceTileRevision[tileIdx] = shadedFrame;
 
       if (x0 < minX) minX = x0;
       if (y0 < minY) minY = y0;

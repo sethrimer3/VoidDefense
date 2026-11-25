@@ -12,6 +12,10 @@ type Point = { x: number; y: number };
 
 export class Loupe {
   private box: HTMLCanvasElement | null = null;
+  private ctx: CanvasRenderingContext2D | null = null;
+  private lastSize = -1;
+  private lastLeft = Number.NaN;
+  private lastTop = Number.NaN;
   /** The finger and the magnified point, in client pixels, while it shows. */
   private at: { pointer: Point; focus: Point } | null = null;
 
@@ -33,19 +37,34 @@ export class Loupe {
     const at = this.at;
     if (!at || !board.width) return this.box && (this.box.hidden = true);
     const size = Math.round(Math.min(SIZE, window.innerWidth * 0.44, window.innerHeight * 0.37));
-    const box = this.box ??= makeBox();
-    const dpr = window.devicePixelRatio || 1, px = Math.round(size * dpr);
+    if (!this.box) {
+      this.box = makeBox();
+      this.ctx = this.box.getContext("2d", { alpha: false });
+    }
+    const box = this.box;
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const px = Math.round(size * dpr);
     if (box.width !== px) box.width = box.height = px;
-    box.style.width = box.style.height = `${size}px`;
+    if (this.lastSize !== size) {
+      this.lastSize = size;
+      box.style.width = box.style.height = `${size}px`;
+    }
     const { left, top } = place(at.pointer, at.focus, size);
-    box.style.left = `${left}px`;
-    box.style.top = `${top}px`;
-    box.hidden = false;
+    if (this.lastLeft !== left) {
+      this.lastLeft = left;
+      box.style.left = `${left}px`;
+    }
+    if (this.lastTop !== top) {
+      this.lastTop = top;
+      box.style.top = `${top}px`;
+    }
+    if (box.hidden) box.hidden = false;
 
     const r = board.getBoundingClientRect();
     const sx = board.width / r.width, sy = board.height / r.height;
     const span = size / LOUPE_ZOOM;
-    const ctx = box.getContext("2d")!;
     ctx.imageSmoothingEnabled = false;
     ctx.fillStyle = "#14100b";
     ctx.fillRect(0, 0, px, px);

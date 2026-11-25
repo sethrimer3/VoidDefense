@@ -443,6 +443,10 @@ export class VoidRenderer {
   static readonly MAX_ZOOM = 7;
   /** Camera zoom at or above which a large building collapse may shake the view. */
   static readonly SHAKE_MIN_ZOOM = 2;
+  private needsResize = true;
+  private lastResizeW = 0;
+  private lastResizeH = 0;
+  private isPhoneDevice = false;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -456,12 +460,34 @@ export class VoidRenderer {
     this.ledgeCtx = this.ledgeLayer.getContext("2d")!;
     this.frontierLayer = document.createElement("canvas");
     this.frontierCtx = this.frontierLayer.getContext("2d")!;
+    if (typeof ResizeObserver !== "undefined") {
+      const ro = new ResizeObserver(() => {
+        this.needsResize = true;
+      });
+      ro.observe(canvas);
+    }
+    if (typeof window !== "undefined") {
+      window.addEventListener("resize", () => {
+        this.needsResize = true;
+      });
+    }
   }
 
   resize(worldW: number, worldH: number): void {
+    if (!this.needsResize && this.lastResizeW === worldW && this.lastResizeH === worldH && this.canvas.width > 0) {
+      return;
+    }
+    this.needsResize = false;
+    this.lastResizeW = worldW;
+    this.lastResizeH = worldH;
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const cw = Math.max(1, Math.round((this.canvas.clientWidth || 800) * dpr));
-    const ch = Math.max(1, Math.round((this.canvas.clientHeight || 600) * dpr));
+    const clientW = this.canvas.clientWidth || 800;
+    const clientH = this.canvas.clientHeight || 600;
+    const minViewport = typeof window !== "undefined" ? Math.min(window.innerWidth || clientW, window.innerHeight || clientH) : Math.min(clientW, clientH);
+    const coarse = typeof window !== "undefined" && Boolean(window.matchMedia?.("(pointer: coarse)").matches);
+    this.isPhoneDevice = minViewport <= 540 || (coarse && minViewport <= 820);
+    const cw = Math.max(1, Math.round(clientW * dpr));
+    const ch = Math.max(1, Math.round(clientH * dpr));
     const fit = Math.min(cw / worldW, ch / worldH);
     if (
       this.canvas.width !== cw ||
@@ -2057,8 +2083,8 @@ export class VoidRenderer {
     );
     this.lighting.syncMovingCasters(combat.agents, this.reduceEffects ? [] : physics.fallingChunks, sim.tick);
     const reflectionQuality = this.effectiveLightingQuality;
-    // Configure Void fluid grid resolution, spark budget, and live chunk cap by quality tier & viewport width
-    const isMobileView = this.canvas.width > 0 && this.canvas.width <= 860;
+    // Configure Void fluid grid resolution, spark budget, and live chunk cap by quality tier & device class
+    const isMobileView = this.isPhoneDevice || (this.canvas.width > 0 && this.canvas.width <= 860);
     const fluidCellSize = reflectionQuality === "low" ? 2 : 1;
     physics.maxChunks = isMobileView || reflectionQuality === "low" ? MAX_DEBRIS_CHUNKS_MOBILE : MAX_DEBRIS_CHUNKS_DESKTOP;
     physics.voidFluid.sparkCap =
@@ -2116,12 +2142,14 @@ export class VoidRenderer {
       activePreset, reflectionQuality, animTime, this.wetness);
     lap("reflections");
 
-    // Auto-drop lighting quality on slow devices when lighting + terrain exceeds frame budget
+    // Auto-drop lighting quality on slow/mobile devices when lighting + reflections exceeds frame budget;
+    // recover one tier at a time so phones don't stutter by jumping straight from low to high.
     const lightMs = (T["lighting"] ?? 0) + (T["reflections"] ?? 0);
+    const dropThreshold = isMobileView ? 18 : 24;
     if (lightMs > 11.5) {
       this.slowLightFrames++;
       this.fastLightFrames = 0;
-      if (this.slowLightFrames >= 24) {
+      if (this.slowLightFrames >= dropThreshold) {
         this.slowLightFrames = 0;
         if (this.effectiveLightingQuality === "high") this.effectiveLightingQuality = "medium";
         else if (this.effectiveLightingQuality === "medium") this.effectiveLightingQuality = "low";
@@ -2131,7 +2159,11 @@ export class VoidRenderer {
       this.slowLightFrames = 0;
       if (this.fastLightFrames >= 90 && this.effectiveLightingQuality !== this.lightingQuality) {
         this.fastLightFrames = 0;
-        this.effectiveLightingQuality = this.lightingQuality;
+        if (this.effectiveLightingQuality === "low") {
+          this.effectiveLightingQuality = this.lightingQuality === "high" ? "medium" : this.lightingQuality;
+        } else if (this.effectiveLightingQuality === "medium" && this.lightingQuality === "high") {
+          this.effectiveLightingQuality = "high";
+        }
       }
     }
 
@@ -3804,10 +3836,19 @@ export class VoidRenderer {
 
     // Magnify the same world-pixel raster; camera zoom reveals no sub-cell detail.
     const output = this.ctx;
-    output.setTransform(1, 0, 0, 1, 0, 0);
-    output.drawImage(this.backdropFor(this.canvas.width, this.canvas.height, world.seed), 0, 0);
+    const drawX = this.cam.x + shakeX;
+    const drawY = this.cam.y + shakeY;
+    const coversCanvas =
+      drawX <= 0 &&
+      drawY <= 0 &&
+      drawX + world.grid.w * scale >= this.canvas.width &&
+      drawY + world.grid.h * scale >= this.canvas.height;
+    if (!coversCanvas) {
+      output.setTransform(1, 0, 0, 1, 0, 0);
+      output.drawImage(this.backdropFor(this.canvas.width, this.canvas.height, world.seed), 0, 0);
+    }
     output.imageSmoothingEnabled = false;
-    output.setTransform(scale, 0, 0, scale, this.cam.x + shakeX, this.cam.y + shakeY);
+    output.setTransform(scale, 0, 0, scale, drawX, drawY);
     output.drawImage(this.sceneLayer, 0, 0);
     output.setTransform(1, 0, 0, 1, 0, 0);
 
