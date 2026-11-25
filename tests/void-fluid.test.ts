@@ -11,9 +11,11 @@ import { VoidSim } from "../src/void/sim.ts";
 import { emptyTechWallet } from "../src/void/tech/wallet.ts";
 import {
   classifyFluidMaterial,
+  evaluateFluidHeatColor,
   FLUID_BAND_COUNT,
   FLUID_MATERIAL_PALETTES,
   FluidMaterial,
+  sampleSourceCellColors,
   VoidFluidGrid,
 } from "../src/void/void-fluid.ts";
 
@@ -231,4 +233,124 @@ test("5. Halo glow from Void fluid clears once the fluid drains away", () => {
   let staleDiff = 0;
   for (let i = 0; i < after.length; i++) staleDiff = Math.max(staleDiff, Math.abs(after[i] - baseline[i]));
   assert.ok(staleDiff < 0.5, `halo returns to its fluid-free state after the fluid drains (max diff ${staleDiff})`);
+});
+
+test("6. Dissolving road, grass, and building chunks start with fluid cell RGB close to their true rendered source colors, blend weighted by amount, and heat along trails", () => {
+  const sim = new VoidSim("centralRupture", "underSiege", emptyTechWallet(), true);
+  const { world, physics } = sim;
+  const p = world.portals[0];
+  p.active = true;
+
+  const colorDist = (a: readonly [number, number, number], b: readonly [number, number, number]): number =>
+    Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+
+  // 1. Road cell (asphalt street)
+  const roadX = Math.round(p.x + 24);
+  const roadY = Math.round(p.y);
+  const roadIdx = world.grid.index(roadX, roadY);
+  world.material[roadIdx] = CellMaterial.STREET;
+  world.streetTier[roadIdx] = 2;
+  world.buildingAt[roadIdx] = -1;
+  const roadSource = sampleSourceCellColors(world, roadIdx, CellMaterial.STREET, LandCover.NONE, -1, 0);
+
+  // 2. Grass cell (park / countryside)
+  const grassX = Math.round(p.x - 24);
+  const grassY = Math.round(p.y);
+  const grassIdx = world.grid.index(grassX, grassY);
+  world.material[grassIdx] = CellMaterial.PARK;
+  world.landCover[grassIdx] = LandCover.GRASS;
+  world.buildingAt[grassIdx] = -1;
+  const grassSource = sampleSourceCellColors(world, grassIdx, CellMaterial.PARK, LandCover.GRASS, -1, 0);
+
+  // 3. Building cell (find a real building in the city and sample one of its footprint cells)
+  const bld = world.buildings.find((b) => b.cells.length > 0)!;
+  assert.ok(bld, "Expected at least one metropolitan building");
+  const bldIdx = bld.cells[0];
+  const bldId = bld.id;
+  world.material[bldIdx] = CellMaterial.BUILDING;
+  world.buildingAt[bldIdx] = bldId;
+  world.columnFloors[bldIdx] = bld.height;
+  world.hp[bldIdx] = 100;
+  world.maxHp[bldIdx] = 100;
+  const bldSource = sampleSourceCellColors(world, bldIdx, CellMaterial.BUILDING, LandCover.NONE, bldId, bld.height);
+
+  // Verify the three source colors are genuinely distinct (road slate/orange, grass green, building palette)
+  assert.ok(grassSource.rgb[1] > grassSource.rgb[0] + 15 && grassSource.rgb[1] > grassSource.rgb[2] + 15,
+    `Grass source color must be green-dominant: [${grassSource.rgb.join(", ")}]`);
+  assert.ok(colorDist(roadSource.rgb, grassSource.rgb) > 25,
+    `Road [${roadSource.rgb}] and grass [${grassSource.rgb}] source colors must be distinct`);
+
+  // Dissolve each chunk into the fluid grid and check starting cell colors are close to their true source RGB
+  for (const sample of [
+    { name: "road", idx: roadIdx, src: roadSource },
+    { name: "grass", idx: grassIdx, src: grassSource },
+    { name: "building", idx: bldIdx, src: bldSource },
+  ]) {
+    physics.debris.length = 0;
+    physics.voidFluid.clear();
+    physics.consumeCellIntoVoid(world, sample.idx, true);
+    assert.equal(physics.debris.length, 1, `Expected 1 chunk spawned for ${sample.name}`);
+    const chunk = physics.debris[0];
+    assert.equal(chunk.color, sample.src.color, `${sample.name} chunk must carry true source hex color`);
+
+    // Force immediate chunk dissolution at its starting position (simulating chunk expiry)
+    chunk.life = chunk.maxLife;
+    physics.stepStructuralSupport(world, 0.001);
+
+    // Find the fluid cell with maximum amount
+    let bestCell = -1;
+    let bestAmt = 0;
+    for (let i = 0; i < physics.voidFluid.amount.length; i++) {
+      if (physics.voidFluid.amount[i] > bestAmt) {
+        bestAmt = physics.voidFluid.amount[i];
+        bestCell = i;
+      }
+    }
+    assert.ok(bestCell >= 0 && bestAmt > 0.2, `Expected active fluid cell after dissolving ${sample.name} chunk`);
+    const cellRgb = physics.voidFluid.getCellSourceRgb(bestCell);
+    const dRgb = colorDist(cellRgb, sample.src.rgb);
+    assert.ok(
+      dRgb <= 12,
+      `${sample.name} starting fluid cell RGB [${cellRgb.map(Math.round)}] must be close to source [${sample.src.rgb}] (dist=${dRgb.toFixed(2)})`,
+    );
+  }
+
+  // Verify amount-weighted RGB color blending when two different streams meet in the same cell
+  const fluid = new VoidFluidGrid();
+  fluid.ensureSize(world.grid.w, world.grid.h, 1);
+  fluid.syncFlowField(world);
+  const mixX = Math.floor(p.x + 22);
+  const mixY = Math.floor(p.y);
+  const mixIdx = mixY * fluid.gridW + mixX;
+  fluid.depositAtWorld(mixX + 0.5, mixY + 0.5, 0.5, FluidMaterial.CONCRETE, 22, [40, 50, 60], 0);
+  fluid.depositAtWorld(mixX + 0.5, mixY + 0.5, 1.5, FluidMaterial.GRASS, 22, [80, 170, 60], 0);
+  const mixed = fluid.getCellSourceRgb(mixIdx);
+  // Expected weighted average (1:3 ratio): R ~ 70, G ~ 140, B ~ 60 (+/- deterministic per-cell variation <= 6)
+  assert.ok(Math.abs(mixed[0] - 70) <= 8 && Math.abs(mixed[1] - 140) <= 8,
+    `Expected 1:3 amount-weighted RGB blend near [70, 140, 60], got [${mixed.map(Math.round)}]`);
+
+  // Verify per-cell heat rises with time spent in the flow, flow speed friction, and closeness to the Void,
+  // and that evaluateFluidHeatColor transitions smoothly from source color -> dark red -> orange -> yellow-white -> violet
+  const h0 = fluid.heat[mixIdx];
+  for (let t = 0; t < 10; t++) {
+    fluid.step(world, 1 / 30);
+  }
+  let maxAdvectedHeat = 0;
+  for (let i = 0; i < fluid.amount.length; i++) {
+    if (fluid.amount[i] > 0.025 && fluid.heat[i] > maxAdvectedHeat) {
+      maxAdvectedHeat = fluid.heat[i];
+    }
+  }
+  assert.ok(maxAdvectedHeat > h0 + 0.05, `Heat must rise and travel with the fluid stream (${maxAdvectedHeat} > ${h0})`);
+
+  const cCool = evaluateFluidHeatColor(70, 140, 60, 0.05);
+  const cRed = evaluateFluidHeatColor(70, 140, 60, 0.35);
+  const cOrange = evaluateFluidHeatColor(70, 140, 60, 0.52);
+  const cYellowWhite = evaluateFluidHeatColor(70, 140, 60, 0.65);
+  const cViolet = evaluateFluidHeatColor(70, 140, 60, 0.96);
+  assert.ok(cCool[1] > cCool[0], "Cool heat preserves green source color");
+  assert.ok(cRed[0] > 140 && cRed[0] > cRed[1] * 1.4, "Warm heat shifts toward dark red");
+  assert.ok(cOrange[0] > 235 && cOrange[1] > 110 && cOrange[2] < 80, "Hot heat shifts to molten orange");
+  assert.ok(cYellowWhite[0] > 240 && cYellowWhite[1] > 190 && cYellowWhite[2] > 110, "Peak heat reaches yellow-white");
+  assert.ok(cViolet[2] > 210 && cViolet[0] > 150 && cViolet[1] < 95, "Horizon heat shifts to Void violet/magenta");
 });
