@@ -1335,6 +1335,8 @@ export class LightingEngine {
   private tileVisited = new Uint8Array(0);
   private tileAmbientClean = new Uint8Array(0);
   private tileHaloClean = new Uint8Array(0);
+  /** 1 where a tile's halo was last baked with Void fluid glow in it, so it is re-baked once the fluid leaves. */
+  private tileHaloHadFluid = new Uint8Array(0);
   private prevActiveTiles: number[] = [];
   private curActiveTiles: number[] = [];
 
@@ -1411,6 +1413,7 @@ export class LightingEngine {
       this.tileVisited = new Uint8Array(tileCount);
       this.tileAmbientClean = new Uint8Array(tileCount);
       this.tileHaloClean = new Uint8Array(tileCount);
+      this.tileHaloHadFluid = new Uint8Array(tileCount);
       this.prevActiveTiles.length = 0;
       this.curActiveTiles.length = 0;
 
@@ -2122,7 +2125,9 @@ export class LightingEngine {
           (tileIdx % chunksW) * CHUNK_SIZE <= (voidFluid.maxX + 1) * voidFluid.cellSize + 4 &&
           ((tileIdx / chunksW) | 0) * CHUNK_SIZE + CHUNK_SIZE >= voidFluid.minY * voidFluid.cellSize - 4 &&
           ((tileIdx / chunksW) | 0) * CHUNK_SIZE <= (voidFluid.maxY + 1) * voidFluid.cellSize + 4;
-        if (this.tileAmbientClean[tileIdx] && !fluidTouchesTile) {
+        // A tile whose halo still holds glow from fluid that has since drained must be re-shaded once
+        const fluidLeftTile = useHalo && !fluidTouchesTile && this.tileHaloHadFluid[tileIdx] === 1;
+        if (this.tileAmbientClean[tileIdx] && !fluidTouchesTile && !fluidLeftTile) {
           const tx = tileIdx % chunksW;
           const ty = (tileIdx / chunksW) | 0;
           const x0 = tx * CHUNK_SIZE;
@@ -2158,9 +2163,10 @@ export class LightingEngine {
           x0 <= (voidFluid.maxX + 1) * voidFluid.cellSize + 4 &&
           y1 >= voidFluid.minY * voidFluid.cellSize - 4 &&
           y0 <= (voidFluid.maxY + 1) * voidFluid.cellSize + 4;
-        if (!this.tileHaloClean[tileIdx] || fluidTouchesTile) {
+        if (!this.tileHaloClean[tileIdx] || fluidTouchesTile || this.tileHaloHadFluid[tileIdx] === 1) {
           this.bakeHaloTile(spriteCache, x0 >> 1, y0 >> 1, Math.ceil(x1 / 2), Math.ceil(y1 / 2), voidFluid);
           this.tileHaloClean[tileIdx] = 1;
+          this.tileHaloHadFluid[tileIdx] = fluidTouchesTile ? 1 : 0;
         }
       }
 

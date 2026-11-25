@@ -193,3 +193,42 @@ test("4. Hot inner fluid bands feed the 1/2-res emissive halo buffer cheaply and
   assert.equal(fluid.gridW * fluid.gridH, fullGridCount / 4, "Coarser low-quality fluid grid uses 1/4 as many cells");
   assert.ok(fluid.activeCellCount > 0, "Resampling to coarser grid preserves active fluid");
 });
+
+test("5. Halo glow from Void fluid clears once the fluid drains away", () => {
+  const sim = new VoidSim("tutorialBreach", "underSiege", emptyTechWallet());
+  const { world } = sim;
+  const p = world.portals[0];
+  p.active = true;
+  for (let y = Math.max(0, Math.floor(p.y - 25)); y < Math.min(world.grid.h, Math.ceil(p.y + 25)); y++) {
+    for (let x = Math.max(0, Math.floor(p.x - 25)); x < Math.min(world.grid.w, Math.ceil(p.x + 25)); x++) {
+      world.material[y * world.grid.w + x] = CellMaterial.VOID;
+      world.buildingAt[y * world.grid.w + x] = -1;
+    }
+  }
+  const engine = new LightingEngine();
+  const cache = new BuildingSpriteCache();
+  cache.syncAtlasGbuffer(world, "full");
+  engine.syncChunks(world, "full");
+  const terrainU32 = new Uint32Array(world.grid.count).fill(0xff201030);
+  const fluid = new VoidFluidGrid();
+  fluid.ensureSize(world.grid.w, world.grid.h, 1);
+  fluid.syncFlowField(world);
+
+  engine.renderLighting(world, terrainU32, cache, [], TIME_OF_DAY_PRESETS.night, undefined, undefined, false, 0, 0, fluid);
+  const baseline = Float32Array.from(engine.getHaloBuffer().halo);
+
+  const coreR = Math.max(3.6, p.radius * 0.42);
+  fluid.depositAtWorld(Math.round(p.x + coreR + 2), Math.round(p.y), 1.6, FluidMaterial.CONCRETE, coreR + 18);
+  engine.renderLighting(world, terrainU32, cache, [], TIME_OF_DAY_PRESETS.night, undefined, undefined, false, 0, 0, fluid);
+  const lit = engine.getHaloBuffer().halo;
+  let litDiff = 0;
+  for (let i = 0; i < lit.length; i++) litDiff = Math.max(litDiff, Math.abs(lit[i] - baseline[i]));
+  assert.ok(litDiff > 15, "fluid glow reaches the halo buffer");
+
+  fluid.clear();
+  engine.renderLighting(world, terrainU32, cache, [], TIME_OF_DAY_PRESETS.night, undefined, undefined, false, 0, 0, fluid);
+  const after = engine.getHaloBuffer().halo;
+  let staleDiff = 0;
+  for (let i = 0; i < after.length; i++) staleDiff = Math.max(staleDiff, Math.abs(after[i] - baseline[i]));
+  assert.ok(staleDiff < 0.5, `halo returns to its fluid-free state after the fluid drains (max diff ${staleDiff})`);
+});

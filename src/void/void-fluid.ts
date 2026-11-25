@@ -498,6 +498,10 @@ export class VoidFluidGrid {
     if (addedAmount <= 0 || mat === FluidMaterial.NONE) return;
     const { gridW, gridH, cellSize } = this;
     if (gridW === 0 || gridH === 0) return;
+    // A coarse Low-quality cell covers 4 world pixels and catches 4x the deposits; unscaled it
+    // saturates and fills the whole Void with an opaque disc. Dividing by 3 (not 4) offsets the
+    // coarse grid's extra evaporation so Low keeps the same spiral arms as High.
+    if (cellSize > 1) addedAmount /= 3;
     const gx = Math.floor(wx / cellSize);
     const gy = Math.floor(wy / cellSize);
     if (gx < 0 || gx >= gridW || gy < 0 || gy >= gridH) return;
@@ -988,11 +992,13 @@ export class VoidFluidGrid {
       );
       targetCtx.imageSmoothingEnabled = prevSmooth;
 
-      // Clean up spark-only pixels outside the fluid dirty box so next frame doesn't leave ghost trails
-      for (let i = 0; i < touchedSparks.length; i++) {
-        const sIdx = touchedSparks[i];
-        if (amount[sIdx] <= 0.03) rasterU32[sIdx] = 0;
+      // Wipe the blitted rect so pixels from cells that drained or sparks that moved never reappear as ghosts
+      for (let gy = drawMinY; gy <= drawMaxY; gy++) {
+        const row = gy * gridW;
+        rasterU32.fill(0, row + drawMinX, row + drawMaxX + 1);
       }
+    } else {
+      for (let i = 0; i < touchedSparks.length; i++) rasterU32[touchedSparks[i]] = 0;
     }
 
     return { drawnCells, drawnSparks };
