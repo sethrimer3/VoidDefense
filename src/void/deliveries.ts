@@ -64,7 +64,60 @@ export type DeliveryRoute = {
   dy: number;
   /** Index of the car's head in `path`. */
   head: number;
+  /** Path pixels the car will advance during the next tick (0 while loading), so the renderer can
+   * place it between ticks instead of snapping once per 30 Hz tick. */
+  rate: number;
 };
+
+/** Where a delivery car is drawn: the head pixel, its heading, and the second lane pixel of the 2-wide car. */
+export type DeliveryCarPose = {
+  /** Index of the head pixel in `route.path`. */
+  idx: number;
+  x: number;
+  y: number;
+  dx: number;
+  dy: number;
+  /** Offset of the car's second lane pixel from each path pixel at this heading. */
+  ox: number;
+  oy: number;
+};
+
+/** Path index `along` pixels into the current trip (forward trips run up the path, returns run down it). */
+export const tripIndex = (route: DeliveryRoute, along: number): number =>
+  route.reverse ? route.path!.length - 1 - along : along;
+
+/** Heading of the car while on path index `idx`: toward the next pixel of its trip, or the last step at the end. */
+export function tripHeading(path: readonly { x: number; y: number }[], idx: number, reverse: boolean): { dx: number; dy: number } {
+  const step = reverse ? -1 : 1;
+  const a = path[idx];
+  const ahead = path[idx + step];
+  if (ahead) return { dx: ahead.x - a.x, dy: ahead.y - a.y };
+  const behind = path[idx - step];
+  return behind ? { dx: a.x - behind.x, dy: a.y - behind.y } : { dx: 1, dy: 0 };
+}
+
+/** Lane offset for a 2-wide car at `(x, y)` heading `(dx, dy)`: its right-hand side (screen y points
+ * down), or the left when the right is not drivable. A pure function of heading and terrain, so the
+ * car never swaps sides on a straight street just because it moved. */
+export function laneOffset(world: VoidWorld, x: number, y: number, dx: number, dy: number): { ox: number; oy: number } {
+  const ox = -dy;
+  const oy = dx;
+  return isCityStreet(world, x + ox, y + oy, true) ? { ox, oy } : { ox: -ox, oy: -oy };
+}
+
+/** The car's pose `frac` (0..1) of the way into the next tick, so motion advances by wall time rather
+ * than jumping a whole tick's worth of pixels at a time. Stays on whole pixels. */
+export function deliveryCarPose(world: VoidWorld, route: DeliveryRoute, frac: number): DeliveryCarPose | null {
+  const path = route.path;
+  if (!path) return null;
+  const last = path.length - 1;
+  const along = Math.min(last, Math.floor(route.progress + Math.max(0, Math.min(1, frac)) * route.rate));
+  const idx = tripIndex(route, along);
+  const p = path[idx];
+  const { dx, dy } = tripHeading(path, idx, route.reverse);
+  const { ox, oy } = laneOffset(world, p.x, p.y, dx, dy);
+  return { idx, x: p.x, y: p.y, dx, dy, ox, oy };
+}
 
 export class DeliveryNetwork {
   readonly arrivals: { x: number; y: number; amount: number }[] = [];
@@ -101,7 +154,7 @@ export class DeliveryNetwork {
       this.routes.push({
         key: link.key, from: link.from, to: link.to, path: null, progress: 0, reverse: false,
         retryAt: tick, holdUntil: tick, payout: deliveryPayout(centerDistance(link.from, link.to)),
-        x: link.from.x, y: link.from.y, dx: 0, dy: 0, head: 0,
+        x: link.from.x, y: link.from.y, dx: 0, dy: 0, head: 0, rate: 0,
       });
     }
   }
@@ -115,6 +168,7 @@ export class DeliveryNetwork {
     for (const route of this.routes) {
       const speedMult = depotSpeedMultiplier(route.from.level);
       const loadTicks = Math.round(LOADING_TICKS / speedMult);
+      route.rate = 0;
       if (!route.path) {
         if (tick < route.retryAt) continue;
         // The return link drives the same streets, so reuse its path rather than searching again.
@@ -175,57 +229,11 @@ export class DeliveryNetwork {
         route.progress = 0;
       } else {
         route.progress = next;
+        // Speed for the coming tick, so rendering can advance the car smoothly until it runs.
+        if (tick + 1 >= route.holdUntil) route.rate = Math.min(last - next, DELIVERY_SPEED * speedMult * dt);
       }
     }
     return earned;
   }
 }
 
-/** Whole-pixel path of a crisp Tron-style lightning bolt from `(x0, y0)` to `(x1, y1)`. The bolt
- * zigzags through seeded perpendicular kinks, and every leg runs straight or at exactly 45 degrees,
- * so it reads as a circuit trace rather than a soft line. Pure function of its inputs. */
-export function depotBoltPixels(x0: number, y0: number, x1: number, y1: number, seed: number): { x: number; y: number }[] {
-  x0 = Math.round(x0); y0 = Math.round(y0); x1 = Math.round(x1); y1 = Math.round(y1);
-  const len = Math.hypot(x1 - x0, y1 - y0);
-  const n = Math.max(2, Math.round(len / 11));
-  const nx = len > 0 ? -(y1 - y0) / len : 0;
-  const ny = len > 0 ? (x1 - x0) / len : 0;
-  const knots: { x: number; y: number }[] = [{ x: x0, y: y0 }];
-  for (let i = 1; i < n; i++) {
-    const t = i / n;
-    const h = hashBolt(seed, i);
-    const off = (i % 2 === 0 ? 1 : -1) * (2 + (h % 4));
-    knots.push({ x: Math.round(x0 + (x1 - x0) * t + nx * off), y: Math.round(y0 + (y1 - y0) * t + ny * off) });
-  }
-  knots.push({ x: x1, y: y1 });
-  const out: { x: number; y: number }[] = [{ x: x0, y: y0 }];
-  for (let k = 1; k < knots.length; k++) {
-    let { x, y } = out[out.length - 1];
-    const q = knots[k];
-    const diagFirst = (hashBolt(seed, 100 + k) & 1) === 0;
-    while (x !== q.x || y !== q.y) {
-      const dx = q.x - x;
-      const dy = q.y - y;
-      const diag = dx !== 0 && dy !== 0;
-      const straightLeft = Math.abs(Math.abs(dx) - Math.abs(dy));
-      if (diag && (diagFirst || straightLeft === 0)) {
-        x += Math.sign(dx);
-        y += Math.sign(dy);
-      } else if (Math.abs(dx) > Math.abs(dy) || dy === 0) {
-        x += Math.sign(dx);
-      } else {
-        y += Math.sign(dy);
-      }
-      out.push({ x, y });
-    }
-  }
-  return out;
-}
-
-function hashBolt(a: number, b: number): number {
-  let h = Math.imul(a ^ 0x9e3779b9, 0x85ebca6b) ^ Math.imul(b + 0x632be5ab, 0xc2b2ae35);
-  h ^= h >>> 15;
-  h = Math.imul(h, 0x2c1b3c6d);
-  h ^= h >>> 12;
-  return h >>> 0;
-}

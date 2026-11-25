@@ -4,6 +4,8 @@ import type { VoidWorld } from "./world.ts";
 export interface StreetBfsScratch {
   parent: Int32Array;
   queue: Int32Array;
+  /** BFS distance of each reached cell (valid only where `parent` is not -1). Allocated on first use. */
+  dist?: Int32Array;
 }
 
 function isRoadMaterial(material: number, tier: number, delivery: boolean): boolean {
@@ -47,6 +49,11 @@ function searchStreetPath(
   const n = w * h;
   const parent = scratch && scratch.parent.length === n ? scratch.parent : new Int32Array(n);
   const queue = scratch && scratch.queue.length === n ? scratch.queue : new Int32Array(n);
+  let dist = scratch?.dist;
+  if (!dist || dist.length !== n) {
+    dist = new Int32Array(n);
+    if (scratch) scratch.dist = dist;
+  }
   parent.fill(-1);
 
   let head = 0;
@@ -54,6 +61,7 @@ function searchStreetPath(
   for (const start of starts) {
     if (start === goal || otherGoals?.has(start) || parent[start] !== -1) continue;
     parent[start] = -2;
+    dist[start] = 0;
     queue[tail++] = start;
   }
   let found = -1;
@@ -72,6 +80,7 @@ function searchStreetPath(
       const ni = cur + 1;
       if (parent[ni] === -1 && isRoadMaterial(material[ni], streetTier[ni], delivery) && (!delivery || towerAt[ni] < 0)) {
         parent[ni] = cur;
+        dist[ni] = dist[cur] + 1;
         queue[tail++] = ni;
       }
     }
@@ -79,6 +88,7 @@ function searchStreetPath(
       const ni = cur - 1;
       if (parent[ni] === -1 && isRoadMaterial(material[ni], streetTier[ni], delivery) && (!delivery || towerAt[ni] < 0)) {
         parent[ni] = cur;
+        dist[ni] = dist[cur] + 1;
         queue[tail++] = ni;
       }
     }
@@ -86,6 +96,7 @@ function searchStreetPath(
       const ni = cur + w;
       if (parent[ni] === -1 && isRoadMaterial(material[ni], streetTier[ni], delivery) && (!delivery || towerAt[ni] < 0)) {
         parent[ni] = cur;
+        dist[ni] = dist[cur] + 1;
         queue[tail++] = ni;
       }
     }
@@ -93,20 +104,50 @@ function searchStreetPath(
       const ni = cur - w;
       if (parent[ni] === -1 && isRoadMaterial(material[ni], streetTier[ni], delivery) && (!delivery || towerAt[ni] < 0)) {
         parent[ni] = cur;
+        dist[ni] = dist[cur] + 1;
         queue[tail++] = ni;
       }
     }
   }
 
   if (found < 0) return null;
+  return straightBacktrack(found, w, h, parent, dist);
+}
 
+/** Walks back from `found` to a start along strictly decreasing BFS distance, keeping the current
+ * heading whenever an equally short predecessor lies straight ahead. BFS parents alone often pick a
+ * different predecessor than the heading, leaving 1-2 px jogs that make a 2-wide car flip lanes and
+ * snap sideways; this keeps the same shortest length with as few turns as greedily possible. */
+function straightBacktrack(
+  found: number, w: number, h: number, parent: Int32Array, dist: Int32Array,
+): { x: number; y: number }[] {
+  const steps = [1, -1, w, -w];
   const path: { x: number; y: number }[] = [];
   let cur = found;
-  while (cur >= 0) {
+  let heading = 0;
+  for (;;) {
     const x = cur % w;
     const y = (cur - x) / w;
     path.push({ x, y });
-    cur = parent[cur];
+    const d = dist[cur];
+    if (d === 0) break;
+    let next = -1;
+    const ok = (s: number): boolean => {
+      if (s === 1 && x + 1 >= w) return false;
+      if (s === -1 && x === 0) return false;
+      if (s === w && y + 1 >= h) return false;
+      if (s === -w && y === 0) return false;
+      const ni = cur + s;
+      return parent[ni] !== -1 && dist[ni] === d - 1;
+    };
+    if (heading !== 0 && ok(heading)) next = cur + heading;
+    else {
+      for (const s of steps) {
+        if (ok(s)) { next = cur + s; heading = s; break; }
+      }
+    }
+    if (next < 0) next = parent[cur];
+    cur = next;
   }
   path.reverse();
   return path;
