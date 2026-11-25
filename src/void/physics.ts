@@ -22,6 +22,7 @@ import {
   classifyFluidMaterial,
   FluidMaterial,
   type FluidMaterialId,
+  sampleSourceCellColors,
   VoidFluidGrid,
 } from "./void-fluid.ts";
 import type { VoidWorld } from "./world.ts";
@@ -414,69 +415,17 @@ export class VoidPhysics {
     slot.maxAge = 0.55;
   }
 
-  /** Resolves the true original primary and accent colors of cell `idx` before Void consumption so
-   * sucked-in buildings, objects, and terrain start intact in their true colors. */
+  /** Resolves the true rendered primary and accent colors of cell `idx` before Void consumption so
+   * sucked-in buildings, objects, roads, and terrain start intact in their true colors. */
   private originalCellColors(
     world: VoidWorld,
     idx: number,
     prevMat: number,
     prevCover: number,
     bId: number,
-  ): { color: string; accent: string } {
-    const x = idx % world.grid.w;
-    const y = (idx / world.grid.w) | 0;
-    const v = (x * 7 + y * 13 + this.debris.length) & 7;
-    if (bId >= 0) {
-      const b = world.buildings[bId];
-      if (b) {
-        const palettes = ARCH_PALETTES[b.archStyle] ?? ARCH_PALETTES.glassTower;
-        const pal = palettes[b.variant % palettes.length];
-        const color = v === 0 ? pal.litEdge : v < 3 ? pal.crown : v < 6 ? pal.mid : pal.podium;
-        const accent = (v & 1) === 0 ? pal.neonCore : pal.litEdge;
-        return { color, accent };
-      }
-    }
-    if (prevMat === CellMaterial.UNCLAIMED) {
-      const c = prevCover === LandCover.RIVER ? (v < 2 ? "#4a9bd1" : "#2b6ca3") : "#153956";
-      return { color: c, accent: "#58b0e6" };
-    }
-    if (prevMat === CellMaterial.WALL || prevMat === CellMaterial.BARRIER) {
-      const c = prevMat === CellMaterial.BARRIER ? "#48c9e0" : (x + y) % 4 === 0 ? "#788ca8" : "#5a6b82";
-      return { color: c, accent: "#8fa4c2" };
-    }
-    if (prevMat === CellMaterial.RECLAIMED) {
-      return { color: v < 3 ? "#9e7e4e" : "#7d623c", accent: "#b08e5a" };
-    }
-    if (prevMat === CellMaterial.SALVAGE) {
-      return { color: v < 2 ? "#995c38" : v < 5 ? "#5e4334" : "#3d353a", accent: "#7a5844" };
-    }
-    if (prevMat === CellMaterial.STREET) {
-      if (prevCover === LandCover.BRIDGE) {
-        return { color: (x + y) % 3 === 0 ? "#523b28" : "#876948", accent: "#a38152" };
-      }
-      if (world.streetTier[idx] === 8) {
-        return { color: v < 4 ? "#a38152" : "#8c6d45", accent: "#b08a5a" };
-      }
-      // Broken asphalt pavement & roadbed concrete aggregate (readable against the dark Void)
-      const asphalt = v < 3 ? "#4a5464" : v < 6 ? "#586478" : "#3e4756";
-      const accent = v === 0 ? "#d4a64a" : "#7a869a";
-      return { color: asphalt, accent };
-    }
-    if (prevMat === CellMaterial.PARK || prevCover !== LandCover.NONE) {
-      const slabs = SLAB_COLORS[prevCover];
-      if (slabs && slabs.length > 0) {
-        return {
-          color: slabs[v % slabs.length],
-          accent: slabs[(v + 1) % slabs.length],
-        };
-      }
-      return { color: v < 4 ? "#3a6e3b" : "#294a33", accent: "#507d39" };
-    }
-    const urban = SLAB_URBAN[prevMat] ?? SLAB_URBAN[CellMaterial.STREET];
-    return {
-      color: urban[v % urban.length],
-      accent: urban[(v + 1) % urban.length],
-    };
+    prevFloors = 0,
+  ): { color: string; accent: string; rgb: [number, number, number]; accentRgb: [number, number, number] } {
+    return sampleSourceCellColors(world, idx, prevMat, prevCover, bId, prevFloors);
   }
 
   /** Converts cell `idx` into Void and queues any affected building for structural support evaluation. */
@@ -522,6 +471,7 @@ export class VoidPhysics {
       const rawX = world.grid.xOf(idx) + 0.5;
       const rawY = world.grid.yOf(idx) + 0.5;
       const fluidMat = classifyFluidMaterial(world, idx, prevMat, prevCover, bId);
+      const { color, accent, rgb } = this.originalCellColors(world, idx, prevMat, prevCover, bId, prevFloors);
       this.voidFluid.ensureSize(world.grid.w, world.grid.h, this.voidFluid.cellSize || 1);
       this.voidFluid.syncFlowField(world);
 
@@ -577,9 +527,9 @@ export class VoidPhysics {
       const y = rawY + ny * inwardShift;
       const d = Math.max(bestCoreR + 0.5, rawDist - inwardShift);
 
-      // When live chunk cap is reached, deposit directly into the Void fluid grid
+      // When live chunk cap is reached, deposit directly into the Void fluid grid with its true source color at heat 0
       if (this.debris.length >= this.maxChunks) {
-        this.voidFluid.depositAtWorld(x, y, 1.05, fluidMat, d);
+        this.voidFluid.depositAtWorld(x, y, 1.05, fluidMat, d, rgb, 0);
         return;
       }
 
@@ -597,7 +547,6 @@ export class VoidPhysics {
       const startsIntact =
         isStructure ||
         (isStreet ? hash01(world.seed, 611, idx, this.debris.length) < 0.55 : hash01(world.seed, 611, idx, this.debris.length) < 0.72);
-      const { color, accent } = this.originalCellColors(world, idx, prevMat, prevCover, bId);
       const kin = computeWhirlpoolKinematics(d, d, bestCoreR, startsIntact);
       const chunkMaxLife = 0.4 + hash01(world.seed, 613, idx, this.debris.length) * 0.2;
       const crackAt = chunkMaxLife * (0.42 + hash01(world.seed, 617, idx, this.debris.length) * 0.16);
@@ -633,8 +582,8 @@ export class VoidPhysics {
         cracked: false,
       });
 
-      // Also seed an initial fluid patch at the detachment lip so the fluid stream connects smoothly
-      this.voidFluid.depositAtWorld(x, y, 0.42, fluidMat, d);
+      // Seed an initial fluid patch at the detachment lip in the cell's true source color (cool heat = 0)
+      this.voidFluid.depositAtWorld(x, y, 0.42, fluidMat, d, rgb, 0);
     }
   }
 
@@ -927,7 +876,8 @@ export class VoidPhysics {
       // Dissolve into fluid cells once the chunk's 0.4-0.6 s lifetime finishes, or near the core rim
       if (d.life >= d.maxLife || distToPortal <= coreR + 2.8) {
         const mass = Math.max(0.85, (d.mergedGrains ?? 1) * (d.intact ? d.size * 0.9 : 0.85));
-        this.voidFluid.depositAtWorld(d.x, d.y, mass, fluidMat, startDist);
+        const chunkHeat = computeDebrisHeat(distToPortal, startDist, coreR, d.life / Math.max(0.1, d.maxLife)) * 0.35;
+        this.voidFluid.depositAtWorld(d.x, d.y, mass, fluidMat, startDist, d.color, chunkHeat);
         if ((i + this.supportTick) % 3 === 0) {
           this.voidFluid.spawnSpark(
             d.x,
@@ -940,6 +890,7 @@ export class VoidPhysics {
             fluidMat,
             4,
             0.28,
+            d.accentColor ?? d.color,
           );
         }
         continue;
@@ -957,8 +908,9 @@ export class VoidPhysics {
         d.intact = false;
         d.cracked = true;
         d.size = 1.0;
-        // Deposit a portion of the chunk's mass immediately into the fluid grid when it cracks
-        this.voidFluid.depositAtWorld(d.x, d.y, 0.65, fluidMat, startDist);
+        const crackHeat = computeDebrisHeat(distToPortal, startDist, coreR, d.life / Math.max(0.1, d.maxLife)) * 0.25;
+        // Deposit a portion of the chunk's mass immediately into the fluid grid in its true color when it cracks
+        this.voidFluid.depositAtWorld(d.x, d.y, 0.65, fluidMat, startDist, d.color, crackHeat);
 
         if (initialDebrisCount >= DEBRIS_FUSION_THRESHOLD) {
           d.mergedGrains = pieceCount;
@@ -975,6 +927,7 @@ export class VoidPhysics {
             const sy = d.y + uy * radOff + ty * tanOff;
             const sDist = dist(sx - d.portalX, sy - d.portalY);
             if (sDist <= coreR) continue;
+            const pieceColor = k === 1 && d.accentColor ? d.accentColor : d.color;
             if (this.debris.length < this.maxChunks) {
               this.debris.push({
                 x: sx,
@@ -985,7 +938,7 @@ export class VoidPhysics {
                 vy: d.vy,
                 portalX: d.portalX,
                 portalY: d.portalY,
-                color: k === 1 && d.accentColor ? d.accentColor : d.color,
+                color: pieceColor,
                 glowColor: "rgba(0, 0, 0, 0)",
                 size: 1.0,
                 life: d.life,
@@ -997,8 +950,8 @@ export class VoidPhysics {
                 cracked: true,
               });
             } else {
-              // If chunk cap is full, extra cracked pieces melt immediately into fluid cells
-              this.voidFluid.depositAtWorld(sx, sy, 0.42, fluidMat, startDist);
+              // If chunk cap is full, extra cracked pieces melt immediately into fluid cells with their piece color
+              this.voidFluid.depositAtWorld(sx, sy, 0.42, fluidMat, startDist, pieceColor, crackHeat);
             }
           }
         }
@@ -1243,6 +1196,8 @@ export class VoidPhysics {
               0.45 * count,
               FluidMaterial.CONCRETE,
               Math.max(bestDist, bestCoreR + 6),
+              ch.color,
+              0.15,
             );
             for (let k = 0; k < count && this.debris.length < this.maxChunks; k++) {
               const px = sx0 + (k & 1) * 0.7;
