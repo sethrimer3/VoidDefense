@@ -55,3 +55,30 @@ test("Water has no soil cross-section; constructed terrain exposes rock instead 
   for (const i of edge) world.material[i] = CellMaterial.RECLAIMED;
   assert.ok(render(world, edge).some(p => p.color === "#868080"));
 });
+
+test("Cliff strata shade by light direction and simplify on Low quality", () => {
+  const { world, edge } = scene();
+  // Create a western and eastern cliff face by placing Void down the center column x = 12
+  for (let y = 0; y <= 5; y++) {
+    world.material[world.grid.index(12, y)] = CellMaterial.VOID;
+  }
+  const fullFrontier = [...edge, world.grid.index(11, 2), world.grid.index(13, 2)];
+
+  const litPixels: { x: number; y: number; color: string }[] = [];
+  const pen = {
+    fillStyle: "",
+    fillRect(x: number, y: number) {
+      litPixels.push({ x, y, color: this.fillStyle });
+    },
+  };
+  paintVoidLedge(pen, world, fullFrontier, { sunDir: [-0.7, -0.7, 0.2], quality: "high" });
+  const lowPixels: { x: number; y: number; color: string }[] = [];
+  const lowPen = {
+    fillStyle: "",
+    fillRect(x: number, y: number) {
+      lowPixels.push({ x, y, color: this.fillStyle });
+    },
+  };
+  paintVoidLedge(lowPen, world, fullFrontier, { sunDir: [-0.7, -0.7, 0.2], quality: "low" });
+  assert.ok(lowPixels.length < litPixels.length, "Low quality uses simpler strata with fewer pixels");
+});

@@ -278,6 +278,7 @@ export class VoidRenderer {
   private readonly ledgeCtx: CanvasRenderingContext2D;
   private ledgeDirty = true;
   private ledgeFrontierRevision = -1;
+  private ledgeQualityKey = "";
   private ledgeImage: ImageData | null = null;
   private readonly frontierLayer: HTMLCanvasElement;
   private readonly frontierCtx: CanvasRenderingContext2D;
@@ -1370,7 +1371,13 @@ export class VoidRenderer {
     return sprite;
   }
 
-  private syncLedgeRaster(world: VoidWorld, frontier: readonly number[], revision: number): void {
+  private syncLedgeRaster(
+    world: VoidWorld,
+    frontier: readonly number[],
+    revision: number,
+    sunDir?: readonly [number, number, number],
+    quality: "high" | "medium" | "low" = "high",
+  ): void {
     const { w, h } = world.grid;
     if (this.ledgeLayer.width !== w || this.ledgeLayer.height !== h || !this.ledgeImage) {
       this.ledgeLayer.width = w;
@@ -1378,17 +1385,28 @@ export class VoidRenderer {
       this.ledgeImage = this.ledgeCtx.createImageData(w, h);
       this.ledgeDirty = true;
     }
-    if (!this.ledgeDirty && this.ledgeFrontierRevision === revision) return;
+    const qKey = `${quality}:${sunDir ? `${Math.round(sunDir[0] * 10)},${Math.round(sunDir[1] * 10)}` : ""}`;
+    if (!this.ledgeDirty && this.ledgeFrontierRevision === revision && this.ledgeQualityKey === qKey) return;
     const pixels = new Uint32Array(this.ledgeImage.data.buffer);
     pixels.fill(0);
     let packed = 0;
-    paintVoidLedge({
-      set fillStyle(color: string) { packed = hexToAbgr(color); },
-      fillRect(x, y) { pixels[y * w + x] = packed; },
-    }, world, frontier);
+    paintVoidLedge(
+      {
+        set fillStyle(color: string) {
+          packed = hexToAbgr(color);
+        },
+        fillRect(x, y) {
+          pixels[y * w + x] = packed;
+        },
+      },
+      world,
+      frontier,
+      { sunDir, quality },
+    );
     this.ledgeCtx.putImageData(this.ledgeImage, 0, 0);
     this.ledgeDirty = false;
     this.ledgeFrontierRevision = revision;
+    this.ledgeQualityKey = qKey;
   }
 
   private readonly debrisPalettes = new Map<string, string[]>();
@@ -1619,18 +1637,21 @@ export class VoidRenderer {
       const radius = np.p?.radius ?? 12;
       const core = Math.max(3.6, radius * 0.42);
       if (np.d < core) color = "#000000";
-      else if (np.d < core + 1) color = "#5e2194";
+      else if (np.d < core + 1) color = "#3b1460";
       else {
-        // Sample the recolored Star Nest volumetric fractal field
+        // Deep funnel interior: falls off darker toward the middle with faint stepped depth rings,
+        // so the anomaly reads as a deep pit rather than a flat purple disc.
         const logR = Math.log(np.d + 1.0);
         const u = ((np.ang / (Math.PI * 2)) * 2.0 + logR * 0.35) % 1;
         const v = (np.d * 0.045) % 1;
         const intensity = sampleStarNest(u, v);
 
-        // Blended with radial falloff
-        const fall = Math.max(0, 1 - ((np.d - core) / (radius * 3.8)) ** 2);
-        const arm = 0.5 + 0.5 * Math.sin(np.ang * 2 + Math.log(np.d + 1) * 5.2);
-        const compositeIntensity = Math.min(1, intensity * (0.5 + fall * 0.5) + arm * 0.25 * fall);
+        const normD = Math.min(1, Math.max(0, (np.d - core) / Math.max(6, radius * 1.45)));
+        const stepBand = Math.floor((np.d - core) / 3.2);
+        const isRingEdge = Math.abs((np.d - core) - stepBand * 3.2) < 0.55 && stepBand >= 1 && stepBand <= 6;
+        // Funnel depth: darker toward the middle (normD -> 0), rising slightly in stepped terraces toward the rim
+        const funnelDepth = 0.14 + 0.58 * (normD * normD) + (isRingEdge ? 0.16 : 0);
+        const compositeIntensity = Math.min(0.84, intensity * funnelDepth + (isRingEdge ? 0.12 : 0));
         color = starNestColor(compositeIntensity, (x * 7 + y * 13) & 15);
       }
       this.terrainU32[idx] = hexToAbgr(color);
@@ -1756,10 +1777,30 @@ export class VoidRenderer {
     }
     if (nearVoid) {
       const distance = this.distWindow[(y - this.distOy + 1) * DIST_STRIDE + x - this.distOx + 1];
+      const crackSeed = hash(world.seed, 1291, x, y);
       if (distance <= 3) {
-        abgr = distance <= 1 ? RIM_ABGR_INNER : RIM_ABGR_OUTER;
+        // Torn rim edge: keep the real ground material color at the lip, with dark stress cracks and loose rim chips
+        if (crackSeed % 4 === 0) {
+          abgr = packAbgr(0x16, 0x11, 0x1e); // dark fracture crack right at the rim
+        } else if (crackSeed % 5 === 1) {
+          abgr = blendAbgr(abgr, 210, 195, 175, 58); // sun-caught loose chip at the torn lip
+        } else {
+          abgr = blendAbgr(abgr, 36, 18, 52, 64);
+        }
+      } else if (distance <= 9 && mat !== CellMaterial.WALL && mat !== CellMaterial.BARRIER) {
+        // Hairline stress cracks and loose displaced gravel/asphalt pixels 1-3 cells outside the rim
+        const isCrack =
+          ((x + y * 2 + (crackSeed & 3)) % 5 === 0 && (crackSeed & 7) < 3) ||
+          (distance <= 6 && (crackSeed % 9 === 0));
+        if (isCrack) {
+          abgr = blendAbgr(abgr, 14, 11, 20, 148);
+        } else if (distance <= 6 && crackSeed % 11 === 0) {
+          abgr = blendAbgr(abgr, 165, 152, 138, 64); // loose pebble/chip outside the rim
+        } else {
+          abgr = blendAbgr(abgr, 58, 8, 96, CORRUPTION_ALPHAS[distance] >> 1);
+        }
       } else if (distance <= CORRUPTION_REACH * 3 && mat !== CellMaterial.WALL && mat !== CellMaterial.BARRIER) {
-        abgr = blendAbgr(abgr, 58, 8, 96, CORRUPTION_ALPHAS[distance]);
+        abgr = blendAbgr(abgr, 58, 8, 96, CORRUPTION_ALPHAS[distance] >> 1);
       }
     }
     this.terrainU32[idx] = abgr;
@@ -2179,14 +2220,25 @@ export class VoidRenderer {
 
     lap("frontier");
 
-    // Living, moving Void interior: subtle inward-flowing nebula wisps behind the portal silhouette
+    // Living, moving Void interior: subtle inward-flowing nebula wisps behind the cliff ledge and fluid streams
     if (activePortals.length > 0) {
       paintVoidInteriorDirect(rawScene, world, animTime, this.reduceEffects);
     }
     paintVoidRipples(rawScene, world, physics.voidRipples, this.reduceEffects);
     lap("interior");
 
-    // 3b. Grid-based Void accretion fluid & short-lived spark layer (rendered in one ImageData putImageData + drawImage pass)
+    // Exposed strata cliff walls occlude the deep Void funnel interior, while torn-off fluid streams
+    // pour over the crater rim and spiral inward in front of the subterranean cliff face.
+    this.syncLedgeRaster(
+      world,
+      voidField.frontierCells,
+      voidField.frontierRevision,
+      activePreset.sunDir,
+      this.effectiveLightingQuality,
+    );
+    rawScene.drawImage(this.ledgeLayer, 0, 0);
+
+    // 3b. Grid-based Void accretion fluid & short-lived spark/flash layer (rendered in one ImageData putImageData + drawImage pass)
     physics.voidFluid.render(
       rawScene,
       world,
@@ -2326,10 +2378,6 @@ export class VoidRenderer {
       rawScene.fillRect(px - (size >> 1), py - (size >> 1), size, size);
     }
     lap("meteors");
-
-    // Exposed strata occlude the interior. Only topology and ground changes invalidate this raster.
-    this.syncLedgeRaster(world, voidField.frontierCells, voidField.frontierRevision);
-    rawScene.drawImage(this.ledgeLayer, 0, 0);
 
     // Step cosmetic fleeing civilians and draw beneath-ground falling chunks/civilians (`z < 0`),
     // clipped behind northern ledge front faces.
@@ -3441,25 +3489,37 @@ export class VoidRenderer {
       const heat = fragmentHeat(d, distToPortal, coreR);
       const heatStep = Math.round(heat * DEBRIS_HEAT_STEPS);
       const bodyColor = this.debrisColor(d.color, heatStep);
+      const zOff = d.z ?? 0;
+      const screenY = d.y - zOff;
 
       if (d.intact) {
         const bw = Math.max(2, Math.round(d.size));
         const bh = Math.max(2, Math.round(d.size));
         const bx = Math.round(d.x - bw * 0.5);
-        const by = Math.round(d.y - bh * 0.5);
+        const by = Math.round(screenY - bh * 0.5);
+        // Drop shadow below the lifted/falling chunk so it visibly separates from the rim and drops into the crater
+        const shadowDrop = Math.max(1, Math.min(3, Math.round(1.2 + Math.abs(zOff))));
+        rawScene.fillStyle = "rgba(5, 3, 12, 0.62)";
+        rawScene.fillRect(bx + 1, by + shadowDrop, bw, bh);
         rawScene.fillStyle = bodyColor;
         rawScene.fillRect(bx, by, bw, bh);
         if (d.accentColor) {
           rawScene.fillStyle = this.debrisColor(d.accentColor, heatStep);
           rawScene.fillRect(bx, by, 1, 1);
+          if (bw >= 3) rawScene.fillRect(bx + bw - 1, by, 1, 1);
         }
-        // Crisp 1-px dark underside edge giving the impact chunk 3D thickness before it melts
-        rawScene.fillStyle = "rgba(0, 0, 0, 0.45)";
+        // Crisp 1-px dark underside edge giving the torn-up chunk 3D thickness before it melts
+        rawScene.fillStyle = "rgba(0, 0, 0, 0.52)";
         rawScene.fillRect(bx, by + bh - 1, bw, 1);
         lastRawFill = "";
       } else {
         const x1 = Math.floor(d.x);
-        const y1 = Math.floor(d.y);
+        const y1 = Math.floor(screenY);
+        if (zOff !== 0) {
+          rawScene.fillStyle = "rgba(5, 3, 12, 0.55)";
+          rawScene.fillRect(x1, y1 + 1, 1, 1);
+          lastRawFill = "";
+        }
         if (lastRawFill !== bodyColor) {
           rawScene.fillStyle = bodyColor;
           lastRawFill = bodyColor;
