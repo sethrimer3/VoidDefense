@@ -1965,10 +1965,11 @@ export class LightingEngine {
               const h = voidFluid.heat[bestIdx];
               if (h > 0.34) {
                 const hNorm = (h - 0.34) * (1 / 0.66);
-                const wGain = Math.min(1, (0.24 + hNorm * 0.82) * Math.min(1.2, fAmt));
-                const r = h > 0.76 ? 216 : 252;
-                const g = h > 0.76 ? 68 : (92 + hNorm * 116);
-                const b = h > 0.76 ? 236 : (32 + hNorm * 88);
+                const wGain = Math.min(1, (0.34 + hNorm * 0.9) * Math.min(1.2, fAmt));
+                // Molten orange spill; only matter at the horizon tints it Void violet
+                const r = h > 0.76 ? 216 : 255;
+                const g = h > 0.76 ? 68 : (84 + hNorm * 46);
+                const b = h > 0.76 ? 236 : (18 + hNorm * 10);
                 seeds[dst] = Math.max(seeds[dst], (r * wGain) | 0);
                 seeds[dst + 1] = Math.max(seeds[dst + 1], (g * wGain) | 0);
                 seeds[dst + 2] = Math.max(seeds[dst + 2], (b * wGain) | 0);

@@ -1547,11 +1547,16 @@ export class VoidFluidGrid {
           // 1. Source color heated along the thermal ramp
           // Each clump heats a little unevenly, so molten streams flicker between orange and white-hot
           const hc = this.computeCellHeat(src, 0);
-          const h = hc > 0.2 ? Math.min(1, hc + (grain[src] - 128) * (0.07 / 128)) : hc;
+          let h = hc > 0.2 ? Math.min(1, hc + (grain[src] - 128) * (0.07 / 128)) : hc;
+          // Away from the last few pixels of the horizon, hot matter holds in the molten-orange band
+          // (only the hottest clumps flick toward yellow) instead of washing out to pale white
+          if (h > 0.4 && h < 0.7) h = 0.4 + (h - 0.4) * 0.55 + (grain[src] - 128) * (0.025 / 128);
+          // ...and stays molten right up to the horizon, skipping the pale yellow-white stretch of the ramp
+          else if (h >= 0.7 && h < 0.84) h = 0.56;
           heatColorInto(out, colorR[src], colorG[src], colorB[src], h, lowTier);
 
           // 2. Cool matter is lit by the scene; hot matter lights itself
-          const emission = h <= 0.05 ? 0 : Math.min(1, h * h * 1.15);
+          const emission = h <= 0.05 ? 0 : h < 0.25 ? h * h * 1.15 : Math.min(1, 0.072 + (h - 0.25) * 3.2);
           // Clump grain: +/-12% on cool ground, fading as heat melts it into a glowing stream
           const grainMul = 1 + ((grain[src] - 128) / 128) * 0.12 * (1 - emission * 0.4);
           let shade = grainMul * wetSheen * (0.86 + 0.14 * Math.min(1, dens));
@@ -1567,11 +1572,11 @@ export class VoidFluidGrid {
             shade *= 0.68;
           }
 
-          const hotBoost = h > 0.42 ? (h - 0.42) * 60 : 0;
+          const hotBoost = h > 0.3 ? (h - 0.3) * 70 : 0;
           const r = (out[0] * (sky[0] + (1 - sky[0]) * emission) * shade + lift + hotBoost + 0.5) | 0;
-          const g = (out[1] * (sky[1] + (1 - sky[1]) * emission) * shade + lift * 0.94 + hotBoost * 0.66 + 0.5) | 0;
+          const g = (out[1] * (sky[1] + (1 - sky[1]) * emission) * shade + lift * 0.94 + hotBoost * 0.28 + 0.5) | 0;
           const b = (out[2] * (sky[2] + (1 - sky[2]) * emission) * shade + lift * 1.06 +
-            hotBoost * (h > 0.72 ? 1.2 : 0.3) + 0.5) | 0;
+            hotBoost * (h > 0.72 ? 1.2 : 0.02) + 0.5) | 0;
 
           // 4. Stepped alpha: dense streams are solid, thinning tails fall off in hard pixel-art steps
           const alpha = dens >= 0.9 || h > 0.5 ? 255 : dens >= 0.55 ? 225 : dens >= 0.36 ? 175 : 120;
