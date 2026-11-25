@@ -354,3 +354,38 @@ test("6. Dissolving road, grass, and building chunks start with fluid cell RGB c
   assert.ok(cYellowWhite[0] > 240 && cYellowWhite[1] > 190 && cYellowWhite[2] > 110, "Peak heat reaches yellow-white");
   assert.ok(cViolet[2] > 210 && cViolet[0] > 150 && cViolet[1] < 95, "Horizon heat shifts to Void violet/magenta");
 });
+
+test("7. Fluid halo glow blurs across 16-px lighting tile edges without dark seams", () => {
+  const sim = new VoidSim("tutorialBreach", "underSiege", emptyTechWallet());
+  const { world } = sim;
+  const p = world.portals[0];
+  p.active = true;
+  for (let y = Math.max(0, Math.floor(p.y - 30)); y < Math.min(world.grid.h, Math.ceil(p.y + 30)); y++) {
+    for (let x = Math.max(0, Math.floor(p.x - 30)); x < Math.min(world.grid.w, Math.ceil(p.x + 30)); x++) {
+      world.material[y * world.grid.w + x] = CellMaterial.VOID;
+      world.buildingAt[y * world.grid.w + x] = -1;
+    }
+  }
+  const engine = new LightingEngine();
+  const cache = new BuildingSpriteCache();
+  cache.syncAtlasGbuffer(world, "full");
+  engine.syncChunks(world, "full");
+  const terrainU32 = new Uint32Array(world.grid.count).fill(0xff201030);
+  const fluid = new VoidFluidGrid();
+  fluid.ensureSize(world.grid.w, world.grid.h, 1);
+  fluid.syncFlowField(world);
+
+  engine.renderLighting(world, terrainU32, cache, [], TIME_OF_DAY_PRESETS.night, undefined, undefined, false, 0, 0, fluid);
+  const { halo, haloW } = engine.getHaloBuffer();
+  const coreR = Math.max(3.6, p.radius * 0.42);
+  // First tile edge at least 4 px outside the event horizon; fluid sits on the halo texel just left of it
+  const edgeX = Math.ceil((p.x + coreR + 4) / 16) * 16;
+  const y = Math.round(p.y) & ~1; // halo seeds sample even rows
+  const rightTexel = ((y >> 1) * haloW + (edgeX >> 1)) * 3;
+  const baseline = halo[rightTexel] + halo[rightTexel + 2];
+
+  fluid.depositAtWorld(edgeX - 2, y, 0.4, FluidMaterial.CONCRETE, coreR + 18, [96, 104, 120], 0.95);
+  engine.renderLighting(world, terrainU32, cache, [], TIME_OF_DAY_PRESETS.night, undefined, undefined, false, 0, 0, fluid);
+  const lit = halo[rightTexel] + halo[rightTexel + 2];
+  assert.ok(lit > baseline + 5, `glow from fluid just left of a tile edge spills into the next tile (${lit} > ${baseline})`);
+});

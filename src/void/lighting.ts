@@ -1842,10 +1842,11 @@ export class LightingEngine {
           }
         }
         // Sample hot inner Void fluid trails at low resolution (1 sample per 2x2 world texel)
-        if (fActive && voidFluid && x >= 2 && x < width + 2 && y >= 2 && y < height + 2) {
+        // Margin texels sample neighbouring fluid too, so the blur crosses tile edges without dark seams
+        if (fActive && voidFluid) {
           const fgx = (px / fCellSize) | 0;
           const fgy = (py / fCellSize) | 0;
-          if (fgx >= voidFluid.minX && fgx <= voidFluid.maxX && fgy >= voidFluid.minY && fgy <= voidFluid.maxY) {
+          if (fgx + 1 >= voidFluid.minX && fgx <= voidFluid.maxX && fgy >= voidFluid.minY && fgy <= voidFluid.maxY) {
             let bestIdx = fgy * fGridW + fgx;
             let fAmt = voidFluid.amount[bestIdx];
             if (fCellSize === 1 && fAmt < 0.18 && fgx + 1 <= voidFluid.maxX) {
@@ -2115,10 +2116,10 @@ export class LightingEngine {
           useHalo &&
           voidFluid &&
           voidFluid.maxX >= voidFluid.minX &&
-          (tileIdx % chunksW) * CHUNK_SIZE + CHUNK_SIZE >= voidFluid.minX * voidFluid.cellSize - 2 &&
-          (tileIdx % chunksW) * CHUNK_SIZE <= (voidFluid.maxX + 1) * voidFluid.cellSize + 2 &&
-          ((tileIdx / chunksW) | 0) * CHUNK_SIZE + CHUNK_SIZE >= voidFluid.minY * voidFluid.cellSize - 2 &&
-          ((tileIdx / chunksW) | 0) * CHUNK_SIZE <= (voidFluid.maxY + 1) * voidFluid.cellSize + 2;
+          (tileIdx % chunksW) * CHUNK_SIZE + CHUNK_SIZE >= voidFluid.minX * voidFluid.cellSize - 4 &&
+          (tileIdx % chunksW) * CHUNK_SIZE <= (voidFluid.maxX + 1) * voidFluid.cellSize + 4 &&
+          ((tileIdx / chunksW) | 0) * CHUNK_SIZE + CHUNK_SIZE >= voidFluid.minY * voidFluid.cellSize - 4 &&
+          ((tileIdx / chunksW) | 0) * CHUNK_SIZE <= (voidFluid.maxY + 1) * voidFluid.cellSize + 4;
         // A tile whose halo still holds glow from fluid that has since drained must be re-shaded once
         const fluidLeftTile = useHalo && !fluidTouchesTile && this.tileHaloHadFluid[tileIdx] === 1;
         if (this.tileAmbientClean[tileIdx] && !fluidTouchesTile && !fluidLeftTile) {
@@ -2153,10 +2154,10 @@ export class LightingEngine {
         const fluidTouchesTile =
           voidFluid &&
           voidFluid.maxX >= voidFluid.minX &&
-          x1 >= voidFluid.minX * voidFluid.cellSize - 2 &&
-          x0 <= (voidFluid.maxX + 1) * voidFluid.cellSize + 2 &&
-          y1 >= voidFluid.minY * voidFluid.cellSize - 2 &&
-          y0 <= (voidFluid.maxY + 1) * voidFluid.cellSize + 2;
+          x1 >= voidFluid.minX * voidFluid.cellSize - 4 &&
+          x0 <= (voidFluid.maxX + 1) * voidFluid.cellSize + 4 &&
+          y1 >= voidFluid.minY * voidFluid.cellSize - 4 &&
+          y0 <= (voidFluid.maxY + 1) * voidFluid.cellSize + 4;
         if (!this.tileHaloClean[tileIdx] || fluidTouchesTile || this.tileHaloHadFluid[tileIdx] === 1) {
           this.bakeHaloTile(spriteCache, x0 >> 1, y0 >> 1, Math.ceil(x1 / 2), Math.ceil(y1 / 2), voidFluid);
           this.tileHaloClean[tileIdx] = 1;
