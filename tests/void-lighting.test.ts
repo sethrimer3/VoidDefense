@@ -957,7 +957,7 @@ test("10. City hierarchy & light restraint: 3 street tiers, boulevard medians/st
   assert.ok(tier3Median > 100, `Expected boulevard central medians (tier 3), got ${tier3Median}`);
   assert.ok(tier4Alley > 200, `Expected sparse alleys/setbacks (tier 4), got ${tier4Alley}`);
   assert.ok(streetlights >= 12, `Expected spaced boulevard streetlights, got ${streetlights}`);
-  assert.ok(laneLines >= 100, `Expected solid orange curb lines, got ${laneLines}`);
+  assert.ok(laneLines >= 100, `Expected curb lines for the inset curb lights, got ${laneLines}`);
 
   const landmarks = getLandmarkBuildingIds(world);
   assert.ok(landmarks.size >= 2 && landmarks.size <= 4, `Expected 2-4 hero landmark buildings, got ${landmarks.size}`);

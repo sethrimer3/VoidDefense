@@ -18,7 +18,8 @@ import { hash, hash01 } from "./grid.ts";
 import { type Agent, CellMaterial, type FallingChunk, LandCover, SurfaceMaterial } from "./model.ts";
 import { valueNoise } from "./portal-noise.ts";
 import { streetFireFlicker } from "./street-fires.ts";
-import { halogenLampStanding, halogenLamps, halogenPoolCell, isHalogenPoolAt } from "./city-details.ts";
+import { CityDetail, cityDetailAt, halogenLampStanding, halogenLamps, halogenPoolCell, isHalogenPoolAt } from "./city-details.ts";
+import { STREET_GLOW_TINT, streetGlowSpillAt } from "./street-glow.ts";
 import type { VoidSim } from "./sim.ts";
 import { TOWER_SPECS } from "./towers.ts";
 import { evaluateFluidHeatColor, type VoidFluidGrid } from "./void-fluid.ts";
@@ -655,7 +656,7 @@ export function isBoulevardStreetlightAt(world: VoidWorld, x: number, y: number)
   return false;
 }
 
-/** Inset of the glowing orange curb line from the block edge, in world pixels (the sidewalk lies between). */
+/** Inset of the curb line (where the curb lights sit) from the block edge, in world pixels (the sidewalk lies between). */
 export const CURB_LINE_INSET = 2;
 
 function isStreetCorridor(world: VoidWorld, x: number, y: number): boolean {
@@ -665,7 +666,7 @@ function isStreetCorridor(world: VoidWorld, x: number, y: number): boolean {
   return tier === 1 || tier === 2 || tier === 3;
 }
 
-/** True when street cell `(x, y)` lies on a solid glowing orange curb line. Every boulevard and avenue
+/** True when street cell `(x, y)` lies on a curb line, where `street-glow.ts` sets its inset lights. Every boulevard and avenue
  * carries one line along each side, `CURB_LINE_INSET` pixels out from the block edge so a sidewalk
  * strip separates it from the buildings. Lines stop at intersections, where no block edge runs beside them. */
 export function isBoulevardOrAvenueLaneAt(world: VoidWorld, x: number, y: number): boolean {
@@ -1531,14 +1532,11 @@ export class LightingEngine {
         }
         this.terrainSurface[idx] = surface;
         const stTier = world.streetTier[idx];
-        // Curb line glow falloff: 3 on the line, 2 one pixel away, 1 two pixels away (road and sidewalk)
+        // Soft cool street glow: curb light dots (3, falling off over 2 px), intersection rings and crosswalks
         let lane = 0;
-        if (mat === CellMaterial.STREET && (stTier === 1 || stTier === 2)) {
-          if (isBoulevardOrAvenueLaneAt(world, x, y)) lane = 3;
-          else if (isBoulevardOrAvenueLaneAt(world, x - 1, y) || isBoulevardOrAvenueLaneAt(world, x + 1, y) ||
-            isBoulevardOrAvenueLaneAt(world, x, y - 1) || isBoulevardOrAvenueLaneAt(world, x, y + 1)) lane = 2;
-          else if (isBoulevardOrAvenueLaneAt(world, x - 2, y) || isBoulevardOrAvenueLaneAt(world, x + 2, y) ||
-            isBoulevardOrAvenueLaneAt(world, x, y - 2) || isBoulevardOrAvenueLaneAt(world, x, y + 2)) lane = 1;
+        if (mat === CellMaterial.STREET && (stTier === 1 || stTier === 2 || stTier === 3)) {
+          lane = streetGlowSpillAt(world, idx);
+          if (lane === 0 && cityDetailAt(world, idx) === CityDetail.CROSSWALK) lane = 1;
         }
         this.terrainLane[idx] = lane;
         const tGround =
@@ -2336,21 +2334,22 @@ export class LightingEngine {
             }
           }
 
-          // Solid orange curb lines glow onto the road and sidewalk beside them, and sheen on wet streets
+          // Curb light dots and intersection rings glow softly cool onto the street, with a wet sheen in rain
           const lane = isBuilding ? 0 : this.terrainLane[i];
           if (lane > 0 && preset.neonIntensity > 0.2) {
-            const laneGlow = preset.neonIntensity * (lane === 3 ? 0.2 + localWet * 0.08 : lane === 2 ? 0.075 : 0.032);
-            ptR += laneGlow;
-            ptG += laneGlow * 0.45;
-            ptB += laneGlow * 0.08;
+            const [tr, tg, tb] = STREET_GLOW_TINT;
+            const laneGlow = preset.neonIntensity * (lane === 3 ? 0.3 + localWet * 0.08 : lane === 2 ? 0.1 : 0.04);
+            ptR += laneGlow * tr;
+            ptG += laneGlow * tg;
+            ptB += laneGlow * tb;
             if (localWet > 0.05 && lane < 3) {
-              const wetLaneSpill = localWet * preset.neonIntensity * (lane === 2 ? 0.1 : 0.05);
-              ptR += wetLaneSpill;
-              ptG += wetLaneSpill * 0.44;
-              ptB += wetLaneSpill * 0.08;
-              spR += wetLaneSpill * 22;
-              spG += wetLaneSpill * 10;
-              spB += wetLaneSpill * 2;
+              const wetLaneSpill = localWet * preset.neonIntensity * (lane === 2 ? 0.08 : 0.04);
+              ptR += wetLaneSpill * tr;
+              ptG += wetLaneSpill * tg;
+              ptB += wetLaneSpill * tb;
+              spR += wetLaneSpill * 18 * tr;
+              spG += wetLaneSpill * 18 * tg;
+              spB += wetLaneSpill * 18 * tb;
             }
           }
           // Emissive neon cores stay bright and saturated with a soft colored boost

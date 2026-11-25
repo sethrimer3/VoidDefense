@@ -36,7 +36,6 @@ import {
   BUILDING_LIGHT_BUDGET,
   collectSceneLights,
   INFANTRY_SOBEL_NORMALS,
-  isBoulevardOrAvenueLaneAt,
   isBoulevardStreetlightAt,
   LightingEngine,
   type LightingQualityMode,
@@ -96,6 +95,7 @@ import { findStreetPath, isCityStreet, type StreetBfsScratch } from "./street-ro
 import { depotBoltPixels, depotLinks, type DeliveryRoute } from "./deliveries.ts";
 import { streetFireFlicker } from "./street-fires.ts";
 import { CITY_DETAIL_COLORS, cityDetailAt, halogenLampStanding, halogenLamps } from "./city-details.ts";
+import { STREET_GLOW_COLORS, streetGlowAt } from "./street-glow.ts";
 import type { VoidSim } from "./sim.ts";
 import { STRIKE_SPECS, TOWER_SPECS, canMountOnRoof, footprintBuilding, towerRange } from "./towers.ts";
 import type { VoidWorld } from "./world.ts";
@@ -1697,9 +1697,9 @@ export class VoidRenderer {
           (y > 0 && world.buildingAt[idx - w] >= 0) || (y + 1 < h && world.buildingAt[idx + w] >= 0);
         if (kerb) {
           color = "#2e353e";
-        } else if (isBoulevardOrAvenueLaneAt(world, x, y)) {
-          // Solid orange curb line along both sides of boulevards and avenues (dimmer than tower orange)
-          color = "#a8541e";
+        } else if (streetGlowAt(world, idx) !== 0) {
+          // Cool inset curb light dots with a faint seam between, and major intersection light rings
+          color = STREET_GLOW_COLORS[streetGlowAt(world, idx)];
         } else {
           color = world.streetTier[idx] === 4 ? "#1d242e" : r < 0.07 ? "#191f28" : "#151a22";
         }

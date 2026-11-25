@@ -23,6 +23,7 @@
 import { dist } from "../exact.ts";
 import { PARKING_STREET_TIER } from "./config.ts";
 import { CITY_DETAIL_COLORS, cityDetailAt } from "./city-details.ts";
+import { STREET_GLOW_COLORS, streetGlowLayoutAt } from "./street-glow.ts";
 import {
   ARCH_PALETTES,
   facadeColorAt,
@@ -32,7 +33,6 @@ import {
 import { farmSoilColor, isWheat } from "./farms.ts";
 import { hash01 } from "./grid.ts";
 import {
-  isBoulevardOrAvenueLaneAt,
   isBoulevardStreetlightAt,
   looseMaterialLight,
   type TimeOfDayPreset,
@@ -320,17 +320,14 @@ export function sampleSourceCellColors(
         // Sidewalk kerb slab
         color = "#546072";
         accent = "#6a788c";
-      } else if (isBoulevardOrAvenueLaneAt(world, x, y)) {
-        // Glowing orange boulevard/avenue curb lane line
-        color = "#c46224";
+      } else if (streetGlowLayoutAt(world, idx) !== 0) {
+        // Cool curb light dot, curb seam or intersection ring
+        color = STREET_GLOW_COLORS[streetGlowLayoutAt(world, idx)];
         accent = "#3c4759";
       } else {
         // Road asphalt (readable broken asphalt tones #3c4759 / #4a576c against the pitch-black Void)
         color = stTier === 4 ? "#3c4759" : r < 0.25 ? "#4a576c" : "#3c4759";
-        accent = isBoulevardOrAvenueLaneAt(world, x + 1, y) || isBoulevardOrAvenueLaneAt(world, x - 1, y) ||
-          isBoulevardOrAvenueLaneAt(world, x, y + 1) || isBoulevardOrAvenueLaneAt(world, x, y - 1)
-          ? "#c46224"
-          : "#56647a";
+        accent = "#56647a";
       }
     }
   } else if (prevMat === CellMaterial.PARK || prevCover !== LandCover.NONE) {
