@@ -353,6 +353,26 @@ test("6. Dissolving road, grass, and building chunks start with fluid cell RGB c
   assert.ok(cOrange[0] > 235 && cOrange[1] > 110 && cOrange[2] < 80, "Hot heat shifts to molten orange");
   assert.ok(cYellowWhite[0] > 240 && cYellowWhite[1] > 190 && cYellowWhite[2] > 110, "Peak heat reaches yellow-white");
   assert.ok(cViolet[2] > 210 && cViolet[0] > 150 && cViolet[1] < 95, "Horizon heat shifts to Void violet/magenta");
+
+  // Verify fluid starts right at the crater rim where ground is consumed, chunks lift with z > 0, and horizon crossing spawns flashes
+  physics.debris.length = 0;
+  physics.voidFluid.clear();
+  const rimX = Math.round(p.x + 20);
+  const rimY = Math.round(p.y);
+  const rimCell = world.grid.index(rimX, rimY);
+  world.material[rimCell] = CellMaterial.STREET;
+  world.streetTier[rimCell] = 2;
+  world.buildingAt[rimCell] = -1;
+  physics.consumeCellIntoVoid(world, rimCell, true);
+  assert.ok(physics.voidFluid.amount[rimY * physics.voidFluid.gridW + rimX] > 0.4,
+    "Fluid must start directly at the rim cell where ground was eaten");
+  assert.ok((physics.debris[0].z ?? 0) > 0, "Torn-off chunk must lift with z > 0 at the rim");
+
+  // Step fluid near core to trigger event-horizon crossing flash
+  const coreR = Math.max(3.6, p.radius * 0.42);
+  physics.voidFluid.depositAtWorld(p.x + coreR + 1.4, p.y, 1.5, FluidMaterial.CONCRETE, 20, [120, 130, 140], 0.95);
+  for (let t = 0; t < 4; t++) physics.voidFluid.step(world, 1 / 30);
+  assert.ok(physics.voidFluid.horizonFlashes.some((f) => f.active), "Crossing the event horizon spawns a bright horizon flash");
 });
 
 test("7. Fluid halo glow blurs across 16-px lighting tile edges without dark seams", () => {

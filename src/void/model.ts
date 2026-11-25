@@ -209,6 +209,12 @@ export type DebrisFragment = {
   crackAt?: number;
   /** True once this chunk has cracked into smaller pieces. */
   cracked?: boolean;
+  /** Vertical elevation offset in world pixels (`z > 0` lifts at rim, then drops `z < 0` with a shadow before melting). */
+  z?: number;
+  /** Vertical velocity in world pixels/s (`vz`). */
+  vz?: number;
+  /** Optional hold delay in seconds (`0.12..0.24s`) for an overhang chunk that clings at the rim and then drops. */
+  overhangHold?: number;
 };
 
 /** Pooled 3D falling chunk (masonry, roof, tower, or unit) that falls under gravity (`vz -= g * dt`),

@@ -518,23 +518,27 @@ export class VoidPhysics {
       const nx = rawDx / rawDist;
       const ny = rawDy / rawDist;
 
-      // Start slightly closer to the Void center (clearing the subterranean ledge lip)
+      // Start right at the torn crater rim where the ground was (shifted inward by only 0.25 px so spawnDist < rawCellDist)
       const inwardShift = Math.max(
         0,
-        Math.min(rawDist - bestCoreR - 1.2, Math.min(4.5, (rawDist - bestCoreR) * 0.22)),
+        Math.min(rawDist - bestCoreR - 0.8, 0.25),
       );
       const x = rawX + nx * inwardShift;
       const y = rawY + ny * inwardShift;
       const d = Math.max(bestCoreR + 0.5, rawDist - inwardShift);
 
-      // When live chunk cap is reached, deposit directly into the Void fluid grid with its true source color at heat 0
+      // Seed fluid directly at the crater rim `(rawX, rawY)` where the ground was eaten, in its true source color at heat 0
+      this.voidFluid.depositAtWorld(rawX, rawY, 1.35, fluidMat, rawDist, rgb, 0);
+
+      // When live chunk cap is reached, deposit the chunk's remaining mass directly at the rim too
       if (this.debris.length >= this.maxChunks) {
-        this.voidFluid.depositAtWorld(x, y, 1.05, fluidMat, d, rgb, 0);
+        this.voidFluid.depositAtWorld(x, y, 0.95, fluidMat, d, rgb, 0);
         return;
       }
 
-      // Buildings, walls, streets, and objects tear off as short-lived chunks (0.4-0.6 s),
-      // crack into 2-4 smaller pieces, and then dissolve into Void fluid cells at their position.
+      // Buildings, walls, streets, and terrain tear off at the rim in their real colors, lift slightly (`z > 0`),
+      // occasionally cling as an overhang chunk that hangs and then drops, crack into 2-4 smaller pieces,
+      // and drop with a shadow before melting into the fluid stream.
       const isStructure =
         bId >= 0 ||
         prevMat === CellMaterial.BUILDING ||
@@ -546,10 +550,12 @@ export class VoidPhysics {
       const isStreet = prevMat === CellMaterial.STREET;
       const startsIntact =
         isStructure ||
-        (isStreet ? hash01(world.seed, 611, idx, this.debris.length) < 0.55 : hash01(world.seed, 611, idx, this.debris.length) < 0.72);
+        (isStreet ? hash01(world.seed, 611, idx, this.debris.length) < 0.78 : hash01(world.seed, 611, idx, this.debris.length) < 0.82);
       const kin = computeWhirlpoolKinematics(d, d, bestCoreR, startsIntact);
-      const chunkMaxLife = 0.4 + hash01(world.seed, 613, idx, this.debris.length) * 0.2;
-      const crackAt = chunkMaxLife * (0.42 + hash01(world.seed, 617, idx, this.debris.length) * 0.16);
+      const isOverhang = startsIntact && hash01(world.seed, 623, idx, this.supportTick) < 0.16;
+      const overhangHold = isOverhang ? 0.14 + hash01(world.seed, 629, idx, this.supportTick) * 0.12 : 0;
+      const chunkMaxLife = (0.42 + hash01(world.seed, 613, idx, this.debris.length) * 0.18) + overhangHold;
+      const crackAt = overhangHold + (chunkMaxLife - overhangHold) * (0.44 + hash01(world.seed, 617, idx, this.debris.length) * 0.16);
       const disintegrateAt = 0.28 + hash01(world.seed, 615, idx, this.debris.length) * 0.18;
 
       this.debris.push({
@@ -568,7 +574,7 @@ export class VoidPhysics {
           ? isStructure
             ? prevMat === CellMaterial.SKYSCRAPER
               ? 2.8
-              : 2.2
+              : 2.3
             : 2.0
           : 1.0,
         life: 0,
@@ -580,10 +586,10 @@ export class VoidPhysics {
         fluidMaterial: fluidMat,
         crackAt,
         cracked: false,
+        z: isOverhang ? 0.4 : 0.8 + hash01(world.seed, 631, idx, this.debris.length) * 0.6,
+        vz: isOverhang ? 0 : 3.2,
+        overhangHold,
       });
-
-      // Seed an initial fluid patch at the detachment lip in the cell's true source color (cool heat = 0)
-      this.voidFluid.depositAtWorld(x, y, 0.42, fluidMat, d, rgb, 0);
     }
   }
 
@@ -873,10 +879,10 @@ export class VoidPhysics {
         continue;
       }
 
-      // Dissolve into fluid cells once the chunk's 0.4-0.6 s lifetime finishes, or near the core rim
+      // Dissolve into fluid cells once the chunk's lifetime finishes, or near the core rim
       if (d.life >= d.maxLife || distToPortal <= coreR + 2.8) {
-        const mass = Math.max(0.85, (d.mergedGrains ?? 1) * (d.intact ? d.size * 0.9 : 0.85));
-        const chunkHeat = computeDebrisHeat(distToPortal, startDist, coreR, d.life / Math.max(0.1, d.maxLife)) * 0.35;
+        const mass = Math.max(1.25, (d.mergedGrains ?? 1) * (d.intact ? d.size * 1.1 : 1.15));
+        const chunkHeat = computeDebrisHeat(distToPortal, startDist, coreR, d.life / Math.max(0.1, d.maxLife)) * 0.25;
         this.voidFluid.depositAtWorld(d.x, d.y, mass, fluidMat, startDist, d.color, chunkHeat);
         if ((i + this.supportTick) % 3 === 0) {
           this.voidFluid.spawnSpark(
@@ -896,6 +902,21 @@ export class VoidPhysics {
         continue;
       }
 
+      // Vertical lift & drop kinematics: overhang chunks cling briefly at the rim (`life < overhangHold`)
+      // while normal chunks lift (`z > 0`) and then drop (`z -> -1.6`) with a shadow before melting
+      const hold = d.overhangHold ?? 0;
+      const moveScale = hold > 0 && d.life < hold ? 0.12 : 1.0;
+      if (d.z !== undefined) {
+        if (hold > 0 && d.life < hold) {
+          d.z = 0.35;
+          d.vz = -1.5;
+        } else {
+          const vz = (d.vz ?? 0) - 24 * dt;
+          d.vz = vz;
+          d.z = Math.max(-2.2, d.z + vz * dt);
+        }
+      }
+
       const kin = computeWhirlpoolKinematics(distToPortal, startDist, coreR, Boolean(d.intact));
 
       // Crack intact chunk into 2-4 smaller pieces mid-flight (or on tidal proximity), shedding fluid as it cracks
@@ -908,9 +929,9 @@ export class VoidPhysics {
         d.intact = false;
         d.cracked = true;
         d.size = 1.0;
-        const crackHeat = computeDebrisHeat(distToPortal, startDist, coreR, d.life / Math.max(0.1, d.maxLife)) * 0.25;
+        const crackHeat = computeDebrisHeat(distToPortal, startDist, coreR, d.life / Math.max(0.1, d.maxLife)) * 0.18;
         // Deposit a portion of the chunk's mass immediately into the fluid grid in its true color when it cracks
-        this.voidFluid.depositAtWorld(d.x, d.y, 0.65, fluidMat, startDist, d.color, crackHeat);
+        this.voidFluid.depositAtWorld(d.x, d.y, 0.95, fluidMat, startDist, d.color, crackHeat);
 
         if (initialDebrisCount >= DEBRIS_FUSION_THRESHOLD) {
           d.mergedGrains = pieceCount;
@@ -948,17 +969,24 @@ export class VoidPhysics {
                 intact: false,
                 fluidMaterial: fluidMat,
                 cracked: true,
+                z: d.z ?? 0,
+                vz: (d.vz ?? -2) - 2,
               });
             } else {
               // If chunk cap is full, extra cracked pieces melt immediately into fluid cells with their piece color
-              this.voidFluid.depositAtWorld(sx, sy, 0.42, fluidMat, startDist, pieceColor, crackHeat);
+              this.voidFluid.depositAtWorld(sx, sy, 0.65, fluidMat, startDist, pieceColor, crackHeat);
             }
           }
         }
       }
 
+      // Continuous trail shedding as the chunk tumbles inward so the chunk visibly stretches into a fluid stream
+      if (d.life > hold) {
+        this.voidFluid.depositAtWorld(d.x, d.y, 0.16, fluidMat, startDist, d.color, 0);
+      }
+
       // Polar whirlpool & spaghettification step: strictly decreases radius toward coreR while spinning
-      const rNext = distToPortal - kin.radialSpeed * dt;
+      const rNext = distToPortal - kin.radialSpeed * moveScale * dt;
       if (rNext <= coreR) {
         this.voidFluid.consumedAmount += Math.max(0.4, d.size * 0.45);
         this.voidFluid.consumedCells++;
@@ -966,7 +994,7 @@ export class VoidPhysics {
       }
 
       const avgR = Math.max(coreR, 0.5 * (distToPortal + rNext));
-      const dTheta = (kin.tangentialSpeed * dt) / avgR;
+      const dTheta = (kin.tangentialSpeed * moveScale * dt) / avgR;
       const cosT = Math.cos(dTheta);
       const sinT = Math.sin(dTheta);
       const ux = rx / distToPortal;

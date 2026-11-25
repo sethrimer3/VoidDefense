@@ -117,7 +117,7 @@ export function sampleStarNest(u: number, v: number): number {
 }
 
 /** Recolors a Star Nest fractal intensity into Void Defense's cosmic spectrum:
- * - Low-mid: calm deep indigo & violet nebula floor
+ * - Low-mid: deep abyssal funnel floor (darker toward the middle with stepped rings)
  * - High: subtle plum & magenta filaments
  * - Peak: restrained violet-cyan dust at peak fractal ridges
  */
@@ -126,15 +126,18 @@ export function starNestColor(intensity: number, jitter = 0): string {
     return jitter % 3 === 0 ? "#88d8e8" : "#b84fd9";
   }
   if (intensity > 0.68) {
-    return jitter % 2 === 0 ? "#7d2eb8" : "#622296";
+    return jitter % 2 === 0 ? "#66209a" : "#4e187a";
   }
-  if (intensity > 0.45) {
-    return jitter % 3 === 0 ? "#4c1c78" : "#3a145e";
+  if (intensity > 0.48) {
+    return jitter % 3 === 0 ? "#361258" : "#280c44";
   }
-  if (intensity > 0.24) {
-    return jitter % 2 === 0 ? "#280f45" : "#1f0b38";
+  if (intensity > 0.28) {
+    return jitter % 2 === 0 ? "#1b0830" : "#130524";
   }
-  return "#150726";
+  if (intensity > 0.12) {
+    return "#0c0318";
+  }
+  return "#06020e";
 }
 
 /** Pre-computed seeded spiral wisp parameters for each portal (kept for compatibility). */

@@ -111,17 +111,7 @@ on desktop DPR 1 and phone DPR 2. Screenshots go to `test-results/void-crisp/`.
 
 ## Exposed ground above the Void
 
-`paintVoidLedge` draws a cutaway after the portal/nebula pass, before structures,
-agents and drifting debris. The slightly elevated view exposes the down-screen face
-most clearly: a broken soil/rock lip, seeded 3–6-pixel strata, jagged dark undercuts,
-a contact shadow and occasional violet-lit lower facets. Narrow darker side cuts
-reinforce thickness without outlining the whole hole with a uniform border.
-Parkland/dirt expose earth; city and engineered terrain expose rock. Unclaimed water
-has no soil face. Every projected pixel must already be Void, with front and side
-faces stopping at solid ground or islands. The function never mutates terrain,
-health, collision, placement, scoring or saves. It uses the current frontier each
-frame, so erosion/reclamation updates the cutaway immediately; reduced effects keep
-the same static geometry. All face details are whole world pixels.
+`paintVoidLedge` draws a stratified cliff wall cutaway after the Void interior pass, and `VoidFluidGrid.render` clips northern fluid pixels behind `isOccludedByLedge` so the northern cliff strata remain visible while southern/side streams pour over the rim. The slightly elevated view exposes the down-screen face most clearly: a broken soil/rock/asphalt lip, seeded 2–4-pixel strata bands (asphalt, concrete, dirt, and rock for city; topsoil, loam, and root threads for farmland), jagged dark undercuts, a `#08060f` contact shadow, and directional light-vector shading (`sunDir`) across south, east, west, and north walls (simplified to 2 bands on Low quality). Just outside the rim, `paintCell` stamps hairline stress cracks and loose displaced pixels, while inside the crater `paintCell` and `starNestColor` shade a deep funnel that darkens toward the center with faint stepped rings. Parkland/dirt expose earth; city and engineered terrain expose rock and asphalt. Unclaimed water has no soil face. Every projected pixel must already be Void, with front and side faces stopping at solid ground or islands. The function never mutates terrain, health, collision, placement, scoring or saves. It uses the current frontier each frame, so erosion/reclamation updates the cutaway immediately; reduced effects keep the same static geometry. All face details are whole world pixels.
 
 `tests/void-ledge.test.ts` covers seeded irregular depth, strata, clipping, water,
 material palettes and simulation isolation. `node tests/void-ledge.mjs` checks the
