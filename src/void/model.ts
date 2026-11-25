@@ -203,6 +203,12 @@ export type DebrisFragment = {
   intact?: boolean;
   /** Normalized proximity `u` in `[0.25..0.52]` at which tidal forces disintegrate this intact block into individual 1x1 pixels. */
   disintegrateAt?: number;
+  /** Source material index (`FluidMaterialId`) preserved when this chunk dissolves into Void fluid. */
+  fluidMaterial?: number;
+  /** Time in seconds (`~0.18..0.32s`) at which this chunk cracks into 2-4 smaller pieces before melting into fluid. */
+  crackAt?: number;
+  /** True once this chunk has cracked into smaller pieces. */
+  cracked?: boolean;
 };
 
 /** Pooled 3D falling chunk (masonry, roof, tower, or unit) that falls under gravity (`vz -= g * dt`),

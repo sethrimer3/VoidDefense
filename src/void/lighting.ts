@@ -20,6 +20,7 @@ import { streetFireFlicker } from "./street-fires.ts";
 import { halogenLampStanding, halogenLamps, halogenPoolCell, isHalogenPoolAt } from "./city-details.ts";
 import type { VoidSim } from "./sim.ts";
 import { TOWER_SPECS } from "./towers.ts";
+import { FLUID_BAND_COUNT, FLUID_MATERIAL_PALETTES, FluidMaterial, type FluidMaterialId, type VoidFluidGrid } from "./void-fluid.ts";
 import type { VoidWorld } from "./world.ts";
 
 export const MAX_DYNAMIC_LIGHTS = 48;
@@ -1784,7 +1785,14 @@ export class LightingEngine {
     return cache;
   }
 
-  private bakeHaloTile(cache: BuildingSpriteCache, x0: number, y0: number, x1: number, y1: number): void {
+  private bakeHaloTile(
+    cache: BuildingSpriteCache,
+    x0: number,
+    y0: number,
+    x1: number,
+    y1: number,
+    voidFluid?: VoidFluidGrid,
+  ): void {
     const { atlasColorU32, atlasSpec, atlasBldId } = cache;
     const world = this.world;
     const width = x1 - x0;
@@ -1794,6 +1802,13 @@ export class LightingEngine {
     const seeds = this.haloSeeds;
     const horizontal = this.haloHorizontal;
     seeds.fill(0, 0, seedStride * (height + 4));
+
+    const fActive =
+      voidFluid &&
+      voidFluid.maxX >= voidFluid.minX &&
+      voidFluid.maxY >= voidFluid.minY;
+    const fCellSize = voidFluid ? voidFluid.cellSize : 1;
+    const fGridW = voidFluid ? voidFluid.gridW : 0;
 
     for (let y = 0; y < height + 4; y++) {
       const py = Math.max(0, Math.min(this.haloH - 1, y0 + y - 2)) * 2;
@@ -1820,6 +1835,27 @@ export class LightingEngine {
               seeds[dst] = Math.max(seeds[dst], 115);
               seeds[dst + 1] = Math.max(seeds[dst + 1], 185);
               seeds[dst + 2] = Math.max(seeds[dst + 2], 235);
+            }
+          }
+        }
+        // Sample hot inner Void fluid bands at low resolution (1 sample per 2x2 world texel)
+        if (fActive && voidFluid && ((x + y) & 1) === 0) {
+          const fgx = Math.floor(px / fCellSize);
+          const fgy = Math.floor(py / fCellSize);
+          if (fgx >= voidFluid.minX && fgx <= voidFluid.maxX && fgy >= voidFluid.minY && fgy <= voidFluid.maxY) {
+            const fIdx = fgy * fGridW + fgx;
+            const fAmt = voidFluid.amount[fIdx];
+            if (fAmt >= 0.14) {
+              const band = voidFluid.computeCellBand(fIdx, 0);
+              if (band >= 3) {
+                const fMat = (voidFluid.material[fIdx] || FluidMaterial.CONCRETE) as FluidMaterialId;
+                const pal = FLUID_MATERIAL_PALETTES[fMat] ?? FLUID_MATERIAL_PALETTES[FluidMaterial.CONCRETE];
+                const rgb = pal[Math.min(FLUID_BAND_COUNT - 1, band)];
+                const wGain = Math.min(1, (band - 2) * 0.28 * Math.min(1.2, fAmt));
+                seeds[dst] = Math.max(seeds[dst], Math.round(rgb[0] * wGain));
+                seeds[dst + 1] = Math.max(seeds[dst + 1], Math.round(rgb[1] * wGain));
+                seeds[dst + 2] = Math.max(seeds[dst + 2], Math.round(rgb[2] * wGain));
+              }
             }
           }
         }
@@ -1854,6 +1890,7 @@ export class LightingEngine {
     blending = false,
     reflectionMargin = 0,
     wetness = 0,
+    voidFluid?: VoidFluidGrid,
   ): void {
     const { w, h, chunksW, chunksH } = world.grid;
     const {
@@ -2091,9 +2128,18 @@ export class LightingEngine {
       const x1 = Math.min(w, x0 + CHUNK_SIZE);
       const y1 = Math.min(h, y0 + CHUNK_SIZE);
 
-      if (useHalo && !this.tileHaloClean[tileIdx]) {
-        this.bakeHaloTile(spriteCache, x0 >> 1, y0 >> 1, Math.ceil(x1 / 2), Math.ceil(y1 / 2));
-        this.tileHaloClean[tileIdx] = 1;
+      if (useHalo) {
+        const fluidTouchesTile =
+          voidFluid &&
+          voidFluid.maxX >= voidFluid.minX &&
+          x1 >= voidFluid.minX * voidFluid.cellSize - 4 &&
+          x0 <= (voidFluid.maxX + 1) * voidFluid.cellSize + 4 &&
+          y1 >= voidFluid.minY * voidFluid.cellSize - 4 &&
+          y0 <= (voidFluid.maxY + 1) * voidFluid.cellSize + 4;
+        if (!this.tileHaloClean[tileIdx] || fluidTouchesTile) {
+          this.bakeHaloTile(spriteCache, x0 >> 1, y0 >> 1, Math.ceil(x1 / 2), Math.ceil(y1 / 2), voidFluid);
+          this.tileHaloClean[tileIdx] = 1;
+        }
       }
 
       if (x0 < minX) minX = x0;

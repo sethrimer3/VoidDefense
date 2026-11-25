@@ -79,10 +79,17 @@ import {
 import {
   computeDebrisHeat,
   FALL_GRAVITY_PX,
+  MAX_DEBRIS_CHUNKS_DESKTOP,
+  MAX_DEBRIS_CHUNKS_MOBILE,
   moltenColorAtHeat,
   moltenGlowColorAtHeat,
   VOID_ABYSS_Z,
 } from "./physics.ts";
+import {
+  MAX_SPARKS_HIGH,
+  MAX_SPARKS_LOW,
+  MAX_SPARKS_MEDIUM,
+} from "./void-fluid.ts";
 import { reflectionColor, SurfaceReflections } from "./reflections.ts";
 import { findStreetPath, isCityStreet, type StreetBfsScratch } from "./street-routes.ts";
 import { depotBoltPixels, depotLinks, type DeliveryRoute } from "./deliveries.ts";
@@ -1842,6 +1849,17 @@ export class VoidRenderer {
     );
     this.lighting.syncMovingCasters(combat.agents, this.reduceEffects ? [] : physics.fallingChunks, sim.tick);
     const reflectionQuality = this.effectiveLightingQuality;
+    // Configure Void fluid grid resolution, spark budget, and live chunk cap by quality tier & viewport width
+    const isMobileView = this.canvas.width > 0 && this.canvas.width <= 860;
+    const fluidCellSize = reflectionQuality === "low" ? 2 : 1;
+    physics.maxChunks = isMobileView || reflectionQuality === "low" ? MAX_DEBRIS_CHUNKS_MOBILE : MAX_DEBRIS_CHUNKS_DESKTOP;
+    physics.voidFluid.sparkCap =
+      reflectionQuality === "low"
+        ? MAX_SPARKS_LOW
+        : reflectionQuality === "medium" || isMobileView
+          ? MAX_SPARKS_MEDIUM
+          : MAX_SPARKS_HIGH;
+    physics.voidFluid.ensureSize(world.grid.w, world.grid.h, fluidCellSize);
     const wetActive = this.wetness > 0.001;
     this.lighting.renderLighting(
       world,
@@ -1854,6 +1872,7 @@ export class VoidRenderer {
       this.presetBlendT < 1,
       reflectionQuality === "low" ? 0 : MAX_ELEVATION_PX + 1,
       this.wetness,
+      physics.voidFluid,
     );
     lap("lighting");
 
@@ -2130,6 +2149,19 @@ export class VoidRenderer {
     }
     paintVoidRipples(rawScene, world, physics.voidRipples, this.reduceEffects);
     lap("interior");
+
+    // 3b. Grid-based Void accretion fluid & short-lived spark layer (rendered in one ImageData putImageData + drawImage pass)
+    physics.voidFluid.render(
+      rawScene,
+      world,
+      activePreset,
+      this.weather,
+      this.wetness,
+      animTime,
+      this.reduceEffects,
+      viewBounds,
+    );
+    lap("voidFluid");
 
     // 4. Black-hole silhouette, reservoir gauge and deployment markers.
     const energy = sim.scenario.endless ? 1 :
@@ -3325,15 +3357,8 @@ export class VoidRenderer {
 
     lap("shots");
 
-    // 14. Torn-off buildings, objects, and land swirling into the anomaly:
-    //     - Remain intact multi-pixel blocks initially in their original colors with zero glow.
-    //     - Disintegrate into individual 1x1 pixels closer to the black hole, accelerating via
-    //       spaghettification, heating into molten hues with a smooth slight glow, and disappearing
-    //       upon touching the Void's inner black circle (`coreR`).
+    // 14. Short-lived torn-off chunks (~0.4-0.6 s, capped at 150 desktop / 60 mobile) before they melt into the Void fluid grid:
     let lastRawFill = "";
-
-    // At high densities the particles themselves provide the texture. Skip their extra overlays.
-    const detailedDebris = !this.reduceEffects && physics.debris.length <= 1500;
     const viewLeft = -this.cam.x / scale;
     const viewRight = (this.canvas.width - this.cam.x) / scale;
     const viewTop = -this.cam.y / scale;
@@ -3341,7 +3366,7 @@ export class VoidRenderer {
     for (let i = 0; i < physics.debris.length; i++) {
       const d = physics.debris[i];
       if (d.mergedGrains) continue;
-      const padding = (d.intact ? d.size * 0.5 : 0) + 3;
+      const padding = (d.intact ? d.size * 0.5 : 0) + 2;
       if (Math.max(d.x, d.px) + padding < viewLeft || Math.min(d.x, d.px) - padding > viewRight ||
           Math.max(d.y, d.py) + padding < viewTop || Math.min(d.y, d.py) - padding > viewBottom) continue;
       if (isInsideInnerCircle(d.x, d.y)) continue;
@@ -3355,72 +3380,28 @@ export class VoidRenderer {
       const bodyColor = this.debrisColor(d.color, heatStep);
 
       if (d.intact) {
-        // Intact building/object block in the outer whirlpool before tidal disintegration
         const bw = Math.max(2, Math.round(d.size));
         const bh = Math.max(2, Math.round(d.size));
         const bx = Math.round(d.x - bw * 0.5);
         const by = Math.round(d.y - bh * 0.5);
-        if (detailedDebris && heat > 0.2) {
-          rawScene.fillStyle = debrisGlowColors[heatStep];
-          rawScene.fillRect(bx - 1, by - 1, bw + 2, bh + 2);
-        }
         rawScene.fillStyle = bodyColor;
         rawScene.fillRect(bx, by, bw, bh);
         if (d.accentColor) {
           rawScene.fillStyle = this.debrisColor(d.accentColor, heatStep);
           rawScene.fillRect(bx, by, 1, 1);
-          if (bw >= 3) rawScene.fillRect(bx + 2, by, 1, 1);
         }
-        // Crisp 1-px dark underside edge giving the intact chunk 3D thickness
-        rawScene.fillStyle = "rgba(0, 0, 0, 0.48)";
+        // Crisp 1-px dark underside edge giving the impact chunk 3D thickness before it melts
+        rawScene.fillStyle = "rgba(0, 0, 0, 0.45)";
         rawScene.fillRect(bx, by + bh - 1, bw, 1);
-        if (detailedDebris && heatStep >= 10) {
-          rawScene.fillStyle = this.debrisColor(d.accentColor ?? d.color, Math.min(DEBRIS_HEAT_STEPS, heatStep + 5));
-          rawScene.fillRect(d.portalX >= d.x ? bx + bw - 1 : bx, by, 1, bh - 1);
-        }
         lastRawFill = "";
       } else {
-        // Disintegrated individual 1x1 pixel accelerating into the inner whirlpool (spaghettification)
         const x1 = Math.floor(d.x);
         const y1 = Math.floor(d.y);
-        if (detailedDebris && heat > 0.42) {
-          const glowColor = debrisGlowColors[heatStep];
-          if (lastRawFill !== glowColor) {
-            rawScene.fillStyle = glowColor;
-            lastRawFill = glowColor;
-          }
-          if (!isInsideInnerCircle(x1 - 1, y1)) rawScene.fillRect(x1 - 1, y1, 1, 1);
-          if (!isInsideInnerCircle(x1 + 1, y1)) rawScene.fillRect(x1 + 1, y1, 1, 1);
-          if (!isInsideInnerCircle(x1, y1 - 1)) rawScene.fillRect(x1, y1 - 1, 1, 1);
-          if (!isInsideInnerCircle(x1, y1 + 1)) rawScene.fillRect(x1, y1 + 1, 1, 1);
-        }
         if (lastRawFill !== bodyColor) {
           rawScene.fillStyle = bodyColor;
           lastRawFill = bodyColor;
         }
-        // Spaghettification: as the individual pixel speeds up close to the black hole, draw its
-        // stretched 1-px trajectory segment (clipped outside the black hole's inner circle)
-        let x0 = Math.floor(d.px);
-        let y0 = Math.floor(d.py);
-        const dxAbs = x1 >= x0 ? x1 - x0 : x0 - x1;
-        const dyAbs = y1 >= y0 ? y1 - y0 : y0 - y1;
-        if (detailedDebris && (dxAbs > 1 || dyAbs > 1)) {
-          const dy = -dyAbs;
-          const sx = x0 < x1 ? 1 : -1;
-          const sy = y0 < y1 ? 1 : -1;
-          let err = dxAbs + dy;
-          for (;;) {
-            if (!isInsideInnerCircle(x0 + 0.5, y0 + 0.5)) {
-              rawScene.fillRect(x0, y0, 1, 1);
-            }
-            if (x0 === x1 && y0 === y1) break;
-            const e2 = 2 * err;
-            if (e2 >= dy) { err += dy; x0 += sx; }
-            if (e2 <= dxAbs) { err += dxAbs; y0 += sy; }
-          }
-        } else {
-          rawScene.fillRect(x1, y1, 1, 1);
-        }
+        rawScene.fillRect(x1, y1, 1, 1);
       }
     }
 

@@ -17,6 +17,13 @@ import {
   type ShockwaveEffect,
   type VoidRipple,
 } from "./model.ts";
+import {
+  chunkCrackCount,
+  classifyFluidMaterial,
+  FluidMaterial,
+  type FluidMaterialId,
+  VoidFluidGrid,
+} from "./void-fluid.ts";
 import type { VoidWorld } from "./world.ts";
 
 /** Maximum pooled 3D falling chunks (zero per-tick allocation). */
@@ -146,13 +153,13 @@ export function computeWhirlpoolKinematics(
   const proximity = Math.max(uFull * 0.65, uTidal);
   const u2 = proximity * proximity;
   const u3 = u2 * proximity;
-  const massScale = intact ? 0.75 : 1.0;
+  const massScale = intact ? 0.55 : 0.85;
 
   // Far-field catch-up pull so distant debris reaches the black hole's tidal whirlpool promptly,
   // plus steep spaghettification acceleration (up to ~8x) as distToPortal -> coreRadius
-  const farCatchup = distToPortal > core + tidalSpan ? (distToPortal - (core + tidalSpan)) * 0.5 : 0;
-  const radialSpeed = (pixels(3.2) * (1 + 2.4 * proximity + 5.0 * u3) + farCatchup) * massScale;
-  const tangentialSpeed = pixels(3.3) * (1 + 2.1 * proximity + 4.0 * u3) * massScale;
+  const farCatchup = distToPortal > core + tidalSpan ? (distToPortal - (core + tidalSpan)) * 0.35 : 0;
+  const radialSpeed = (pixels(2.6) * (1 + 2.4 * proximity + 5.0 * u3) + farCatchup) * massScale;
+  const tangentialSpeed = pixels(3.0) * (1 + 2.1 * proximity + 4.0 * u3) * massScale;
   const totalSpeed = Math.hypot(radialSpeed, tangentialSpeed);
   return { radialSpeed, tangentialSpeed, totalSpeed, proximity };
 }
@@ -214,13 +221,19 @@ export function moltenGlowColorAtHeat(heat: number, alphaScale = 1): string {
   return `rgba(${r}, ${g}, ${b}, ${alpha.toFixed(3)})`;
 }
 
-export const MAX_DEBRIS = 8192;
+export const MAX_DEBRIS_CHUNKS_DESKTOP = 150;
+export const MAX_DEBRIS_CHUNKS_MOBILE = 60;
+export const MAX_DEBRIS = MAX_DEBRIS_CHUNKS_DESKTOP;
 const DEBRIS_FUSION_THRESHOLD = 640;
 const DEBRIS_BIN_SIZE = 4;
 const MAX_MERGED_GRAINS = 16;
 
 export class VoidPhysics {
   readonly debris: DebrisFragment[] = [];
+  /** Grid-based Void accretion fluid and short-lived spark pool around active Void portals. */
+  readonly voidFluid = new VoidFluidGrid();
+  /** Live chunk cap (150 on desktop, 60 on mobile). Excess or dissolved chunks melt directly into `voidFluid`. */
+  maxChunks = MAX_DEBRIS_CHUNKS_DESKTOP;
   private fusionBins = new Int32Array(0);
   readonly shockwaves: ShockwaveEffect[] = [];
   readonly recentCellLosses: {
@@ -505,17 +518,22 @@ export class VoidPhysics {
       }
     }
 
-    if (spawnDebris && this.debris.length < MAX_DEBRIS && prevMat !== CellMaterial.VOID && prevMat !== CellMaterial.EMPTY) {
+    if (spawnDebris && prevMat !== CellMaterial.VOID && prevMat !== CellMaterial.EMPTY) {
       const rawX = world.grid.xOf(idx) + 0.5;
       const rawY = world.grid.yOf(idx) + 0.5;
+      const fluidMat = classifyFluidMaterial(world, idx, prevMat, prevCover, bId);
+      this.voidFluid.ensureSize(world.grid.w, world.grid.h, this.voidFluid.cellSize || 1);
+      this.voidFluid.syncFlowField(world);
 
-      // Locate nearest active Void portal (or fall back to nearest Void neighbor)
+      // Locate nearest Void portal (preferring active portals, falling back to any portal or Void neighbor)
       let portalX = rawX;
       let portalY = rawY;
       let bestDist = Number.POSITIVE_INFINITY;
       let bestCoreR = 5;
-      for (const p of world.portals) {
-        if (!p.active) continue;
+      const candidatePortals = world.portals.some((p) => p.active)
+        ? world.portals.filter((p) => p.active)
+        : world.portals;
+      for (const p of candidatePortals) {
         const d = dist(rawX - p.x, rawY - p.y);
         if (d < bestDist) {
           bestDist = d;
@@ -541,7 +559,11 @@ export class VoidPhysics {
       const rawDx = portalX - rawX;
       const rawDy = portalY - rawY;
       const distanceToCore = dist(rawDx, rawDy);
-      if (distanceToCore <= bestCoreR) return;
+      if (distanceToCore <= bestCoreR) {
+        this.voidFluid.consumedAmount += 0.85;
+        this.voidFluid.consumedCells++;
+        return;
+      }
       const rawDist = Math.max(bestCoreR + 0.8, distanceToCore);
       const nx = rawDx / rawDist;
       const ny = rawDy / rawDist;
@@ -555,8 +577,14 @@ export class VoidPhysics {
       const y = rawY + ny * inwardShift;
       const d = Math.max(bestCoreR + 0.5, rawDist - inwardShift);
 
-      // Buildings, walls, streets, and objects tear off as intact blocks/slabs or crumbling particles,
-      // then disintegrate into individual 1x1 pixels closer to the black hole.
+      // When live chunk cap is reached, deposit directly into the Void fluid grid
+      if (this.debris.length >= this.maxChunks) {
+        this.voidFluid.depositAtWorld(x, y, 1.05, fluidMat, d);
+        return;
+      }
+
+      // Buildings, walls, streets, and objects tear off as short-lived chunks (0.4-0.6 s),
+      // crack into 2-4 smaller pieces, and then dissolve into Void fluid cells at their position.
       const isStructure =
         bId >= 0 ||
         prevMat === CellMaterial.BUILDING ||
@@ -571,7 +599,9 @@ export class VoidPhysics {
         (isStreet ? hash01(world.seed, 611, idx, this.debris.length) < 0.55 : hash01(world.seed, 611, idx, this.debris.length) < 0.72);
       const { color, accent } = this.originalCellColors(world, idx, prevMat, prevCover, bId);
       const kin = computeWhirlpoolKinematics(d, d, bestCoreR, startsIntact);
-      const disintegrateAt = 0.36 + hash01(world.seed, 615, idx, this.debris.length) * 0.22;
+      const chunkMaxLife = 0.4 + hash01(world.seed, 613, idx, this.debris.length) * 0.2;
+      const crackAt = chunkMaxLife * (0.42 + hash01(world.seed, 617, idx, this.debris.length) * 0.16);
+      const disintegrateAt = 0.28 + hash01(world.seed, 615, idx, this.debris.length) * 0.18;
 
       this.debris.push({
         x,
@@ -593,40 +623,18 @@ export class VoidPhysics {
             : 2.0
           : 1.0,
         life: 0,
-        // Generous safety cap so particles disappear strictly upon touching the inner circle (coreRadius),
-        // never after a short fixed travel time.
-        maxLife: 30,
+        maxLife: chunkMaxLife,
         startDist: d,
         coreRadius: bestCoreR,
         intact: startsIntact,
         disintegrateAt,
+        fluidMaterial: fluidMat,
+        crackAt,
+        cracked: false,
       });
 
-      // Streets also shed a crumbling 1x1 asphalt/roadbed particle as the pavement fractures into the Void
-      if (isStreet && startsIntact && d > bestCoreR + 2.0 && this.debris.length < MAX_DEBRIS) {
-        const px2 = x - ny * 0.65 + nx * 0.5;
-        const py2 = y + nx * 0.65 + ny * 0.5;
-        const d2 = Math.max(bestCoreR + 0.5, dist(portalX - px2, portalY - py2));
-        const kin2 = computeWhirlpoolKinematics(d2, d2, bestCoreR, false);
-        this.debris.push({
-          x: px2,
-          y: py2,
-          px: px2,
-          py: py2,
-          vx: nx * kin2.radialSpeed - ny * kin2.tangentialSpeed,
-          vy: ny * kin2.radialSpeed + nx * kin2.tangentialSpeed,
-          portalX,
-          portalY,
-          color: accent,
-          glowColor: "rgba(0, 0, 0, 0)",
-          size: 1.0,
-          life: 0,
-          maxLife: 30,
-          startDist: d2,
-          coreRadius: bestCoreR,
-          intact: false,
-        });
-      }
+      // Also seed an initial fluid patch at the detachment lip so the fluid stream connects smoothly
+      this.voidFluid.depositAtWorld(x, y, 0.42, fluidMat, d);
     }
   }
 
@@ -882,7 +890,9 @@ export class VoidPhysics {
       }
     }
 
-    // Advance drifting debris along whirlpool spirals with spaghettification acceleration and tidal disintegration
+    // Advance short-lived impact chunks (0.4-0.6 s): they crack into 2-4 smaller pieces, then dissolve into Void fluid
+    this.voidFluid.ensureSize(world.grid.w, world.grid.h, this.voidFluid.cellSize || 1);
+    this.voidFluid.syncFlowField(world);
     const initialDebrisCount = this.debris.length;
     let survivingDebrisCount = 0;
     for (let i = 0; i < initialDebrisCount; i++) {
@@ -902,55 +912,94 @@ export class VoidPhysics {
         continue;
       }
 
+      const fluidMat = (d.fluidMaterial ?? FluidMaterial.CONCRETE) as FluidMaterialId;
       const rx = d.x - d.portalX;
       const ry = d.y - d.portalY;
       const distToPortal = dist(rx, ry);
-      if (distToPortal <= coreR || d.life >= d.maxLife) {
+      const startDist = Math.max(coreR + 4, d.startDist ?? distToPortal);
+
+      if (distToPortal <= coreR) {
+        this.voidFluid.consumedAmount += Math.max(0.45, d.size * 0.45);
+        this.voidFluid.consumedCells++;
         continue;
       }
 
-      const startDist = Math.max(coreR + 4, d.startDist ?? distToPortal);
+      // Dissolve into fluid cells once the chunk's 0.4-0.6 s lifetime finishes, or before it gets swallowed raw
+      if (d.life >= d.maxLife || distToPortal <= Math.max(coreR + 3.2, startDist * 0.42)) {
+        const mass = Math.max(0.85, (d.mergedGrains ?? 1) * (d.intact ? d.size * 0.9 : 0.85));
+        this.voidFluid.depositAtWorld(d.x, d.y, mass, fluidMat, startDist);
+        if ((i + this.supportTick) % 3 === 0) {
+          this.voidFluid.spawnSpark(
+            d.x,
+            d.y,
+            d.vx * 0.35,
+            d.vy * 0.35,
+            d.portalX,
+            d.portalY,
+            coreR,
+            fluidMat,
+            4,
+            0.28,
+          );
+        }
+        continue;
+      }
+
       const kin = computeWhirlpoolKinematics(distToPortal, startDist, coreR, Boolean(d.intact));
 
-      // Tidal disintegration: intact multi-pixel building/object chunks remain intact initially,
-      // then shatter into individual 1x1 pixels closer to the black hole
-      if (d.intact && kin.proximity >= (d.disintegrateAt ?? 0.35)) {
-        const pieceCount = Math.min(3, Math.max(2, Math.round(d.size)));
+      // Crack intact chunk into 2-4 smaller pieces mid-flight (or on tidal proximity), shedding fluid as it cracks
+      const shouldCrack =
+        d.intact &&
+        !d.cracked &&
+        ((d.crackAt !== undefined && d.life >= d.crackAt) || kin.proximity >= (d.disintegrateAt ?? 0.32));
+      if (shouldCrack) {
+        const pieceCount = chunkCrackCount(world.seed, i + this.supportTick, d.size);
         d.intact = false;
+        d.cracked = true;
         d.size = 1.0;
+        // Deposit a portion of the chunk's mass immediately into the fluid grid when it cracks
+        this.voidFluid.depositAtWorld(d.x, d.y, 0.65, fluidMat, startDist);
+
         if (initialDebrisCount >= DEBRIS_FUSION_THRESHOLD) {
-          d.mergedGrains = pieceCount + 1;
+          d.mergedGrains = pieceCount;
           d.size = Math.sqrt(d.mergedGrains);
         } else {
           const ux = rx / distToPortal;
           const uy = ry / distToPortal;
           const tx = -uy;
           const ty = ux;
-          for (let k = 1; k <= pieceCount && this.debris.length < MAX_DEBRIS; k++) {
-            const radOff = (k - 1.5) * 0.65;
-            const tanOff = ((k & 1) === 0 ? 1 : -1) * 0.75;
+          for (let k = 1; k < pieceCount; k++) {
+            const radOff = (k - 1.5) * 0.7;
+            const tanOff = ((k & 1) === 0 ? 1 : -1) * 0.8;
             const sx = d.x + ux * radOff + tx * tanOff;
             const sy = d.y + uy * radOff + ty * tanOff;
             const sDist = dist(sx - d.portalX, sy - d.portalY);
             if (sDist <= coreR) continue;
-            this.debris.push({
-              x: sx,
-              y: sy,
-              px: sx,
-              py: sy,
-              vx: d.vx,
-              vy: d.vy,
-              portalX: d.portalX,
-              portalY: d.portalY,
-              color: k === 1 && d.accentColor ? d.accentColor : d.color,
-              glowColor: "rgba(0, 0, 0, 0)",
-              size: 1.0,
-              life: d.life,
-              maxLife: d.maxLife,
-              startDist: d.startDist,
-              coreRadius: coreR,
-              intact: false,
-            });
+            if (this.debris.length < this.maxChunks) {
+              this.debris.push({
+                x: sx,
+                y: sy,
+                px: sx,
+                py: sy,
+                vx: d.vx,
+                vy: d.vy,
+                portalX: d.portalX,
+                portalY: d.portalY,
+                color: k === 1 && d.accentColor ? d.accentColor : d.color,
+                glowColor: "rgba(0, 0, 0, 0)",
+                size: 1.0,
+                life: d.life,
+                maxLife: d.maxLife,
+                startDist: d.startDist,
+                coreRadius: coreR,
+                intact: false,
+                fluidMaterial: fluidMat,
+                cracked: true,
+              });
+            } else {
+              // If chunk cap is full, extra cracked pieces melt immediately into fluid cells
+              this.voidFluid.depositAtWorld(sx, sy, 0.42, fluidMat, startDist);
+            }
           }
         }
       }
@@ -958,7 +1007,8 @@ export class VoidPhysics {
       // Polar whirlpool & spaghettification step: strictly decreases radius toward coreR while spinning
       const rNext = distToPortal - kin.radialSpeed * dt;
       if (rNext <= coreR) {
-        // Disappears upon touching the Void's center mass / inner circle
+        this.voidFluid.consumedAmount += Math.max(0.4, d.size * 0.45);
+        this.voidFluid.consumedCells++;
         continue;
       }
 
@@ -985,6 +1035,9 @@ export class VoidPhysics {
     if (survivingDebrisCount >= DEBRIS_FUSION_THRESHOLD && this.supportTick % 3 === 0) {
       this.fuseDebris(world);
     }
+
+    // Step the grid-based Void fluid along the precomputed spiral accretion flow field
+    this.voidFluid.step(world, dt);
 
     // Advance expanding shockwaves
     for (let i = this.shockwaves.length - 1; i >= 0; i--) {
@@ -1104,7 +1157,7 @@ export class VoidPhysics {
           }
 
           // Debris sparks on heavy impact
-          if (this.debris.length < MAX_DEBRIS) {
+          if (this.debris.length < this.maxChunks) {
             const dAng = hash01(world.seed, 962, i, this.supportTick) * Math.PI * 2;
             const dSpd = pixels(4.5);
             this.debris.push({
@@ -1162,8 +1215,8 @@ export class VoidPhysics {
         if (ch.w * ch.h >= 4) {
           this.spawnVoidRipple(Math.round(ch.x), Math.round(ch.y - ch.z));
         }
-        // Disintegrate fallen building/tower/agent chunk into individual 1x1 pixels that spiral into the portal core
-        if (world.portals.length > 0 && this.debris.length < MAX_DEBRIS) {
+        // Dissolve fallen building/tower/agent chunk into Void fluid cells (plus a short-lived fragment if under cap)
+        if (world.portals.length > 0) {
           const sx0 = Math.round(ch.x);
           const sy0 = Math.round(ch.y - ch.z);
           let portalX = sx0;
@@ -1182,7 +1235,16 @@ export class VoidPhysics {
           }
           if (Number.isFinite(bestDist) && bestDist > bestCoreR + 0.5) {
             const count = Math.min(4, Math.max(1, ch.w * ch.h));
-            for (let k = 0; k < count && this.debris.length < MAX_DEBRIS; k++) {
+            this.voidFluid.ensureSize(world.grid.w, world.grid.h, this.voidFluid.cellSize || 1);
+            this.voidFluid.syncFlowField(world);
+            this.voidFluid.depositAtWorld(
+              sx0,
+              sy0,
+              0.45 * count,
+              FluidMaterial.CONCRETE,
+              Math.max(bestDist, bestCoreR + 6),
+            );
+            for (let k = 0; k < count && this.debris.length < this.maxChunks; k++) {
               const px = sx0 + (k & 1) * 0.7;
               const py = sy0 + (k >> 1) * 0.7;
               const pDist = dist(px - portalX, py - portalY);
@@ -1200,10 +1262,12 @@ export class VoidPhysics {
                 glowColor: "rgba(0, 0, 0, 0)",
                 size: 1.0,
                 life: 0,
-                maxLife: 30,
+                maxLife: 0.48,
                 startDist: Math.max(pDist, bestCoreR + 6),
                 coreRadius: bestCoreR,
                 intact: false,
+                fluidMaterial: FluidMaterial.CONCRETE,
+                cracked: true,
               });
             }
           }

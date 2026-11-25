@@ -284,14 +284,32 @@ export class VoidFluidGrid {
       return;
     }
 
-    // If cellSize changed dynamically (e.g. quality switch), resample existing fluid so it doesn't pop
-    const oldCs = this.cellSize;
+    // Preserve existing fluid cells across grid resolution changes (e.g. Low <-> High quality switch)
+    const oldCs = this.cellSize || 1;
     const oldGw = this.gridW;
     const oldGh = this.gridH;
-    const oldAmt = this.amount;
-    const oldMat = this.material;
-    const oldStart = this.startDist;
-    const hadFluid = this.w === worldW && this.h === worldH && oldAmt.length > 0 && this.maxX >= this.minX;
+    const oldMinX = Math.max(0, this.minX);
+    const oldMaxX = Math.min(oldGw - 1, this.maxX);
+    const oldMinY = Math.max(0, this.minY);
+    const oldMaxY = Math.min(oldGh - 1, this.maxY);
+    const savedCells: { wx: number; wy: number; amt: number; mat: FluidMaterialId; sDist: number }[] = [];
+    if (this.w === worldW && this.h === worldH && this.amount.length > 0 && oldMaxX >= oldMinX && oldMaxY >= oldMinY) {
+      for (let oy = oldMinY; oy <= oldMaxY; oy++) {
+        const row = oy * oldGw;
+        for (let ox = oldMinX; ox <= oldMaxX; ox++) {
+          const oi = row + ox;
+          const a = this.amount[oi];
+          if (a <= 0.015) continue;
+          savedCells.push({
+            wx: (ox + 0.5) * oldCs,
+            wy: (oy + 0.5) * oldCs,
+            amt: a,
+            mat: this.material[oi] as FluidMaterialId,
+            sDist: this.startDist[oi],
+          });
+        }
+      }
+    }
 
     this.w = worldW;
     this.h = worldH;
@@ -319,7 +337,8 @@ export class VoidFluidGrid {
     if (this.canvas && this.ctx) {
       this.canvas.width = gw;
       this.canvas.height = gh;
-      this.imageData = new ImageData(new Uint8ClampedArray(this.rasterU32.buffer), gw, gh);
+      this.imageData = this.ctx.createImageData(gw, gh);
+      this.rasterU32 = new Uint32Array(this.imageData.data.buffer);
     }
 
     this.minX = gw;
@@ -328,15 +347,39 @@ export class VoidFluidGrid {
     this.maxY = -1;
     this.activeCellCount = 0;
 
-    if (hadFluid) {
-      for (let oy = 0; oy < oldGh; oy++) {
-        for (let ox = 0; ox < oldGw; ox++) {
-          const oi = oy * oldGw + ox;
-          const a = oldAmt[oi];
-          if (a <= 0.01) continue;
-          const wx = (ox + 0.5) * oldCs;
-          const wy = (oy + 0.5) * oldCs;
-          this.depositAtWorld(wx, wy, a * ((oldCs * oldCs) / (cs * cs)), oldMat[oi] as FluidMaterialId, oldStart[oi]);
+    if (savedCells.length > 0) {
+      for (let i = 0; i < savedCells.length; i++) {
+        const sc = savedCells[i];
+        if (cs === 1 && oldCs === 2) {
+          for (let dy = 0; dy < 2; dy++) {
+            for (let dx = 0; dx < 2; dx++) {
+              const gx = Math.floor(sc.wx) - 1 + dx;
+              const gy = Math.floor(sc.wy) - 1 + dy;
+              if (gx < 0 || gx >= gw || gy < 0 || gy >= gh) continue;
+              const idx = gy * gw + gx;
+              this.amount[idx] = sc.amt;
+              this.material[idx] = sc.mat;
+              this.startDist[idx] = sc.sDist;
+              if (gx < this.minX) this.minX = gx;
+              if (gx > this.maxX) this.maxX = gx;
+              if (gy < this.minY) this.minY = gy;
+              if (gy > this.maxY) this.maxY = gy;
+              this.activeCellCount++;
+            }
+          }
+        } else {
+          const gx = Math.floor(sc.wx / cs);
+          const gy = Math.floor(sc.wy / cs);
+          if (gx < 0 || gx >= gw || gy < 0 || gy >= gh) continue;
+          const idx = gy * gw + gx;
+          this.amount[idx] = Math.min(3.6, Math.max(this.amount[idx], sc.amt));
+          this.material[idx] = sc.mat;
+          this.startDist[idx] = Math.max(this.startDist[idx], sc.sDist);
+          if (gx < this.minX) this.minX = gx;
+          if (gx > this.maxX) this.maxX = gx;
+          if (gy < this.minY) this.minY = gy;
+          if (gy > this.maxY) this.maxY = gy;
+          this.activeCellCount++;
         }
       }
     }
@@ -361,9 +404,10 @@ export class VoidFluidGrid {
   syncFlowField(world: VoidWorld): void {
     this.ensureSize(world.grid.w, world.grid.h, this.cellSize || 1);
     const active = world.portals.filter((p) => p.active);
-    let sig = `${this.cellSize}:`;
-    for (let i = 0; i < active.length; i++) {
-      const p = active[i];
+    const portals = active.length > 0 ? active : world.portals;
+    let sig = `${this.cellSize}:${active.length}:`;
+    for (let i = 0; i < portals.length; i++) {
+      const p = portals[i];
       sig += `${p.id}@${Math.round(p.x * 10)},${Math.round(p.y * 10)},${Math.round(p.radius * 10)};`;
     }
     if (sig === this.flowSignature) return;
@@ -373,7 +417,7 @@ export class VoidFluidGrid {
     const { gridW, gridH, cellSize } = this;
     const { flowVx, flowVy, flowDist, flowAngle, flowCoreR, flowReachR } = this;
 
-    if (active.length === 0) {
+    if (portals.length === 0) {
       const cx = world.grid.w * 0.5;
       const cy = world.grid.h * 0.5;
       for (let gy = 0; gy < gridH; gy++) {
@@ -405,10 +449,10 @@ export class VoidFluidGrid {
         const wx = (gx + 0.5) * cellSize;
         const idx = row + gx;
 
-        let bestP = active[0];
+        let bestP = portals[0];
         let bestD = dist(wx - bestP.x, wy - bestP.y);
-        for (let i = 1; i < active.length; i++) {
-          const p = active[i];
+        for (let i = 1; i < portals.length; i++) {
+          const p = portals[i];
           const d = dist(wx - p.x, wy - p.y);
           if (d < bestD) {
             bestD = d;
@@ -419,22 +463,19 @@ export class VoidFluidGrid {
         const coreR = Math.max(3.6, bestP.radius * 0.42);
         const reachR = Math.max(coreR + 18, bestP.radius * 3.1);
         const d = Math.max(0.25, bestD);
-        // Vector pointing from portal out to cell:
-        const rx = wx - bestP.x;
-        const ry = wy - bestP.y;
-        // Unit vector pointing INWARD toward portal center:
-        const inX = -rx / d;
-        const inY = -ry / d;
-        // Unit tangent vector for counter-clockwise accretion swirl:
-        const tanX = -inY;
-        const tanY = inX;
-
-        // Proximity 0 at outer reach, 1 at event horizon coreR
+        // Use polar incremental step to compute exact chord toward (r - radialStep, theta + angularStep)
+        // so bilinear grid stepping always spirals strictly inward toward the portal center
         const prox = Math.min(1, Math.max(0, 1 - (d - coreR) / Math.max(4, reachR - coreR)));
         const p2 = prox * prox;
-        // Accretion disk kinematics: strong tangential swirl forming spiral bands + steady inward drift
-        const radialSpeed = 5.2 + 12.5 * prox + 14.0 * p2;
-        const tangentialSpeed = 9.0 + 18.0 * prox + 20.0 * p2;
+        const radialSpeed = 5.5 + 9.5 * prox + 11.0 * p2;
+        const tangentialSpeed = 7.0 + 13.5 * prox + 15.0 * p2;
+
+        const rx = wx - bestP.x;
+        const ry = wy - bestP.y;
+        const inX = -rx / d;
+        const inY = -ry / d;
+        const tanX = -inY;
+        const tanY = inX;
 
         flowVx[idx] = inX * radialSpeed + tanX * tangentialSpeed;
         flowVy[idx] = inY * radialSpeed + tanY * tangentialSpeed;
@@ -470,19 +511,37 @@ export class VoidFluidGrid {
       return;
     }
 
-    const prev = this.amount[idx];
-    const next = Math.min(3.6, prev + addedAmount);
-    this.amount[idx] = next;
-    if (prev < 0.05 || addedAmount >= prev * 0.45) {
-      this.material[idx] = mat;
-    }
-    const effStart = sDist > coreR + 2 ? sDist : Math.max(d, coreR + 6);
-    this.startDist[idx] = prev > 0.05 ? Math.max(this.startDist[idx], effStart) : effStart;
+    const stampCell = (cx: number, cy: number, amt: number): void => {
+      if (amt <= 0.005 || cx < 0 || cx >= gridW || cy < 0 || cy >= gridH) return;
+      const cIdx = cy * gridW + cx;
+      const cd = this.flowDist[cIdx] || d;
+      const cCore = this.flowCoreR[cIdx] || coreR;
+      if (cd <= cCore) return;
+      const prev = this.amount[cIdx];
+      const next = Math.min(3.6, prev + amt);
+      this.amount[cIdx] = next;
+      if (prev < 0.05 || amt >= prev * 0.35) {
+        this.material[cIdx] = mat;
+      }
+      const effStart = sDist > cCore + 2 ? sDist : Math.max(cd, cCore + 6);
+      this.startDist[cIdx] = prev > 0.05 ? Math.max(this.startDist[cIdx], effStart) : effStart;
 
-    if (gx < this.minX) this.minX = gx;
-    if (gx > this.maxX) this.maxX = gx;
-    if (gy < this.minY) this.minY = gy;
-    if (gy > this.maxY) this.maxY = gy;
+      if (cx < this.minX) this.minX = cx;
+      if (cx > this.maxX) this.maxX = cx;
+      if (cy < this.minY) this.minY = cy;
+      if (cy > this.maxY) this.maxY = cy;
+    };
+
+    if (addedAmount >= 0.32 && cellSize === 1) {
+      stampCell(gx, gy, addedAmount * 0.56);
+      const side = addedAmount * 0.11;
+      stampCell(gx - 1, gy, side);
+      stampCell(gx + 1, gy, side);
+      stampCell(gx, gy - 1, side);
+      stampCell(gx, gy + 1, side);
+    } else {
+      stampCell(gx, gy, addedAmount);
+    }
   }
 
   /** Spawns a tiny short-lived 1-px spark for visual flair near chunk cracks or active rims. */
@@ -581,8 +640,8 @@ export class VoidFluidGrid {
 
     const invCell = 1 / cellSize;
     const stepScale = Math.min(1.35, dt * 30) * invCell;
-    // Slight decay per frame so thin wisps evaporate cleanly
-    const retention = Math.max(0.88, 1 - dt * 0.42);
+    // Slight decay per frame so thin wisps evaporate cleanly while streams reach the event horizon
+    const retention = Math.max(0.92, 1 - dt * 0.16);
 
     const depositCell = (tx: number, ty: number, amt: number, mat: number, sDist: number): void => {
       if (amt <= 0.002 || tx < 0 || tx >= gridW || ty < 0 || ty >= gridH) return;
@@ -639,8 +698,8 @@ export class VoidFluidGrid {
         const tx = fx - bx;
         const ty = fy - by;
 
-        // Primary advected mass (86%) + gentle orthogonal neighbor diffusion/spreading (14%) when dense
-        const spreadShare = keptAmt > 0.55 ? 0.14 * Math.min(1, stepScale) : 0.05;
+        // Primary advected mass (88%) + gentle orthogonal neighbor diffusion/spreading (12%) when dense
+        const spreadShare = keptAmt > 0.55 ? 0.12 * Math.min(1, stepScale) : 0.04;
         const coreMass = keptAmt * (1 - spreadShare);
 
         const w00 = (1 - tx) * (1 - ty);
@@ -708,10 +767,12 @@ export class VoidFluidGrid {
     const sDist = Math.max(coreR + 5, this.startDist[idx] || this.flowReachR[idx] || 22);
     const span = Math.max(3.5, sDist - coreR);
     // Normalized inward progress u in [0, 1] (0 at outer edge, 1 at event horizon)
-    const u = Math.min(1, Math.max(0, 1 - (d - coreR) / span));
+    const uRaw = Math.min(1, Math.max(0, 1 - (d - coreR) / span));
+    // Slight ease-in so material colors remain readable in the outer ring and heat rapidly near the core
+    const u = Math.pow(uRaw, 0.85);
     // Spiral arm wave so bands visibly swirl around the accretion disk like pixel art
     const ang = this.flowAngle[idx];
-    const spiralWave = Math.sin(ang * 2 - d * 0.42 + animTime * 2.4) * 0.075;
+    const spiralWave = Math.sin(ang * 3 + Math.log(Math.max(1, d - coreR + 1)) * 4.5 - animTime * 2.2) * 0.11;
     const bandRaw = Math.min(0.999, Math.max(0, u + spiralWave));
     return Math.min(FLUID_BAND_COUNT - 1, Math.floor(bandRaw * FLUID_BAND_COUNT));
   }
@@ -772,7 +833,15 @@ export class VoidFluidGrid {
     viewBounds?: { x0: number; y0: number; x1: number; y1: number },
   ): { drawnCells: number; drawnSparks: number } {
     this.ensureSize(world.grid.w, world.grid.h, this.cellSize || 1);
-    const { gridW, gridH, cellSize, amount, material, rasterU32, flowDist, flowCoreR } = this;
+    const { gridW, gridH, cellSize, amount, material, flowDist, flowCoreR } = this;
+    // Ensure canvas and ImageData exist if DOM became available after construction
+    if (!this.imageData && this.ctx && this.canvas) {
+      this.canvas.width = gridW;
+      this.canvas.height = gridH;
+      this.imageData = this.ctx.createImageData(gridW, gridH);
+      this.rasterU32 = new Uint32Array(this.imageData.data.buffer);
+    }
+    const rasterU32 = this.rasterU32;
     const hasFluid = this.maxX >= this.minX && this.maxY >= this.minY;
 
     let vx0 = 0;
@@ -802,6 +871,7 @@ export class VoidFluidGrid {
     let drawnCells = 0;
 
     if (hasFluid && bx1 >= bx0 && by1 >= by0) {
+      this.syncFlowField(world);
       for (let gy = by0; gy <= by1; gy++) {
         const row = gy * gridW;
         for (let gx = bx0; gx <= bx1; gx++) {
@@ -818,7 +888,7 @@ export class VoidFluidGrid {
             continue;
           }
 
-          // Only render inside Void or along the immediate 1-px frontier lip
+          // Only render inside Void or EMPTY space
           const wx = Math.min(world.grid.w - 1, Math.floor((gx + 0.5) * cellSize));
           const wy = Math.min(world.grid.h - 1, Math.floor((gy + 0.5) * cellSize));
           const wIdx = wy * world.grid.w + wx;
