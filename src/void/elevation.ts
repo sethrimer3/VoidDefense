@@ -1404,6 +1404,8 @@ export class BuildingSpriteCache {
   atlasSpec = new Uint8Array(0);
   atlasSurface = new Uint8Array(0);
   atlasBldId = new Int16Array(0);
+  /** Dirty world-pixel rects repainted during the most recent `syncAtlasGbuffer` call. */
+  lastDirtyRects: [number, number, number, number][] = [];
   private gbufferW = 0;
   private gbufferH = 0;
 
@@ -1582,6 +1584,7 @@ export class BuildingSpriteCache {
     }
 
     this.dirtyIds.clear();
+    this.lastDirtyRects = dirtyRects;
     return { rebuildAll, sortedSprites, dirtyRects };
   }
 

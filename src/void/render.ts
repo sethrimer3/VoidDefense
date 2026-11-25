@@ -298,6 +298,7 @@ export class VoidRenderer {
   private prevBuildingAt = new Int32Array(0);
   private prevColumnFloors = new Uint8Array(0);
   private prevTowerAt = new Int32Array(0);
+  private prevMatCover = new Uint8Array(0);
   private buildingElevs = new Uint8Array(0);
   private livestockWorld: VoidWorld | null = null;
   private livestockList: { x: number; y: number; idx: number; isCow: boolean }[] = [];
@@ -350,6 +351,9 @@ export class VoidRenderer {
   readonly lighting = new LightingEngine();
   readonly reflections = new SurfaceReflections();
   private lastDirtyChunks = new Uint8Array(0);
+  private geomDirtyChunks = new Uint8Array(0);
+  private paintDirtyChunks = new Uint8Array(0);
+  private reflDirtyChunks = new Uint8Array(0);
   private placementPulses: { x: number; y: number; ageMs: number }[] = [];
   private incomePopups: { x: number; y: number; text: string; ageMs: number }[] = [];
   private outcomeFlashMs = 0;
@@ -642,18 +646,23 @@ export class VoidRenderer {
     const ty1 = Math.min(chunksH - 1, Math.floor(viewBounds.y1 / CHUNK_SIZE));
     const dropsPerTile = this.effectiveLightingQuality === "low" ? 1 : 2;
     const period = 0.14;
+    const invPeriod = 1 / period;
     const { material } = world;
     const { atlasElev } = this.spriteCache;
+    const tileLights: Parameters<LightingEngine["filterLightsForRect"]>[4] = [];
+    let lastFill = "";
 
     for (let ty = ty0; ty <= ty1; ty++) {
       const iy = ty * CHUNK_SIZE;
       for (let tx = tx0; tx <= tx1; tx++) {
         const ix = tx * CHUNK_SIZE;
+        this.lighting.filterLightsForRect(ix, iy, ix + CHUNK_SIZE, iy + CHUNK_SIZE, tileLights);
         for (let k = 0; k < dropsPerTile; k++) {
           const hVal = hash(world.seed, 987, tx, ty, k);
-          const phase = ((hVal >>> 8) & 255) / 256;
-          const u = this.reduceEffects ? phase : (animTime / period + phase) % 1;
-          const slot = this.reduceEffects ? 0 : Math.floor(animTime / period + phase);
+          const phase = ((hVal >>> 8) & 255) * (1 / 256);
+          const tPhase = animTime * invPeriod + phase;
+          const u = this.reduceEffects ? phase : tPhase % 1;
+          const slot = this.reduceEffects ? 0 : Math.floor(tPhase);
           const sHash = hash(world.seed, 989, tx, ty, k, slot);
           const lx = sHash & 15;
           const ly = (sHash >>> 4) & 15;
@@ -665,12 +674,16 @@ export class VoidRenderer {
           const roofZ = atlasElev[idx];
 
           if (u < 0.82) {
-            const f = u / 0.82;
+            const f = u * (1 / 0.82);
             const altitude = Math.round((1 - f) * 14);
             const sx = gx - (altitude >> 2);
             const sy = gy - roofZ - altitude;
             if (sx < 0 || sx >= w - 1 || sy < 1 || sy >= h) continue;
-            rawScene.fillStyle = this.lighting.rainGlintStyle(gx, gy, roofZ + altitude + 1, false);
+            const style = this.lighting.rainGlintStyle(gx, gy, roofZ + altitude + 1, false, tileLights);
+            if (style !== lastFill) {
+              rawScene.fillStyle = style;
+              lastFill = style;
+            }
             // Tiny fast-falling 1-px droplet (with a fainter 1-px upper tail at close zoom)
             rawScene.fillRect(sx, sy, 1, 1);
             if (this.cam.s >= 2.5 && ((sx + sy) & 1) === 0) {
@@ -680,7 +693,11 @@ export class VoidRenderer {
             // Tiny 1-pixel impact splash on ground or roof
             const sy = gy - roofZ;
             if (sy < 1 || sy >= h) continue;
-            rawScene.fillStyle = this.lighting.rainGlintStyle(gx, gy, roofZ + 0.5, true);
+            const style = this.lighting.rainGlintStyle(gx, gy, roofZ + 0.5, true, tileLights);
+            if (style !== lastFill) {
+              rawScene.fillStyle = style;
+              lastFill = style;
+            }
             rawScene.fillRect(gx, sy, 1, 1);
           }
         }
@@ -825,6 +842,8 @@ export class VoidRenderer {
     neon: number,
   ): void {
     const lit = Math.max(0, Math.min(1, (neon - 0.3) / 0.9));
+    const litHeadsX: number[] = [];
+    const litHeadsY: number[] = [];
     for (const lamp of halogenLamps(world)) {
       const { x, y, ax, ay } = lamp;
       if (x < view.x0 - 6 || x > view.x1 + 6 || y < view.y0 - 4 || y > view.y1 + 10) continue;
@@ -837,19 +856,29 @@ export class VoidRenderer {
       // over a road to the south (toward the viewer) the head sits on the pole top.
       const hx = x + ax * 2;
       const hy = ay < 0 ? y - 6 : y - 5;
-      c.fillStyle = "#5a616c";
-      if (ax !== 0) c.fillRect(x + ax, y - 5, 1, 1);
+      if (ax !== 0) {
+        c.fillStyle = "#5a616c";
+        c.fillRect(x + ax, y - 5, 1, 1);
+      }
       c.fillStyle = lit > 0 ? "#ffe2a0" : "#9a8f78";
       c.fillRect(hx, hy, 1, 1);
       if (lit > 0) {
-        c.globalCompositeOperation = "lighter";
-        c.fillStyle = `rgba(255, 176, 80, ${(0.45 * lit).toFixed(3)})`;
+        litHeadsX.push(hx);
+        litHeadsY.push(hy);
+      }
+    }
+    if (litHeadsX.length > 0) {
+      c.globalCompositeOperation = "lighter";
+      c.fillStyle = `rgba(255, 176, 80, ${(0.45 * lit).toFixed(3)})`;
+      for (let i = 0; i < litHeadsX.length; i++) {
+        const hx = litHeadsX[i];
+        const hy = litHeadsY[i];
         c.fillRect(hx - 1, hy, 1, 1);
         c.fillRect(hx + 1, hy, 1, 1);
         c.fillRect(hx, hy - 1, 1, 1);
         c.fillRect(hx, hy + 1, 1, 1);
-        c.globalCompositeOperation = "source-over";
       }
+      c.globalCompositeOperation = "source-over";
     }
   }
 
@@ -1134,6 +1163,7 @@ export class VoidRenderer {
     const targetW = w;
     const targetH = h;
 
+    let fullRebuild = false;
     if (
       this.renderedWorld !== world ||
       this.renderedHeightMode !== this.buildingHeight ||
@@ -1152,40 +1182,70 @@ export class VoidRenderer {
       this.initShadowCache(world);
       this.ledgeDirty = true;
       world.grid.markAllDirty();
+      fullRebuild = true;
+    }
+
+    if (this.lastDirtyChunks.length !== dirtyChunks.length) {
+      this.lastDirtyChunks = new Uint8Array(dirtyChunks.length);
+      this.geomDirtyChunks = new Uint8Array(dirtyChunks.length);
+      this.paintDirtyChunks = new Uint8Array(dirtyChunks.length);
+      this.reflDirtyChunks = new Uint8Array(dirtyChunks.length);
     }
 
     if (!world.grid.hasDirtyChunks()) {
       this.lastDirtyChunks.fill(0);
+      this.geomDirtyChunks.fill(0);
+      this.paintDirtyChunks.fill(0);
+      this.reflDirtyChunks.fill(0);
       return;
     }
 
-    // Incrementally update shadowMap when building footprints, columnFloors or placed towers change in dirty chunks
-    const { buildingAt, columnFloors, towerAt } = world;
-    for (let cy = 0; cy < chunksH; cy++) {
-      for (let cx = 0; cx < chunksW; cx++) {
-        if (!dirtyChunks[cy * chunksW + cx]) continue;
-        const x0 = cx * CHUNK_SIZE;
-        const y0 = cy * CHUNK_SIZE;
-        const x1 = Math.min(targetW, x0 + CHUNK_SIZE);
-        const y1 = Math.min(targetH, y0 + CHUNK_SIZE);
-        for (let y = y0; y < y1; y++) {
-          const row = y * targetW;
-          for (let x = x0; x < x1; x++) {
-            const idx = row + x;
-            const cur = buildingAt[idx];
-            const curFloors = columnFloors ? columnFloors[idx] : 0;
-            const curTower = towerAt[idx];
-            if (
-              cur !== this.prevBuildingAt[idx] ||
-              curFloors !== this.prevColumnFloors[idx] ||
-              curTower !== this.prevTowerAt[idx]
-            ) {
-              this.prevBuildingAt[idx] = cur;
-              this.prevColumnFloors[idx] = curFloors;
-              this.prevTowerAt[idx] = curTower;
-              this.queueShadowsAround(world, x, y);
+    if (fullRebuild) {
+      this.geomDirtyChunks.fill(1);
+    } else {
+      this.geomDirtyChunks.fill(0);
+    }
+    this.paintDirtyChunks.fill(0);
+
+    // Incrementally update shadowMap and track geometry-dirty chunks (material, landCover,
+    // building footprints, columnFloors, or placed towers) separately from paint-only dirty chunks.
+    const { buildingAt, columnFloors, towerAt, material, landCover } = world;
+    if (!fullRebuild) {
+      for (let cy = 0; cy < chunksH; cy++) {
+        for (let cx = 0; cx < chunksW; cx++) {
+          const chunkIdx = cy * chunksW + cx;
+          if (!dirtyChunks[chunkIdx]) continue;
+          const x0 = cx * CHUNK_SIZE;
+          const y0 = cy * CHUNK_SIZE;
+          const x1 = Math.min(targetW, x0 + CHUNK_SIZE);
+          const y1 = Math.min(targetH, y0 + CHUNK_SIZE);
+          let geomChanged = false;
+          for (let y = y0; y < y1; y++) {
+            const row = y * targetW;
+            for (let x = x0; x < x1; x++) {
+              const idx = row + x;
+              const cur = buildingAt[idx];
+              const curFloors = columnFloors ? columnFloors[idx] : 0;
+              const curTower = towerAt[idx];
+              const curMC = (material[idx] & 15) | (landCover[idx] << 4);
+              const structChanged =
+                cur !== this.prevBuildingAt[idx] ||
+                curFloors !== this.prevColumnFloors[idx] ||
+                curTower !== this.prevTowerAt[idx];
+              if (structChanged) {
+                this.prevBuildingAt[idx] = cur;
+                this.prevColumnFloors[idx] = curFloors;
+                this.prevTowerAt[idx] = curTower;
+                this.queueShadowsAround(world, x, y);
+                geomChanged = true;
+              }
+              if (curMC !== this.prevMatCover[idx]) {
+                this.prevMatCover[idx] = curMC;
+                geomChanged = true;
+              }
             }
           }
+          if (geomChanged) this.geomDirtyChunks[chunkIdx] = 1;
         }
       }
     }
@@ -1202,16 +1262,14 @@ export class VoidRenderer {
       const next = Math.round(this.computeShadowAt(world, x, y, selfHeight, selfElev) * 100);
       if (this.shadowMap[idx] !== next) {
         this.shadowMap[idx] = next;
-        dirtyChunks[world.grid.chunkIndexAtCell(x, y)] = 1;
+        const cIdx = world.grid.chunkIndexAtCell(x, y);
+        dirtyChunks[cIdx] = 1;
+        this.paintDirtyChunks[cIdx] = 1;
       }
     }
     this.shadowUpdates.length = 0;
 
-    if (this.lastDirtyChunks.length !== dirtyChunks.length) {
-      this.lastDirtyChunks = new Uint8Array(dirtyChunks.length);
-    }
     this.lastDirtyChunks.set(dirtyChunks);
-    this.lighting.syncChunks(world, this.buildingHeight, this.lastDirtyChunks);
 
     let minX = targetW;
     let minY = targetH;
@@ -1227,6 +1285,7 @@ export class VoidRenderer {
         const x1 = Math.min(targetW, x0 + CHUNK_SIZE);
         const y1 = Math.min(targetH, y0 + CHUNK_SIZE);
         if (this.paintChunk(world, x0, y0, x1, y1)) {
+          this.paintDirtyChunks[chunkIdx] = 1;
           if (x0 < minX) minX = x0;
           if (y0 < minY) minY = y0;
           if (x1 > maxX) maxX = x1;
@@ -1234,6 +1293,8 @@ export class VoidRenderer {
         }
       }
     }
+
+    this.lighting.syncChunks(world, this.buildingHeight, this.geomDirtyChunks, this.paintDirtyChunks);
 
     if (maxX > minX && maxY > minY) {
       this.tctx.putImageData(this.terrainImageData, 0, 0, minX, minY, maxX - minX, maxY - minY);
@@ -1257,7 +1318,11 @@ export class VoidRenderer {
       ? new Uint8Array(world.columnFloors)
       : new Uint8Array(count);
     this.prevTowerAt = new Int32Array(world.towerAt);
-    const { buildingAt, buildings, material } = world;
+    this.prevMatCover = new Uint8Array(count);
+    const { buildingAt, buildings, material, landCover } = world;
+    for (let i = 0; i < count; i++) {
+      this.prevMatCover[i] = (material[i] & 15) | (landCover[i] << 4);
+    }
     for (let y = 0; y < h; y++) {
       const row = y * w;
       for (let x = 0; x < w; x++) {
@@ -1515,8 +1580,20 @@ export class VoidRenderer {
     const { material, landCover, buildingAt, streetTier, hp: hpArr, maxHp: maxHpArr, isBaselineCell, buildings } = world;
 
     // Distance to the nearest Void cell for every cell of the chunk (plus margin), as a
-    // two-pass chamfer transform over a small local window. Skipped when no Void is near.
-    const nearVoid = this.buildDistanceWindow(world, x0, y0);
+    // two-pass chamfer transform over a small local window. Skipped when no Void is near
+    // or when every cell in the chunk is already VOID/EMPTY (which ignore distWindow).
+    let hasLand = false;
+    for (let y = y0; y < y1 && !hasLand; y++) {
+      const row = y * w;
+      for (let x = x0; x < x1; x++) {
+        const m = material[row + x];
+        if (m !== CellMaterial.VOID && m !== CellMaterial.EMPTY) {
+          hasLand = true;
+          break;
+        }
+      }
+    }
+    const nearVoid = hasLand ? this.buildDistanceWindow(world, x0, y0) : false;
     let changed = false;
 
     for (let y = y0; y < y1; y++) {
@@ -1929,6 +2006,21 @@ export class VoidRenderer {
     );
     this.updateDebrisLighting(activePreset);
     const atlas = this.spriteCache.getBoardAtlas(world, this.buildingHeight, this.lastDirtyChunks);
+    this.reflDirtyChunks.set(this.geomDirtyChunks);
+    if (this.spriteCache.lastDirtyRects.length > 0) {
+      this.lighting.markAtlasDirtyRects(this.spriteCache.lastDirtyRects);
+      const { chunksW, chunksH } = world.grid;
+      for (let r = 0; r < this.spriteCache.lastDirtyRects.length; r++) {
+        const [rx0, ry0, rx1, ry1] = this.spriteCache.lastDirtyRects[r];
+        const cx0 = Math.max(0, (rx0 / CHUNK_SIZE) | 0);
+        const cy0 = Math.max(0, (ry0 / CHUNK_SIZE) | 0);
+        const cx1 = Math.min(chunksW - 1, ((rx1 - 1) / CHUNK_SIZE) | 0);
+        const cy1 = Math.min(chunksH - 1, ((ry1 - 1) / CHUNK_SIZE) | 0);
+        for (let cy = cy0; cy <= cy1; cy++) {
+          this.reflDirtyChunks.fill(1, cy * chunksW + cx0, cy * chunksW + cx1 + 1);
+        }
+      }
+    }
     const scale = this.pixelScale();
     const viewBounds = {
       x0: -this.cam.x / scale,
@@ -1992,7 +2084,7 @@ export class VoidRenderer {
     );
     lap("lighting");
 
-    this.reflections.begin(world, this.lastDirtyChunks, viewBounds);
+    this.reflections.begin(world, this.reflDirtyChunks, viewBounds);
     if (reflectionQuality === "high") {
       const surface = this.lighting.terrainSurface;
       const towerRise = this.buildingHeight === "flat" ? 1 : this.buildingHeight === "low" ? 2 : TOWER_ELEVATION_PX + 1;
@@ -2263,7 +2355,7 @@ export class VoidRenderer {
 
     // Living, moving Void interior: subtle inward-flowing nebula wisps behind the cliff ledge and fluid streams
     if (activePortals.length > 0) {
-      paintVoidInteriorDirect(rawScene, world, animTime, this.reduceEffects);
+      paintVoidInteriorDirect(rawScene, world, animTime, this.reduceEffects, viewBounds);
     }
     paintVoidRipples(rawScene, world, physics.voidRipples, this.reduceEffects);
     lap("interior");
@@ -2602,9 +2694,20 @@ export class VoidRenderer {
     }
     const hasWalkers = this.dirtyWalkerBuckets.length > 0;
     const nearby = this.nearbyWalkers;
+    const wx0 = Math.floor(viewBounds.x0) - 4;
+    const wx1 = Math.ceil(viewBounds.x1) + 4;
+    const wy0 = Math.floor(viewBounds.y0) - 4;
+    const wy1 = Math.ceil(viewBounds.y1) + 4;
+    const wheatBase0X: number[] = [];
+    const wheatBase0Y: number[] = [];
+    const wheatBase1X: number[] = [];
+    const wheatBase1Y: number[] = [];
+    const wheatTipX: [number[], number[], number[], number[]] = [[], [], [], []];
+    const wheatTipY: [number[], number[], number[], number[]] = [[], [], [], []];
     for (let wi = 0; wi < this.evenWheatCells.length; wi++) {
       const idx = this.evenWheatCells[wi];
       const x = idx % world.grid.w, y = (idx / world.grid.w) | 0;
+      if (x < wx0 || x > wx1 || y < wy0 || y > wy1) continue;
       if (world.material[idx] === CellMaterial.VOID ||
           world.material[idx] === CellMaterial.SALVAGE || world.buildingAt[idx] >= 0 ||
           !isWheat(world.landCover[idx]) || sim.farms.scorch[idx]) continue;
@@ -2635,16 +2738,36 @@ export class VoidRenderer {
       const tipIdx = tipY * w + tipX;
       if (!isWheat(world.landCover[tipIdx]) ||
           world.material[tipIdx] === CellMaterial.VOID || world.buildingAt[tipIdx] >= 0) continue;
-      rawScene.fillStyle = ((x + y) & 1) === 0 ? "#6c7137" : "#787c3d";
-      rawScene.fillRect(x, y, 1, 1);
-      const grainTone = (x * 11 + y * 17) & 3;
-      rawScene.fillStyle =
-        grainTone === 0 ? "#e6c86e" : grainTone === 1 ? "#d4ad4c" : grainTone === 2 ? "#c2963b" : "#edd585";
-      rawScene.fillRect(tipX, tipY, 1, 1);
-      if (closeZoom && !close && ((x + y) & 3) === 0) {
-        rawScene.fillStyle = "#edd585";
-        rawScene.fillRect(tipX, tipY - 1, 1, 1);
+      if (((x + y) & 1) === 0) {
+        wheatBase0X.push(x);
+        wheatBase0Y.push(y);
+      } else {
+        wheatBase1X.push(x);
+        wheatBase1Y.push(y);
       }
+      const grainTone = (x * 11 + y * 17) & 3;
+      wheatTipX[grainTone].push(tipX);
+      wheatTipY[grainTone].push(tipY);
+      if (closeZoom && !close && ((x + y) & 3) === 0) {
+        wheatTipX[3].push(tipX);
+        wheatTipY[3].push(tipY - 1);
+      }
+    }
+    if (wheatBase0X.length > 0) {
+      rawScene.fillStyle = "#6c7137";
+      for (let i = 0; i < wheatBase0X.length; i++) rawScene.fillRect(wheatBase0X[i], wheatBase0Y[i], 1, 1);
+    }
+    if (wheatBase1X.length > 0) {
+      rawScene.fillStyle = "#787c3d";
+      for (let i = 0; i < wheatBase1X.length; i++) rawScene.fillRect(wheatBase1X[i], wheatBase1Y[i], 1, 1);
+    }
+    const wheatTipColors = ["#e6c86e", "#d4ad4c", "#c2963b", "#edd585"];
+    for (let t = 0; t < 4; t++) {
+      const xs = wheatTipX[t];
+      if (xs.length === 0) continue;
+      const ys = wheatTipY[t];
+      rawScene.fillStyle = wheatTipColors[t];
+      for (let i = 0; i < xs.length; i++) rawScene.fillRect(xs[i], ys[i], 1, 1);
     }
 
     // 7a. Farmland livestock: pre-indexed sparse pixel-art sheep and cows on intact meadow/farmland
@@ -3131,10 +3254,9 @@ export class VoidRenderer {
       }
     };
 
-    // Draw placed Resistance towers and agents before the building atlas so north-of-building
+    // Draw placed Resistance towers and occluded agents before the building atlas so north-of-building
     // towers/agents are naturally occluded by southern building roofs.
-    // Rooftop turrets are drawn after the atlas, on top of their own roof, unless a taller
-    // building to the south stands in front of them.
+    // Non-occluded agents and unoccluded rooftop turrets draw after the atlas (each agent drawn at most once).
     const rooftopFront = new Set<number>();
     for (let i = 0; i < combat.towers.length; i++) {
       const t = combat.towers[i];
@@ -3145,7 +3267,41 @@ export class VoidRenderer {
         drawTower(t);
       }
     }
-    for (let i = 0; i < combat.agents.length; i++) drawAgent(combat.agents[i]);
+    const frontAgents: (typeof combat.agents)[number][] = [];
+    const agX0 = viewBounds.x0 - 16;
+    const agX1 = viewBounds.x1 + 16;
+    const agY0 = viewBounds.y0 - 16;
+    const agY1 = viewBounds.y1 + 16;
+    for (let i = 0; i < combat.agents.length; i++) {
+      const a = combat.agents[i];
+      if (a.x < agX0 || a.x > agX1 || a.y < agY0 || a.y > agY1) continue;
+      if (this.buildingHeight === "flat") {
+        drawAgent(a);
+        continue;
+      }
+      const ax = Math.floor(a.x);
+      const ay = Math.floor(a.y);
+      let occludedBySouthernBuilding = false;
+      if (ax >= 0 && ax < w && ay + 1 < h) {
+        let lastBId = -1;
+        for (let dy = 1; dy <= MAX_ELEVATION_PX && ay + dy < h; dy++) {
+          const bId = world.buildingAt[(ay + dy) * w + ax];
+          if (bId >= 0 && bId !== lastBId) {
+            lastBId = bId;
+            const sp = this.spriteCache.getSprite(world, world.buildings[bId], this.buildingHeight, false);
+            if (sp.intactCount > 0 && ay >= sp.y && ay < sp.bottomY) {
+              occludedBySouthernBuilding = true;
+              break;
+            }
+          }
+        }
+      }
+      if (occludedBySouthernBuilding) {
+        drawAgent(a);
+      } else {
+        frontAgents.push(a);
+      }
+    }
 
     // Composite the sorted building structure atlas + bump-mapped 2.5D lighting & dynamic shadows
     if (atlas) {
@@ -3233,30 +3389,8 @@ export class VoidRenderer {
       }
       if (needsFront) drawTower(t);
     }
-    if (this.buildingHeight !== "flat") {
-      for (let i = 0; i < combat.agents.length; i++) {
-        const a = combat.agents[i];
-        const ax = Math.floor(a.x);
-        const ay = Math.floor(a.y);
-        if (ax >= 0 && ax < w && ay + 1 < h) {
-          // If a building cell lies within 15 px south of the agent, that building is in front of the agent;
-          // otherwise draw the agent in front of any northern building's facade.
-          let occludedBySouthernBuilding = false;
-          let lastBId = -1;
-          for (let dy = 1; dy <= MAX_ELEVATION_PX && ay + dy < h; dy++) {
-            const bId = world.buildingAt[(ay + dy) * w + ax];
-            if (bId >= 0 && bId !== lastBId) {
-              lastBId = bId;
-              const sp = this.spriteCache.getSprite(world, world.buildings[bId], this.buildingHeight, false);
-              if (sp.intactCount > 0 && ay >= sp.y && ay < sp.bottomY) {
-                occludedBySouthernBuilding = true;
-                break;
-              }
-            }
-          }
-          if (!occludedBySouthernBuilding) drawAgent(a);
-        }
-      }
+    for (let i = 0; i < frontAgents.length; i++) {
+      drawAgent(frontAgents[i]);
     }
 
     // Occlusion fade: when a placement preview or selected tower lies north of a tall building

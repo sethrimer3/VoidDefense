@@ -623,6 +623,11 @@ export class VoidFluidGrid {
   /** Offscreen buffer for single-call rendering (`one putImageData + drawImage`). */
   rasterU32 = new Uint32Array(0);
   private imageData: ImageData | null = null;
+  private readonly touchedSparks: number[] = [];
+  /** Per-16x16-chunk mask of tiles with hot emissive fluid (including 4 px blur margin). */
+  private hotTiles = new Uint8Array(0);
+  private hotTilesW = 0;
+  private hotTilesH = 0;
   readonly canvas: HTMLCanvasElement | null =
     typeof document !== "undefined" && typeof document.createElement === "function"
       ? document.createElement("canvas")
@@ -725,6 +730,9 @@ export class VoidFluidGrid {
     this.maxX = -1;
     this.maxY = -1;
     this.activeCellCount = 0;
+    this.hotTilesW = Math.ceil(worldW / 16);
+    this.hotTilesH = Math.ceil(worldH / 16);
+    this.hotTiles = new Uint8Array(this.hotTilesW * this.hotTilesH);
 
     if (savedCells.length > 0) {
       for (let i = 0; i < savedCells.length; i++) {
@@ -1001,6 +1009,9 @@ export class VoidFluidGrid {
       if (cx > this.maxX) this.maxX = cx;
       if (cy < this.minY) this.minY = cy;
       if (cy > this.maxY) this.maxY = cy;
+      if (next >= 0.16 && this.heat[cIdx] > 0.34) {
+        this.markHotTile(cx, cy);
+      }
     };
 
     if (addedAmount >= 0.45 && cellSize === 1) {
@@ -1264,6 +1275,7 @@ export class VoidFluidGrid {
     let newMaxX = -1;
     let newMaxY = -1;
     let activeCount = 0;
+    this.hotTiles.fill(0);
 
     for (let gy = y0; gy <= y1; gy++) {
       const row = gy * gridW;
@@ -1272,7 +1284,8 @@ export class VoidFluidGrid {
         const rawA = nextAmount[idx];
         if (rawA > activeCutoff) {
           const invA = 1 / rawA;
-          amount[idx] = rawA > 3.6 ? 3.6 : rawA;
+          const clampedA = rawA > 3.6 ? 3.6 : rawA;
+          amount[idx] = clampedA;
           material[idx] = nextMaterial[idx];
           const mixVar = (((gx * 29 + gy * 53) & 3) - 1.5) * 0.75;
           const r = nextColorR[idx] * invA + mixVar;
@@ -1282,13 +1295,17 @@ export class VoidFluidGrid {
           colorG[idx] = g < 0 ? 0 : g > 255 ? 255 : g;
           colorB[idx] = b < 0 ? 0 : b > 255 ? 255 : b;
           const h = nextHeat[idx] * invA;
-          heat[idx] = h < 0 ? 0 : h > 1 ? 1 : h;
+          const clampedH = h < 0 ? 0 : h > 1 ? 1 : h;
+          heat[idx] = clampedH;
           startDist[idx] = nextStartDist[idx];
           activeCount++;
           if (gx < newMinX) newMinX = gx;
           if (gx > newMaxX) newMaxX = gx;
           if (gy < newMinY) newMinY = gy;
           if (gy > newMaxY) newMaxY = gy;
+          if (clampedA >= 0.16 && clampedH > 0.34) {
+            this.markHotTile(gx, gy);
+          }
         } else {
           amount[idx] = 0;
           material[idx] = 0;
@@ -1306,6 +1323,28 @@ export class VoidFluidGrid {
     this.maxX = newMaxX;
     this.maxY = newMaxY;
     this.activeCellCount = activeCount;
+  }
+
+  private markHotTile(gx: number, gy: number): void {
+    const cs = this.cellSize;
+    const wx = gx * cs;
+    const wy = gy * cs;
+    const tx0 = Math.max(0, (wx - 4) >> 4);
+    const tx1 = Math.min(this.hotTilesW - 1, (wx + cs + 4) >> 4);
+    const ty0 = Math.max(0, (wy - 4) >> 4);
+    const ty1 = Math.min(this.hotTilesH - 1, (wy + cs + 4) >> 4);
+    for (let ty = ty0; ty <= ty1; ty++) {
+      const row = ty * this.hotTilesW;
+      for (let tx = tx0; tx <= tx1; tx++) {
+        this.hotTiles[row + tx] = 1;
+      }
+    }
+  }
+
+  /** Fast O(1) check whether a 16x16 world tile (including 4 px halo blur margin) contains hot emissive fluid. */
+  hasHotFluidInTile(tx: number, ty: number): boolean {
+    if (this.maxX < this.minX || tx < 0 || ty < 0 || tx >= this.hotTilesW || ty >= this.hotTilesH) return false;
+    return this.hotTiles[ty * this.hotTilesW + tx] === 1;
   }
 
   /** Computes the effective thermal heat (`0..1`) at cell `idx`, combining advected per-cell `heat[idx]`
@@ -1454,6 +1493,22 @@ export class VoidFluidGrid {
             continue;
           }
 
+          // Early-out spiral arm gaps & northern cliff ledge occlusion before heat/color shading
+          const spiralArm = this.flowSpiralPhase[idx];
+          const nearHorizon = d - coreR;
+          if (nearHorizon < 2.2 && spiralArm < 0.25 && amt < 1.35) {
+            rasterU32[idx] = 0;
+            continue;
+          }
+          if (nearHorizon >= 2.2 && spiralArm < -0.16) {
+            rasterU32[idx] = 0;
+            continue;
+          }
+          if (wy >= 1 && isOccludedByLedge(world, wx, wy)) {
+            rasterU32[idx] = 0;
+            continue;
+          }
+
           // 1. Continuous heat & thermal ramp from true source color
           const h = this.computeCellHeat(idx, effTime);
           let baseR: number;
@@ -1529,26 +1584,6 @@ export class VoidFluidGrid {
           let litG = baseG * (sky[1] + (1 - sky[1]) * emission);
           let litB = baseB * (sky[2] + (1 - sky[2]) * emission);
 
-          // 3. Thick opaque spiral arms with dark gaps between arms, bright leading edges, and thinning to a violet line at the horizon
-          const spiralArm = this.flowSpiralPhase[idx];
-          const nearHorizon = d - coreR;
-          // At the event horizon ring (nearHorizon < 2.2), thin the stream into a tight 1-px spiral line
-          if (nearHorizon < 2.2 && spiralArm < 0.25 && amt < 1.35) {
-            rasterU32[idx] = 0;
-            continue;
-          }
-          // Carve clear dark gaps between spiral arms so arms read as distinct dense streams over the deep crater funnel
-          if (nearHorizon >= 2.2 && spiralArm < -0.16) {
-            rasterU32[idx] = 0;
-            continue;
-          }
-
-          // Clip fluid cells behind the northern cliff ledge (earth/rock strata + undercut shadow) so the crater wall is never overwritten
-          if (wy >= 1 && isOccludedByLedge(world, wx, wy)) {
-            rasterU32[idx] = 0;
-            continue;
-          }
-
           const nAmt = gy > 0 ? amount[idx - gridW] : 0;
           const wAmt = gx > 0 ? amount[idx - 1] : 0;
           const sAmt = gy + 1 < gridH ? amount[idx + gridW] : 0;
@@ -1603,7 +1638,8 @@ export class VoidFluidGrid {
 
     // Stamp optional short-lived flair sparks into the same offscreen buffer
     let drawnSparks = 0;
-    const touchedSparks: number[] = [];
+    const touchedSparks = this.touchedSparks;
+    touchedSparks.length = 0;
     if (!reduceEffects) {
       for (let i = 0; i < this.sparkCap; i++) {
         const s = this.sparks[i];

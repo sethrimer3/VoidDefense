@@ -37,6 +37,38 @@ export function reflectionColor(rgb: RGB): number {
   return packElevAbgr(Math.round(rgb[0]), Math.round(rgb[1]), Math.round(rgb[2]));
 }
 
+const BANK_OFFSETS = [0, -4, 4, 8] as const;
+const FALLOFF_POW_155 = Float32Array.from({ length: 257 }, (_, i) => Math.pow(i / 256, 1.55));
+
+/** Zero-allocation packed ripple offset (`0` = no ripple, else `((ox + 2) | ((oy + 2) << 3)) | 64`). */
+function computePuddleRipplePacked(seed: number, x: number, y: number, time: number): number {
+  const tx = x >> 3;
+  const ty = y >> 3;
+  const period = 0.85;
+  const invPeriod = 1 / period;
+  const tScaled = time * invPeriod;
+  const slot = Math.floor(tScaled);
+  const h = hash(seed, 941, tx, ty, slot);
+  const cx = (tx << 3) + (h & 7);
+  const cy = (ty << 3) + ((h >>> 3) & 7);
+  const dx = x - cx;
+  const dy = y - cy;
+  const d2 = dx * dx + dy * dy;
+  if (d2 < 0.06 || d2 > 32) return 0;
+  const phaseOffset = ((h >>> 6) & 15) * (1 / 16);
+  const age = (tScaled - slot + phaseOffset) % 1;
+  const r = age * 4.5;
+  const dist = Math.sqrt(d2);
+  if (Math.abs(dist - r) > 0.95) return 0;
+  const amp = age < 0.35 ? 2 : 1;
+  const sign = dist >= r ? 1 : -1;
+  const scale = (amp * sign) / dist;
+  const ox = Math.max(-2, Math.min(2, Math.round(dx * scale)));
+  const oy = Math.max(-2, Math.min(2, Math.round(dy * scale)));
+  if (ox === 0 && oy === 0) return 0;
+  return 64 | (ox + 2) | ((oy + 2) << 3);
+}
+
 /** Deterministic raindrop ripple ring perturbation (`dx, dy` in `-2..2` whole pixels) for puddle reflections. */
 export function computePuddleRippleOffset(
   seed: number,
@@ -371,7 +403,8 @@ export class SurfaceReflections {
       // within its influence at the center and along the projected streak.
       let cx = lightX;
       let best = Infinity;
-      for (const dy of [0, -4, 4, 8]) {
+      for (let oi = 0; oi < BANK_OFFSETS.length; oi++) {
+        const dy = BANK_OFFSETS[oi];
         if (cy + dy < y0 || cy + dy >= y1) continue;
         for (let x = Math.max(x0, lightX - length); x <= Math.min(x1 - 1, lightX + length); x++) {
           const s = surface[(cy + dy) * w + x];
@@ -409,7 +442,7 @@ export class SurfaceReflections {
             const shimmer = isPuddle ? wave : (phase > 0 && ((x + y + phase) & 3) === 0 ? 1 : 0);
             const xDist = Math.abs(x - cx - shimmer);
             if (xDist > halfWidth) continue;
-            const rawEnergy = Math.pow(falloff, 1.55) * (1 - xDist / (halfWidth + 1)) * (isPuddle ? 128 : 92) * bankFalloff * localWet;
+            const rawEnergy = FALLOFF_POW_155[(falloff * 256 + 0.5) | 0] * (1 - xDist / (halfWidth + 1)) * (isPuddle ? 128 : 92) * bankFalloff * localWet;
             const energy = Math.round(rawEnergy / 6) * 6;
             if (energy < 4) continue;
             this.streakTiles[((y / CHUNK_SIZE) | 0) * chunksW + ((x / CHUNK_SIZE) | 0)] = 1;
@@ -487,6 +520,8 @@ export class SurfaceReflections {
     const { atlasBldId, atlasColorU32, atlasElev, atlasSurface } = atlas;
     const localWater = this.water.pixels;
     const localGlass = this.glass.pixels;
+    const { halo, haloW } = lighting.getHaloBuffer();
+    const haloStreakScale = preset.neonIntensity > 0.25 && haloW > 0 ? preset.neonIntensity * 0.48 : 0;
 
     if (!wetActive && this.wasWet) {
       this.clearWetPixels(waterPut);
@@ -704,8 +739,6 @@ export class SurfaceReflections {
         expand(waterDraw, ix, iy, ex, ey);
         const wetSkyChanged = tile.wetSky !== wetSkyKey;
         tile.wetSky = wetSkyKey;
-        const { halo, haloW } = lighting.getHaloBuffer();
-        const haloStreakScale = preset.neonIntensity > 0.25 && haloW > 0 ? preset.neonIntensity * 0.48 : 0;
         const hasWetStreak = this.streakTiles[tileIndex] !== 0 || this.actorTileFlags[tileIndex] !== 0;
         let wetSourceRevision = localRevision;
         for (const source of wetSample.sources) wetSourceRevision = Math.max(wetSourceRevision, lighting.surfaceTileRevision[source]);
@@ -733,8 +766,10 @@ export class SurfaceReflections {
 
           if (quality === "high" && time > 0 && hit >= 0) {
             if (isPuddle) {
-              const [rx, ry] = computePuddleRippleOffset(world.seed, x, y, time);
-              if (rx !== 0 || ry !== 0) {
+              const packed = computePuddleRipplePacked(world.seed, x, y, time);
+              if (packed !== 0) {
+                const rx = (packed & 7) - 2;
+                const ry = ((packed >>> 3) & 7) - 2;
                 const hx = Math.max(0, Math.min(w - 1, (hit % w) + rx));
                 const hy = Math.max(0, Math.min(h - 1, ((hit / w) | 0) + ry));
                 const shifted = hy * w + hx;

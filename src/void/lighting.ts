@@ -1306,6 +1306,9 @@ export class LightingEngine {
   private readonly oldCasterBottom: number[] = [];
   private previousCasterCell = new Uint8Array(0);
   private compiledLights: CompiledLight[] = [];
+  private readonly compiledPool: CompiledLight[] = [];
+  private readonly localLightsScratch: CompiledLight[] = [];
+  private readonly rainStyleCache = new Map<number, string>();
   private readonly buildingShadowCaches = new Map<number, ShadowCache>();
   private readonly shadowCaches: (ShadowCache | undefined)[] = [];
   private shadowRevision = 0;
@@ -1347,7 +1350,27 @@ export class LightingEngine {
 
   /** Current active TimeOfDayPreset used for global shading when `timeOfDayActive` is true. */
   activePreset: TimeOfDayPreset = TIME_OF_DAY_PRESETS.night;
-  private lastPresetKey = "";
+  private hasLastPreset = false;
+  private lastPresetId = "";
+  private lastSunDir0 = 0;
+  private lastSunDir1 = 0;
+  private lastSunDir2 = 0;
+  private lastSunHeight = 0;
+  private lastSunColor0 = 0;
+  private lastSunColor1 = 0;
+  private lastSunColor2 = 0;
+  private lastSunIntensity = 0;
+  private lastAmb0 = 0;
+  private lastAmb1 = 0;
+  private lastAmb2 = 0;
+  private lastVoidAmb0 = 0;
+  private lastVoidAmb1 = 0;
+  private lastVoidAmb2 = 0;
+  private lastNeonIntensity = 0;
+  private lastHazeAmount = 0;
+  private lastShadowReach = 0;
+  private lastShadowStrength = 0;
+  private lastQWet = -1;
   private lastGroundShadows?: Uint8Array;
   /** Half-resolution, world-space emissive spill before the time-of-day multiplier. */
   private haloW = 0;
@@ -1372,6 +1395,7 @@ export class LightingEngine {
     world: VoidWorld,
     mode: BuildingHeightMode,
     dirtyChunkFlags?: Uint8Array,
+    paintDirtyChunkFlags?: Uint8Array,
   ): void {
     const { w, h, count, chunksW, chunksH } = world.grid;
     let rebuildAll = false;
@@ -1408,7 +1432,7 @@ export class LightingEngine {
       this.halo = new Float32Array(this.haloW * this.haloH * 3);
       this.buildingShadowCaches.clear();
       this.shadowCaches.length = 0;
-      this.lastPresetKey = "";
+      this.hasLastPreset = false;
 
       const tileCount = chunksW * chunksH;
       this.shadowTileRevision = new Float64Array(tileCount);
@@ -1466,6 +1490,37 @@ export class LightingEngine {
     if (!anyDirty) {
       this.shadowRevision--;
       this.geometryRevision = this.shadowRevision;
+    }
+    if (paintDirtyChunkFlags) {
+      const len = Math.min(paintDirtyChunkFlags.length, this.tileAmbientClean.length);
+      for (let i = 0; i < len; i++) {
+        if (paintDirtyChunkFlags[i]) this.tileAmbientClean[i] = 0;
+      }
+    }
+  }
+
+  /** Invalidates ambient lighting, halo spill, and shadow caches for chunks overlapped by repainted building atlas rects. */
+  markAtlasDirtyRects(rects: readonly [number, number, number, number][]): void {
+    if (rects.length === 0 || this.chunksW === 0) return;
+    const chunksW = this.chunksW;
+    const chunksH = Math.ceil(this.h / CHUNK_SIZE);
+    this.geometryRevision = ++this.shadowRevision;
+    for (let r = 0; r < rects.length; r++) {
+      const [rx0, ry0, rx1, ry1] = rects[r];
+      const cx0 = Math.max(0, (rx0 / CHUNK_SIZE) | 0);
+      const cy0 = Math.max(0, (ry0 / CHUNK_SIZE) | 0);
+      const cx1 = Math.min(chunksW - 1, ((rx1 - 1) / CHUNK_SIZE) | 0);
+      const cy1 = Math.min(chunksH - 1, ((ry1 - 1) / CHUNK_SIZE) | 0);
+      const hLeft = Math.max(0, cx0 - 1);
+      const hRight = Math.min(chunksW, cx1 + 2);
+      for (let cy = Math.max(0, cy0 - 1); cy <= Math.min(chunksH - 1, cy1 + 1); cy++) {
+        const row = cy * chunksW;
+        this.tileHaloClean.fill(0, row + hLeft, row + hRight);
+        this.tileAmbientClean.fill(0, row + hLeft, row + hRight);
+        if (cy >= cy0 && cy <= cy1) {
+          this.shadowTileRevision.fill(this.shadowRevision, row + cx0, row + cx1 + 1);
+        }
+      }
     }
   }
 
@@ -1714,14 +1769,27 @@ export class LightingEngine {
     };
   }
 
+  /** Populates `out` with active compiled lights whose radius overlaps `[x0..x1, y0..y1]`. */
+  filterLightsForRect(x0: number, y0: number, x1: number, y1: number, out: CompiledLight[]): void {
+    out.length = 0;
+    const lights = this.compiledLights;
+    for (let i = 0; i < lights.length; i++) {
+      const l = lights[i];
+      if (l.x + l.radius >= x0 && l.x - l.radius <= x1 && l.y + l.radius >= y0 && l.y - l.radius <= y1) {
+        out.push(l);
+      }
+    }
+  }
+
   /** Evaluates a fast unshadowed CSS color for a rain streak or splash at `(x, y, z)` so raindrops glint near neon, towers, and explosions. */
-  rainGlintStyle(x: number, y: number, z = 2.5, splash = false): string {
+  rainGlintStyle(x: number, y: number, z = 2.5, splash = false, lightsOverride?: readonly CompiledLight[]): string {
     const preset = this.activePreset;
     let r = 82 + preset.ambientColor[0] * 115 + preset.sunIntensity * preset.sunColor[0] * 85;
     let g = 104 + preset.ambientColor[1] * 125 + preset.sunIntensity * preset.sunColor[1] * 85;
     let b = 148 + preset.ambientColor[2] * 140 + preset.sunIntensity * preset.sunColor[2] * 90;
     let lightEnergy = 0;
-    const lights = this.compiledLights;
+    const lights = lightsOverride ?? this.compiledLights;
+    const gain = splash ? 185 : 155;
     for (let i = 0; i < lights.length; i++) {
       const l = lights[i];
       const dx = l.x - x;
@@ -1731,10 +1799,10 @@ export class LightingEngine {
       const dz = l.z - z;
       const falloff = 1 - Math.sqrt(d2) * l.invRadius;
       const atten = (falloff * falloff) / (1 + dz * dz * 0.04);
-      const gain = splash ? 185 : 155;
-      r += l.r * atten * gain;
-      g += l.g * atten * gain;
-      b += l.b * atten * gain;
+      const ag = atten * gain;
+      r += l.r * ag;
+      g += l.g * ag;
+      b += l.b * ag;
       lightEnergy += (l.r + l.g + l.b) * atten;
     }
     if (this.haloW > 0 && preset.neonIntensity > 0.2) {
@@ -1742,15 +1810,27 @@ export class LightingEngine {
       const hy = Math.max(0, Math.min(this.haloH - 1, y >> 1));
       const hi = (hy * this.haloW + hx) * 3;
       const hBoost = preset.neonIntensity * (splash ? 0.55 : 0.44);
-      r += this.halo[hi] * hBoost;
-      g += this.halo[hi + 1] * hBoost;
-      b += this.halo[hi + 2] * hBoost;
-      lightEnergy += (this.halo[hi] + this.halo[hi + 1] + this.halo[hi + 2]) * (hBoost / 255);
+      const hr = this.halo[hi];
+      const hg = this.halo[hi + 1];
+      const hb = this.halo[hi + 2];
+      r += hr * hBoost;
+      g += hg * hBoost;
+      b += hb * hBoost;
+      lightEnergy += (hr + hg + hb) * (hBoost * (1 / 255));
     }
-    const q = (v: number) => Math.min(255, Math.max(40, Math.round(v / 8) * 8));
+    const qr = Math.min(255, Math.max(40, Math.round(r * 0.125) * 8));
+    const qg = Math.min(255, Math.max(40, Math.round(g * 0.125) * 8));
+    const qb = Math.min(255, Math.max(40, Math.round(b * 0.125) * 8));
     const glint = Math.min(1, lightEnergy * 0.45);
-    const alpha = (splash ? 0.16 + glint * 0.12 : 0.11 + glint * 0.11).toFixed(2);
-    return `rgba(${q(r)}, ${q(g)}, ${q(b)}, ${alpha})`;
+    const alphaCent = Math.round((splash ? 0.16 + glint * 0.12 : 0.11 + glint * 0.11) * 100);
+    const cacheKey = (qr >> 3) | ((qg >> 3) << 5) | ((qb >> 3) << 10) | (alphaCent << 15);
+    let style = this.rainStyleCache.get(cacheKey);
+    if (style === undefined) {
+      if (this.rainStyleCache.size >= 512) this.rainStyleCache.clear();
+      style = `rgba(${qr}, ${qg}, ${qb}, ${(alphaCent * 0.01).toFixed(2)})`;
+      this.rainStyleCache.set(cacheKey, style);
+    }
+    return style;
   }
 
   /** Half-resolution emissive halo buffer (`haloW * haloH * 3` floats, RGB in `0..255` before preset scaling). */
@@ -1835,16 +1915,18 @@ export class LightingEngine {
               seeds[dst] = Math.max(seeds[dst], IS_LITTLE_ENDIAN ? color & 255 : color >>> 24);
               seeds[dst + 1] = Math.max(seeds[dst + 1], (color >>> (IS_LITTLE_ENDIAN ? 8 : 16)) & 255);
               seeds[dst + 2] = Math.max(seeds[dst + 2], (color >>> (IS_LITTLE_ENDIAN ? 16 : 8)) & 255);
-            } else if (world && atlasBldId[i] < 0 && isHalogenPoolAt(world, wx, wy)) {
-              // Warm sodium-halogen street lamp pool, distinct from the cool median lights
-              seeds[dst] = Math.max(seeds[dst], 255);
-              seeds[dst + 1] = Math.max(seeds[dst + 1], 168);
-              seeds[dst + 2] = Math.max(seeds[dst + 2], 74);
-            } else if (world && atlasBldId[i] < 0 && isBoulevardStreetlightAt(world, wx, wy)) {
-              // Soft boulevard streetlight pool seed at regular spacing along medians
-              seeds[dst] = Math.max(seeds[dst], 115);
-              seeds[dst + 1] = Math.max(seeds[dst + 1], 185);
-              seeds[dst + 2] = Math.max(seeds[dst + 2], 235);
+            } else if (world && atlasBldId[i] < 0 && world.material[i] === CellMaterial.STREET) {
+              if (isHalogenPoolAt(world, wx, wy)) {
+                // Warm sodium-halogen street lamp pool, distinct from the cool median lights
+                seeds[dst] = Math.max(seeds[dst], 255);
+                seeds[dst + 1] = Math.max(seeds[dst + 1], 168);
+                seeds[dst + 2] = Math.max(seeds[dst + 2], 74);
+              } else if (isBoulevardStreetlightAt(world, wx, wy)) {
+                // Soft boulevard streetlight pool seed at regular spacing along medians
+                seeds[dst] = Math.max(seeds[dst], 115);
+                seeds[dst + 1] = Math.max(seeds[dst + 1], 185);
+                seeds[dst + 2] = Math.max(seeds[dst + 2], 235);
+              }
             }
           }
         }
@@ -1931,17 +2013,58 @@ export class LightingEngine {
     const qPuddleWet = qWet > 0 ? Math.round(puddleWetnessFor(qWet) * 64) / 64 : 0;
     if (preset) {
       this.activePreset = preset;
-      const key = [preset.id, ...preset.sunDir, preset.sunHeight, ...preset.sunColor,
-        preset.sunIntensity, ...preset.ambientColor, ...preset.voidAmbientColor,
-        preset.neonIntensity, preset.hazeAmount, preset.shadowReachScale, preset.shadowStrengthScale, qWet].join(",");
-      if (blending || key !== this.lastPresetKey || groundShadowMap !== this.lastGroundShadows) {
-        this.lastPresetKey = key;
+      const presetChanged =
+        blending ||
+        !this.hasLastPreset ||
+        groundShadowMap !== this.lastGroundShadows ||
+        this.lastQWet !== qWet ||
+        this.lastPresetId !== preset.id ||
+        this.lastSunDir0 !== preset.sunDir[0] ||
+        this.lastSunDir1 !== preset.sunDir[1] ||
+        this.lastSunDir2 !== preset.sunDir[2] ||
+        this.lastSunHeight !== preset.sunHeight ||
+        this.lastSunColor0 !== preset.sunColor[0] ||
+        this.lastSunColor1 !== preset.sunColor[1] ||
+        this.lastSunColor2 !== preset.sunColor[2] ||
+        this.lastSunIntensity !== preset.sunIntensity ||
+        this.lastAmb0 !== preset.ambientColor[0] ||
+        this.lastAmb1 !== preset.ambientColor[1] ||
+        this.lastAmb2 !== preset.ambientColor[2] ||
+        this.lastVoidAmb0 !== preset.voidAmbientColor[0] ||
+        this.lastVoidAmb1 !== preset.voidAmbientColor[1] ||
+        this.lastVoidAmb2 !== preset.voidAmbientColor[2] ||
+        this.lastNeonIntensity !== preset.neonIntensity ||
+        this.lastHazeAmount !== preset.hazeAmount ||
+        this.lastShadowReach !== preset.shadowReachScale ||
+        this.lastShadowStrength !== preset.shadowStrengthScale;
+      if (presetChanged) {
+        this.hasLastPreset = true;
+        this.lastPresetId = preset.id;
+        this.lastSunDir0 = preset.sunDir[0];
+        this.lastSunDir1 = preset.sunDir[1];
+        this.lastSunDir2 = preset.sunDir[2];
+        this.lastSunHeight = preset.sunHeight;
+        this.lastSunColor0 = preset.sunColor[0];
+        this.lastSunColor1 = preset.sunColor[1];
+        this.lastSunColor2 = preset.sunColor[2];
+        this.lastSunIntensity = preset.sunIntensity;
+        this.lastAmb0 = preset.ambientColor[0];
+        this.lastAmb1 = preset.ambientColor[1];
+        this.lastAmb2 = preset.ambientColor[2];
+        this.lastVoidAmb0 = preset.voidAmbientColor[0];
+        this.lastVoidAmb1 = preset.voidAmbientColor[1];
+        this.lastVoidAmb2 = preset.voidAmbientColor[2];
+        this.lastNeonIntensity = preset.neonIntensity;
+        this.lastHazeAmount = preset.hazeAmount;
+        this.lastShadowReach = preset.shadowReachScale;
+        this.lastShadowStrength = preset.shadowStrengthScale;
+        this.lastQWet = qWet;
         this.lastGroundShadows = groundShadowMap;
         this.roofSunShadow.fill(255);
         this.tileAmbientClean.fill(0);
       }
-    } else if (this.lastPresetKey !== "") {
-      this.lastPresetKey = "";
+    } else if (this.hasLastPreset) {
+      this.hasLastPreset = false;
       this.tileAmbientClean.fill(0);
       this.roofSunShadow.fill(255);
       terrainLightU32.fill(0);
@@ -2019,14 +2142,32 @@ export class LightingEngine {
       const ty1 = Math.min(chunksH - 1, Math.floor((l.y + R) / CHUNK_SIZE));
       const shadowCache = l.castsShadows && tx0 <= tx1 && ty0 <= ty1 ?
         this.shadowCacheFor(k, l, tx0, ty0, tx1, ty1) : undefined;
-      compiled[k] = {
-        ...l,
-        radiusSq: R * R,
-        invRadius: 1 / Math.max(1, R),
-        sourceBuilding: world.buildingAt[src] ?? -1,
-        sourceTower: world.towerAt[src] ?? -1,
-        shadowCache,
-      };
+      let entry = this.compiledPool[k];
+      if (!entry) {
+        entry = {
+          x: l.x, y: l.y, z: l.z, r: l.r, g: l.g, b: l.b,
+          radius: R, specular: l.specular, castsShadows: l.castsShadows,
+          shadowStrength: l.shadowStrength, priority: l.priority,
+          falloffPower: l.falloffPower, buildingId: l.buildingId, shadowMix: l.shadowMix,
+          radiusSq: R * R, invRadius: 1 / Math.max(1, R),
+          sourceBuilding: world.buildingAt[src] ?? -1,
+          sourceTower: world.towerAt[src] ?? -1,
+          shadowCache,
+        };
+        this.compiledPool[k] = entry;
+      } else {
+        entry.x = l.x; entry.y = l.y; entry.z = l.z;
+        entry.r = l.r; entry.g = l.g; entry.b = l.b;
+        entry.radius = R; entry.specular = l.specular;
+        entry.castsShadows = l.castsShadows; entry.shadowStrength = l.shadowStrength;
+        entry.priority = l.priority; entry.falloffPower = l.falloffPower;
+        entry.buildingId = l.buildingId; entry.shadowMix = l.shadowMix;
+        entry.radiusSq = R * R; entry.invRadius = 1 / Math.max(1, R);
+        entry.sourceBuilding = world.buildingAt[src] ?? -1;
+        entry.sourceTower = world.towerAt[src] ?? -1;
+        entry.shadowCache = shadowCache;
+      }
+      compiled[k] = entry;
       const isHi = k >= 32;
       const bit = 1 << (k & 31);
 
@@ -2070,7 +2211,8 @@ export class LightingEngine {
       atlasBldId,
     } = spriteCache;
     const { material, streetTier } = world;
-    const localLights: CompiledLight[] = [];
+    const localLights = this.localLightsScratch;
+    localLights.length = 0;
 
     const haloBoost = preset ? preset.neonIntensity * (0.46 / 255) : 0;
     const useHalo = Boolean(preset && preset.neonIntensity > 0.25 && this.haloW > 0);
@@ -2119,19 +2261,12 @@ export class LightingEngine {
       const nLocal = localLights.length;
       if (nLocal === 0 && !preset) continue;
       if (preset && nLocal === 0) {
-        const fluidTouchesTile =
-          useHalo &&
-          voidFluid &&
-          voidFluid.maxX >= voidFluid.minX &&
-          (tileIdx % chunksW) * CHUNK_SIZE + CHUNK_SIZE >= voidFluid.minX * voidFluid.cellSize - 4 &&
-          (tileIdx % chunksW) * CHUNK_SIZE <= (voidFluid.maxX + 1) * voidFluid.cellSize + 4 &&
-          ((tileIdx / chunksW) | 0) * CHUNK_SIZE + CHUNK_SIZE >= voidFluid.minY * voidFluid.cellSize - 4 &&
-          ((tileIdx / chunksW) | 0) * CHUNK_SIZE <= (voidFluid.maxY + 1) * voidFluid.cellSize + 4;
+        const tx = tileIdx % chunksW;
+        const ty = (tileIdx / chunksW) | 0;
+        const fluidTouchesTile = Boolean(useHalo && voidFluid && voidFluid.hasHotFluidInTile(tx, ty));
         // A tile whose halo still holds glow from fluid that has since drained must be re-shaded once
         const fluidLeftTile = useHalo && !fluidTouchesTile && this.tileHaloHadFluid[tileIdx] === 1;
         if (this.tileAmbientClean[tileIdx] && !fluidTouchesTile && !fluidLeftTile) {
-          const tx = tileIdx % chunksW;
-          const ty = (tileIdx / chunksW) | 0;
           const x0 = tx * CHUNK_SIZE;
           const y0 = ty * CHUNK_SIZE;
           const x1 = Math.min(w, x0 + CHUNK_SIZE);
@@ -2158,13 +2293,7 @@ export class LightingEngine {
       const y1 = Math.min(h, y0 + CHUNK_SIZE);
 
       if (useHalo) {
-        const fluidTouchesTile =
-          voidFluid &&
-          voidFluid.maxX >= voidFluid.minX &&
-          x1 >= voidFluid.minX * voidFluid.cellSize - 4 &&
-          x0 <= (voidFluid.maxX + 1) * voidFluid.cellSize + 4 &&
-          y1 >= voidFluid.minY * voidFluid.cellSize - 4 &&
-          y0 <= (voidFluid.maxY + 1) * voidFluid.cellSize + 4;
+        const fluidTouchesTile = Boolean(voidFluid && voidFluid.hasHotFluidInTile(tx, ty));
         if (!this.tileHaloClean[tileIdx] || fluidTouchesTile || this.tileHaloHadFluid[tileIdx] === 1) {
           this.bakeHaloTile(spriteCache, x0 >> 1, y0 >> 1, Math.ceil(x1 / 2), Math.ceil(y1 / 2), voidFluid);
           this.tileHaloClean[tileIdx] = 1;
@@ -2299,11 +2428,29 @@ export class LightingEngine {
           let bg = (baseAbgr >>> (IS_LITTLE_ENDIAN ? 8 : 16)) & 255;
           let bb = (baseAbgr >>> (IS_LITTLE_ENDIAN ? 16 : 8)) & 255;
           if (qWet > 0 && !isEmissive) {
+            let wetAmt = 0;
+            let darkenScale = 0;
+            let satScale = 0;
             if (localWet > 0) {
-              [br, bg, bb] = applyWetAlbedo(br, bg, bb, localWet, isPuddle ? 0.34 : 0.25, isPuddle ? 0.28 : 0.22);
+              wetAmt = localWet;
+              darkenScale = isPuddle ? 0.34 : 0.25;
+              satScale = isPuddle ? 0.28 : 0.22;
             } else if (!isBuilding && (material[i] === CellMaterial.PARK || material[i] === CellMaterial.RECLAIMED)) {
               // Grass, crops, forest, and reclaimed soil darken slightly when wet but do not reflect
-              [br, bg, bb] = applyWetAlbedo(br, bg, bb, qWet, 0.14, 0.12);
+              wetAmt = qWet;
+              darkenScale = 0.14;
+              satScale = 0.12;
+            }
+            if (wetAmt > 0) {
+              const dark = 1 - wetAmt * darkenScale;
+              const mean = (br + bg + bb) * (1 / 3);
+              const sat = 1 + wetAmt * satScale;
+              const wr = Math.round((mean + (br - mean) * sat) * dark);
+              const wg = Math.round((mean + (bg - mean) * sat) * (dark + wetAmt * 0.015));
+              const wb = Math.round((mean + (bb - mean) * sat) * (dark + wetAmt * 0.045));
+              br = wr < 0 ? 0 : wr > 255 ? 255 : wr;
+              bg = wg < 0 ? 0 : wg > 255 ? 255 : wg;
+              bb = wb < 0 ? 0 : wb > 255 ? 255 : wb;
             }
           }
 

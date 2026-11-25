@@ -189,9 +189,71 @@ const WISP_COLORS = [
   "#3a145e",
 ] as const;
 
+const IS_LITTLE_ENDIAN = new Uint8Array(new Uint32Array([0x01020304]).buffer)[0] === 0x04;
+function packWispAbgr(hex: string): number {
+  const r = parseInt(hex.slice(1, 3), 16) & 0xff;
+  const g = parseInt(hex.slice(3, 5), 16) & 0xff;
+  const b = parseInt(hex.slice(5, 7), 16) & 0xff;
+  return IS_LITTLE_ENDIAN
+    ? ((255 << 24) | (b << 16) | (g << 8) | r) >>> 0
+    : ((r << 24) | (g << 16) | (b << 8) | 255) >>> 0;
+}
+const WISP_ABGR = Uint32Array.from(WISP_COLORS, packWispAbgr);
+
 let occupiedMask = new Uint8Array(0);
 const wispBucketX: number[][] = WISP_COLORS.map(() => []);
 const wispBucketY: number[][] = WISP_COLORS.map(() => []);
+
+let interiorCanvas: HTMLCanvasElement | null = null;
+let interiorCtx: CanvasRenderingContext2D | null = null;
+let interiorImage: ImageData | null = null;
+let interiorU32 = new Uint32Array(0);
+
+type PortalPolarCache = {
+  px: number;
+  py: number;
+  span: number;
+  side: number;
+  baseU: Float32Array;
+  swirlU: Float32Array;
+  baseV: Float32Array;
+};
+const portalPolarCaches = new Map<number, PortalPolarCache>();
+
+function getPortalPolarCache(id: number, px: number, py: number, maxReach: number): PortalPolarCache {
+  const span = Math.ceil(maxReach / 16) * 16 + 2;
+  const existing = portalPolarCaches.get(id);
+  if (existing && existing.px === px && existing.py === py && existing.span >= span) {
+    return existing;
+  }
+  if (portalPolarCaches.size > 16) portalPolarCaches.clear();
+  const side = span * 2 + 1;
+  const len = side * side;
+  const baseU = new Float32Array(len);
+  const swirlU = new Float32Array(len);
+  const baseV = new Float32Array(len);
+  const invTwoPi = 1 / Math.PI;
+  const ox = Math.floor(px) - span;
+  const oy = Math.floor(py) - span;
+  for (let ly = 0; ly < side; ly++) {
+    const dy = oy + ly - py;
+    const dy2 = dy * dy;
+    const row = ly * side;
+    for (let lx = 0; lx < side; lx++) {
+      const dx = ox + lx - px;
+      const r2 = dx * dx + dy2;
+      const r = Math.sqrt(r2);
+      const theta = Math.atan2(dy, dx);
+      const idx = row + lx;
+      baseU[idx] = theta * invTwoPi + Math.log(r + 1.0) * 0.4;
+      swirlU[idx] = (0.65 / (1.0 + r * 0.15)) * invTwoPi;
+      baseV[idx] = r * 0.05;
+    }
+  }
+  const built: PortalPolarCache = { px, py, span, side, baseU, swirlU, baseV };
+  portalPolarCaches.set(id, built);
+  return built;
+}
 
 function getOccupiedMask(size: number): Uint8Array {
   if (occupiedMask.length < size) {
@@ -278,12 +340,14 @@ export function computeVoidInterior(
   return pixels;
 }
 
-/** Paints the living Void interior directly onto a 2D canvas, batching by color with zero object allocations. */
+/** Paints the living Void interior directly onto a 2D canvas using a cached polar table
+ * and a single offscreen ImageData blit (falling back to color-batched fillRects for mock painters). */
 export function paintVoidInteriorDirect(
   c: Painter,
   world: VoidInteriorWorld,
   animTime: number,
   reduceEffects = false,
+  viewBounds?: { x0: number; y0: number; x1: number; y1: number },
 ): void {
   if (reduceEffects) return;
 
@@ -292,14 +356,47 @@ export function paintVoidInteriorDirect(
   const occupied = multiPortal ? getOccupiedMask(w * h) : null;
   const tile = starNestTile();
   const TILE = STARNEST_TILE_SIZE;
-  const invTwoPi = 1 / Math.PI;
   const uTime = animTime * 0.03;
   const vTime = animTime * 0.025;
 
-  for (let b = 0; b < WISP_COLORS.length; b++) {
-    wispBucketX[b].length = 0;
-    wispBucketY[b].length = 0;
+  const canBlit =
+    typeof document !== "undefined" &&
+    typeof document.createElement === "function" &&
+    typeof (c as Partial<CanvasRenderingContext2D>).drawImage === "function";
+
+  let u32: Uint32Array | null = null;
+  if (canBlit) {
+    if (!interiorCanvas) {
+      interiorCanvas = document.createElement("canvas");
+      interiorCtx = interiorCanvas.getContext("2d");
+    }
+    if (interiorCanvas && interiorCtx) {
+      if (interiorCanvas.width !== w || interiorCanvas.height !== h || !interiorImage) {
+        interiorCanvas.width = w;
+        interiorCanvas.height = h;
+        interiorImage = interiorCtx.createImageData(w, h);
+        interiorU32 = new Uint32Array(interiorImage.data.buffer);
+      }
+      u32 = interiorU32;
+    }
   }
+
+  if (!u32) {
+    for (let b = 0; b < WISP_COLORS.length; b++) {
+      wispBucketX[b].length = 0;
+      wispBucketY[b].length = 0;
+    }
+  }
+
+  const vx0 = viewBounds ? Math.max(0, Math.floor(viewBounds.x0) - 16) : 0;
+  const vy0 = viewBounds ? Math.max(0, Math.floor(viewBounds.y0) - 16) : 0;
+  const vx1 = viewBounds ? Math.min(w - 1, Math.ceil(viewBounds.x1) + 16) : w - 1;
+  const vy1 = viewBounds ? Math.min(h - 1, Math.ceil(viewBounds.y1) + 16) : h - 1;
+
+  let dirtyMinX = w;
+  let dirtyMinY = h;
+  let dirtyMaxX = -1;
+  let dirtyMaxY = -1;
 
   for (const p of world.portals) {
     if (!p.active) continue;
@@ -309,15 +406,22 @@ export function paintVoidInteriorDirect(
     const minR2 = minR * minR;
     const maxR2 = maxReach * maxReach;
 
-    const xMin = Math.max(0, Math.floor(p.x - maxReach));
-    const xMax = Math.min(w - 1, Math.ceil(p.x + maxReach));
-    const yMin = Math.max(0, Math.floor(p.y - maxReach));
-    const yMax = Math.min(h - 1, Math.ceil(p.y + maxReach));
+    const xMin = Math.max(vx0, Math.floor(p.x - maxReach));
+    const xMax = Math.min(vx1, Math.ceil(p.x + maxReach));
+    const yMin = Math.max(vy0, Math.floor(p.y - maxReach));
+    const yMax = Math.min(vy1, Math.ceil(p.y + maxReach));
+    if (xMin > xMax || yMin > yMax) continue;
+
+    const polar = getPortalPolarCache(p.id, p.x, p.y, maxReach);
+    const pOx = Math.floor(p.x) - polar.span;
+    const pOy = Math.floor(p.y) - polar.span;
+    const { side, baseU, swirlU, baseV } = polar;
 
     for (let py = yMin; py <= yMax; py++) {
       const dy = py - p.y;
       const dy2 = dy * dy;
       const row = py * w;
+      const pRow = (py - pOy) * side - pOx;
       for (let px = xMin; px <= xMax; px++) {
         const idx = row + px;
         if (world.material[idx] !== CellMaterial.VOID || (occupied && occupied[idx])) continue;
@@ -326,13 +430,9 @@ export function paintVoidInteriorDirect(
         const r2 = dx * dx + dy2;
         if (r2 <= minR2 || r2 >= maxR2) continue;
 
-        const r = Math.sqrt(r2);
-        const theta = Math.atan2(dy, dx);
-        const swirlAngle = theta + animTime * (0.65 / (1.0 + r * 0.15));
-        const logR = Math.log(r + 1.0);
-
-        const u = swirlAngle * invTwoPi + logR * 0.4 + uTime;
-        const v = r * 0.05 - vTime;
+        const pIdx = pRow + px;
+        const u = baseU[pIdx] + animTime * swirlU[pIdx] + uTime;
+        const v = baseV[pIdx] - vTime;
         const tx = ((u - Math.floor(u)) * TILE) | 0;
         const ty = ((v - Math.floor(v)) * TILE) | 0;
         const intensity = tile[ty * TILE + tx];
@@ -348,11 +448,33 @@ export function paintVoidInteriorDirect(
           } else {
             colorIdx = jitter % 3 === 0 ? 4 : 5;
           }
-          wispBucketX[colorIdx].push(px);
-          wispBucketY[colorIdx].push(py);
+          if (u32) {
+            u32[idx] = WISP_ABGR[colorIdx];
+            if (px < dirtyMinX) dirtyMinX = px;
+            if (px > dirtyMaxX) dirtyMaxX = px;
+            if (py < dirtyMinY) dirtyMinY = py;
+            if (py > dirtyMaxY) dirtyMaxY = py;
+          } else {
+            wispBucketX[colorIdx].push(px);
+            wispBucketY[colorIdx].push(py);
+          }
         }
       }
     }
+  }
+
+  if (u32) {
+    if (dirtyMaxX >= dirtyMinX && dirtyMaxY >= dirtyMinY && interiorCtx && interiorCanvas && interiorImage) {
+      const dw = dirtyMaxX - dirtyMinX + 1;
+      const dh = dirtyMaxY - dirtyMinY + 1;
+      interiorCtx.putImageData(interiorImage, 0, 0, dirtyMinX, dirtyMinY, dw, dh);
+      (c as CanvasRenderingContext2D).drawImage(interiorCanvas, dirtyMinX, dirtyMinY, dw, dh, dirtyMinX, dirtyMinY, dw, dh);
+      for (let py = dirtyMinY; py <= dirtyMaxY; py++) {
+        const row = py * w;
+        u32.fill(0, row + dirtyMinX, row + dirtyMaxX + 1);
+      }
+    }
+    return;
   }
 
   for (let b = 0; b < WISP_COLORS.length; b++) {
