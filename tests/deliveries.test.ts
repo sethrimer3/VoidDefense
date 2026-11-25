@@ -113,3 +113,34 @@ test("Placing a new furthest depot relinks existing depots", () => {
   const c = depot(3, 150, 0);
   assert.deepEqual(keys([a, b, c]), ["1>3", "2>3", "3>1"]);
 });
+
+test("Street paths across open pavement take one turn, and cars glide between ticks on one lane", async () => {
+  const { findStreetPath } = await import("../src/void/street-routes.ts");
+  const { deliveryCarPose } = await import("../src/void/deliveries.ts");
+  const sim = new VoidSim("tutorialBreach", "buildAndWatch", emptyTechWallet());
+  const { world } = sim;
+  for (let py = 200; py < 240; py++) {
+    for (let x = 40; x < 80; x++) {
+      const idx = world.grid.index(x, py);
+      world.material[idx] = CellMaterial.STREET;
+      world.streetTier[idx] = 1;
+      world.towerAt[idx] = -1;
+    }
+  }
+  const path = findStreetPath(world, 42, 202, 77, 237);
+  assert.ok(path);
+  assert.equal(path.length, 35 + 35 + 1, "still a shortest route");
+  let turns = 0;
+  for (let i = 2; i < path.length; i++) {
+    if (path[i].x - path[i - 1].x !== path[i - 1].x - path[i - 2].x) turns++;
+  }
+  assert.equal(turns, 1, "no staircase jogs across open pavement");
+
+  const route = {
+    key: "1>2", from: {} as PlacedTower, to: {} as PlacedTower, path, progress: 10, reverse: false,
+    retryAt: 0, holdUntil: 0, payout: 0, x: 0, y: 0, dx: 0, dy: 0, head: 10, rate: 3,
+  };
+  const poses = [0, 0.34, 0.67, 0.99].map((f) => deliveryCarPose(world, route, f)!);
+  assert.deepEqual(poses.map((p) => p.idx), [10, 11, 12, 12], "the car advances by wall time inside a tick");
+  assert.ok(poses.every((p) => p.ox === poses[0].ox && p.oy === poses[0].oy), "the 2-wide car keeps its lane on a straight");
+});

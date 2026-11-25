@@ -213,6 +213,11 @@ export class VoidSim {
     return true;
   }
 
+  /** How far (0..1) wall time has run into the next fixed tick, for smooth between-tick rendering. */
+  get tickFraction(): number {
+    return this.phase === "battle" ? Math.max(0, Math.min(1, this.acc / TICK_DT)) : 0;
+  }
+
   /** Advances the simulation by `dtSeconds` of foreground frame time.
    * Uses a bounded fixed-step accumulator (max 0.25s per frame) so visual
    * frame rate never changes combat outcome or Void expansion. */

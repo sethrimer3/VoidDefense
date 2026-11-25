@@ -92,7 +92,7 @@ import {
 } from "./void-fluid.ts";
 import { reflectionColor, SurfaceReflections } from "./reflections.ts";
 import { findStreetPath, isCityStreet, type StreetBfsScratch } from "./street-routes.ts";
-import { depotBoltPixels, depotLinks, type DeliveryRoute } from "./deliveries.ts";
+import { deliveryCarPose, depotLinks, laneOffset, tripHeading, type DeliveryRoute } from "./deliveries.ts";
 import { streetFireFlicker } from "./street-fires.ts";
 import { CITY_DETAIL_COLORS, cityDetailAt, halogenLampStanding, halogenLamps } from "./city-details.ts";
 import { STREET_GLOW_COLORS, streetGlowAt } from "./street-glow.ts";
@@ -210,11 +210,14 @@ export interface BuildingDoor {
 
 /** Delivery car light-trail length in world pixels. */
 const DELIVERY_TRAIL_LEN = 12;
-/** Depot bolt timing: the bolt races out over `GROW`, crackles until `STRIKE`, then fades over `FADE` to its rest opacity. */
-const DEPOT_BOLT_GROW_S = 0.16;
-const DEPOT_BOLT_STRIKE_S = 0.45;
-const DEPOT_BOLT_FADE_S = 0.9;
-/** A settled depot link stays as a faint glowing trace at this opacity. */
+/** Depot beam: a Tron light pulse runs along the street route from depot A to B at `SPEED` px/s (each
+ * leg clamped to `LEG_MIN..LEG_MAX` s), pauses `GAP` s, then runs back from B to A. Each lit pixel
+ * fades over `WALL` s behind the head, down to the link's rest opacity. */
+const DEPOT_BEAM_SPEED = 900;
+const DEPOT_BEAM_LEG_MIN_S = 0.22;
+const DEPOT_BEAM_LEG_MAX_S = 0.7;
+const DEPOT_BEAM_GAP_S = 0.08;
+const DEPOT_BEAM_WALL_S = 0.16;
 export const DEPOT_LINK_REST_ALPHA = 0.05;
 
 /** Whole-pixel bodies for street fire props (3 columns x 2 rows; trash cans use the first 2 columns). */
@@ -400,9 +403,11 @@ export class VoidRenderer {
   // Tron light cycle trails along streets connecting random buildings across the map
   private buildingDoors: BuildingDoor[] = [];
   private cycles: TronCycle[] = [];
-  /** When each live depot link last fired its bolt (seconds of wall-clock time), keyed `from>to`. */
-  private depotLinkFired = new Map<string, number>();
-  private depotBoltCache = new Map<string, { x: number; y: number }[]>();
+  /** Directed depot link keys seen last frame, so a new link retriggers its pair's beam. */
+  private depotLinkKeys = new Set<string>();
+  /** Beam run per linked depot pair (`lo|hi` uids): when it started (wall-clock seconds, null while
+   * waiting for a street route) and the street path it runs, oriented from the depot that fires first. */
+  private depotBeams = new Map<string, { firstUid: number; started: number | null; path: { x: number; y: number }[] | null }>();
   private cyclesWorld: VoidWorld | null = null;
   private bfsScratch: StreetBfsScratch | null = null;
   private lastTimeMs = 0;
@@ -682,97 +687,132 @@ export class VoidRenderer {
     }
   }
 
-  /** Draws a 2x2 orange Tron delivery car with a long fading light trail and a bright street glow. */
+  /** Draws a 2x2 orange Tron delivery car with a long fading light trail and a bright street glow. The
+   * car sits `frac` of the way into the next sim tick so it glides at an even pace between 30 Hz ticks,
+   * and each trail pixel takes the lane of its own heading so corners stay on the street. */
   private paintDeliveryCar(
     world: VoidWorld,
     c: CanvasRenderingContext2D,
     car: DeliveryRoute,
+    frac: number,
     inner: string,
     outer: string,
   ): void {
     const path = car.path;
-    if (!path) return;
-    const { x, y, dx, dy } = car;
-    // Across-axis offset: the second lane pixel of the 2-wide car, on whichever side is street
-    let ox = dy !== 0 ? 1 : 0;
-    let oy = dx !== 0 || dy === 0 ? 1 : 0;
-    if (!isCityStreet(world, x + ox, y + oy, true)) { ox = -ox; oy = -oy; }
+    const pose = deliveryCarPose(world, car, frac);
+    if (!path || !pose) return;
+    const { x, y, ox, oy, idx } = pose;
     this.paintVehicleSpill(world, x, y, inner, outer);
     this.paintVehicleSpill(world, x + ox, y + oy, inner, outer);
     const step = car.reverse ? 1 : -1;
+    const laneAt = (i: number, p: { x: number; y: number }) => {
+      const hd = tripHeading(path, i, car.reverse);
+      return laneOffset(world, p.x, p.y, hd.dx, hd.dy);
+    };
     c.globalCompositeOperation = "lighter";
     for (let t = 2; t <= DELIVERY_TRAIL_LEN + 1; t++) {
-      const p = path[car.head + step * t];
+      const i = idx + step * t;
+      const p = path[i];
       if (!p) break;
+      const lane = laneAt(i, p);
       const a = (1 - (t - 1) / (DELIVERY_TRAIL_LEN + 1)) * 0.85;
       c.fillStyle = `rgba(255, 128, 26, ${a.toFixed(3)})`;
       c.fillRect(p.x, p.y, 1, 1);
-      c.fillRect(p.x + ox, p.y + oy, 1, 1);
+      c.fillRect(p.x + lane.ox, p.y + lane.oy, 1, 1);
     }
     c.globalCompositeOperation = "source-over";
-    const back = path[car.head + step] ?? { x: x - dx, y: y - dy };
-    c.fillStyle = "#ff7a14";
-    c.fillRect(back.x, back.y, 1, 1);
-    c.fillRect(back.x + ox, back.y + oy, 1, 1);
+    const back = path[idx + step];
+    if (back) {
+      const lane = laneAt(idx + step, back);
+      c.fillStyle = "#ff7a14";
+      c.fillRect(back.x, back.y, 1, 1);
+      c.fillRect(back.x + lane.ox, back.y + lane.oy, 1, 1);
+    }
     c.fillStyle = "#ffd28a";
     c.fillRect(x, y, 1, 1);
     c.fillRect(x + ox, y + oy, 1, 1);
   }
 
-  /** Fires a crisp whole-pixel bolt along every new depot link, then leaves it as a 5% glowing trace. */
+  /** Depot links: when a link appears, a crisp Tron light pulse runs along the street route from one
+   * depot to the other, then straight back, leaving a faint glowing trace on the route while the link lives. */
   private paintDepotLinks(sim: VoidSim, c: CanvasRenderingContext2D, now: number): void {
     const links = depotLinks(sim.combat.towers);
-    const live = new Set<string>();
+    const keys = new Set<string>();
+    const livePairs = new Set<string>();
     for (const link of links) {
-      live.add(link.key);
-      if (!this.depotLinkFired.has(link.key)) this.depotLinkFired.set(link.key, now);
+      keys.add(link.key);
+      const pair = link.from.uid < link.to.uid ? `${link.from.uid}|${link.to.uid}` : `${link.to.uid}|${link.from.uid}`;
+      livePairs.add(pair);
+      if (!this.depotLinkKeys.has(link.key)) this.depotBeams.set(pair, { firstUid: link.from.uid, started: null, path: null });
     }
-    for (const key of this.depotLinkFired.keys()) if (!live.has(key)) this.depotLinkFired.delete(key);
-    if (this.depotBoltCache.size > 256) this.depotBoltCache.clear();
-    if (links.length === 0) return;
+    this.depotLinkKeys = keys;
+    for (const pair of this.depotBeams.keys()) if (!livePairs.has(pair)) this.depotBeams.delete(pair);
+    if (this.depotBeams.size === 0) return;
+
+    const routes = sim.deliveries.routes;
     c.globalCompositeOperation = "lighter";
-    for (const link of links) {
-      const age = this.reduceEffects ? 99 : now - (this.depotLinkFired.get(link.key) ?? now);
-      const { from, to } = link;
-      const striking = age < DEPOT_BOLT_STRIKE_S;
-      // While striking the bolt re-forks every 70 ms like lightning; afterwards it settles into one trace.
-      const variant = striking ? 1 + Math.floor(age / 0.07) : 0;
-      const cacheKey = `${link.key}|${from.x},${from.y}|${to.x},${to.y}|${variant}`;
-      let px = this.depotBoltCache.get(cacheKey);
-      if (!px) {
-        px = depotBoltPixels(from.x + from.w * 0.5 - 0.5, from.y + from.h * 0.5 - 0.5,
-          to.x + to.w * 0.5 - 0.5, to.y + to.h * 0.5 - 0.5, from.uid * 7919 + to.uid * 104729 + variant * 31);
-        this.depotBoltCache.set(cacheKey, px);
+    for (const [pair, beam] of this.depotBeams) {
+      const [lo, hi] = pair.split("|").map(Number);
+      const route = routes.find((r) => r.path && ((r.from.uid === lo && r.to.uid === hi) || (r.from.uid === hi && r.to.uid === lo)));
+      // Faint rest trace along the street route the link's cars drive
+      if (route?.path) {
+        c.fillStyle = `rgba(255, 150, 52, ${DEPOT_LINK_REST_ALPHA})`;
+        for (const p of route.path) c.fillRect(p.x, p.y, 1, 1);
       }
-      const grow = Math.min(1, age / DEPOT_BOLT_GROW_S);
-      const fade = age <= DEPOT_BOLT_STRIKE_S ? 1 :
-        Math.max(0, 1 - (age - DEPOT_BOLT_STRIKE_S) / DEPOT_BOLT_FADE_S) ** 2;
-      const alpha = DEPOT_LINK_REST_ALPHA + (1 - DEPOT_LINK_REST_ALPHA) * fade;
-      const count = Math.max(1, Math.ceil(px.length * grow));
-      // Soft glow on the four neighbours, then the crisp core on top
-      c.fillStyle = `rgba(255, 106, 18, ${(alpha * 0.32).toFixed(3)})`;
-      for (let i = 0; i < count; i++) {
-        const p = px[i];
-        c.fillRect(p.x - 1, p.y, 1, 1);
-        c.fillRect(p.x + 1, p.y, 1, 1);
-        c.fillRect(p.x, p.y - 1, 1, 1);
-        c.fillRect(p.x, p.y + 1, 1, 1);
+      if (this.reduceEffects) continue;
+      if (beam.started === null) {
+        // Wait for the street search (one route per sim tick) before firing.
+        if (!route?.path) continue;
+        beam.started = now;
+        beam.path = route.from.uid === beam.firstUid ? route.path.slice() : route.path.slice().reverse();
       }
-      c.fillStyle = striking ? `rgba(255, 214, 150, ${alpha.toFixed(3)})` : `rgba(255, 150, 52, ${alpha.toFixed(3)})`;
-      for (let i = 0; i < count; i++) c.fillRect(px[i].x, px[i].y, 1, 1);
-      // Leading spark at the bolt's head while it travels, and an impact flare on arrival
-      if (striking) {
-        const head = px[count - 1];
-        c.fillStyle = "rgba(255, 246, 220, 0.95)";
-        c.fillRect(head.x, head.y, 1, 1);
-        if (grow >= 1) {
-          c.fillStyle = `rgba(255, 170, 70, ${(0.6 * (1 - age / DEPOT_BOLT_STRIKE_S)).toFixed(3)})`;
-          c.fillRect(head.x - 2, head.y, 5, 1);
-          c.fillRect(head.x, head.y - 2, 1, 5);
-        }
-      }
+      const path = beam.path!;
+      const age = now - beam.started;
+      const leg = Math.max(DEPOT_BEAM_LEG_MIN_S, Math.min(DEPOT_BEAM_LEG_MAX_S, path.length / DEPOT_BEAM_SPEED));
+      if (age > leg * 2 + DEPOT_BEAM_GAP_S + DEPOT_BEAM_WALL_S) continue;
+      this.paintDepotBeamLeg(c, path, age, leg, false);
+      this.paintDepotBeamLeg(c, path, age - leg - DEPOT_BEAM_GAP_S, leg, true);
     }
     c.globalCompositeOperation = "source-over";
+  }
+
+  /** One leg of a depot beam `t` seconds after it set off: a white-hot whole-pixel head with a short
+   * fading light wall behind it, a soft glow on the pixels beside the core, and a flare where it lands. */
+  private paintDepotBeamLeg(
+    c: CanvasRenderingContext2D, path: readonly { x: number; y: number }[], t: number, leg: number, back: boolean,
+  ): void {
+    if (t < 0 || t > leg + DEPOT_BEAM_WALL_S) return;
+    const last = path.length - 1;
+    if (last < 1) return;
+    const head = Math.min(last, Math.floor((t / leg) * last));
+    const pxPerS = last / leg;
+    const tailLen = Math.ceil(pxPerS * DEPOT_BEAM_WALL_S);
+    const at = (k: number) => path[back ? last - k : k];
+    for (let k = Math.max(0, head - tailLen); k <= head; k++) {
+      // Seconds since the head passed this pixel; the head keeps glowing at the end of its leg until the wall fades.
+      const since = t - (k / last) * leg;
+      const glow = Math.max(0, 1 - since / DEPOT_BEAM_WALL_S);
+      if (glow <= 0) continue;
+      const p = at(k);
+      const q = at(Math.min(last, k + 1));
+      const sideX = q.y !== p.y ? 1 : 0;
+      const sideY = q.x !== p.x ? 1 : 0;
+      c.fillStyle = `rgba(255, 106, 18, ${(glow * glow * 0.3).toFixed(3)})`;
+      c.fillRect(p.x - sideX, p.y - sideY, 1, 1);
+      c.fillRect(p.x + sideX, p.y + sideY, 1, 1);
+      c.fillStyle = k >= head - 2 && t <= leg
+        ? "rgba(255, 246, 220, 0.95)"
+        : `rgba(255, ${Math.round(150 + 70 * glow)}, ${Math.round(52 + 90 * glow)}, ${(glow * 0.9).toFixed(3)})`;
+      c.fillRect(p.x, p.y, 1, 1);
+    }
+    // Arrival flare where the leg reaches the other depot's road
+    if (t >= leg) {
+      const fade = 1 - (t - leg) / DEPOT_BEAM_WALL_S;
+      const end = at(last);
+      c.fillStyle = `rgba(255, 170, 70, ${(0.65 * fade).toFixed(3)})`;
+      c.fillRect(end.x - 2, end.y, 5, 1);
+      c.fillRect(end.x, end.y - 2, 1, 5);
+    }
   }
 
   /** Draws each standing halogen lamp: a 4 px pole, an arm reaching over the road and a warm lamp head
@@ -2046,9 +2086,10 @@ export class VoidRenderer {
         if (vehicleVisible(p.x, p.y) && isCityStreet(world, p.x, p.y, true)) rawScene.fillRect(p.x, p.y, 1, 1);
       }
     }
+    const carFrac = sim.tickFraction;
     for (const car of sim.deliveries.routes) {
       if (!car.path || !vehicleVisible(car.x, car.y)) continue;
-      this.paintDeliveryCar(world, rawScene, car, amberInner, amberOuter);
+      this.paintDeliveryCar(world, rawScene, car, carFrac, amberInner, amberOuter);
     }
 
     const { w, h } = world.grid;
@@ -3257,7 +3298,7 @@ export class VoidRenderer {
       }
     }
 
-    // Delivery Depot links: a crisp orange Tron bolt fires whenever a link appears, then lingers as a faint glowing trace
+    // Delivery Depot links: a crisp Tron beam runs the street route A to B and back whenever a link appears, then a faint trace lingers
     this.paintDepotLinks(sim, rawScene, nowMs * 0.001);
 
     lap("towers");

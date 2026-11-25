@@ -18,6 +18,7 @@ import { hash, hash01 } from "./grid.ts";
 import { type Agent, CellMaterial, type FallingChunk, LandCover, SurfaceMaterial } from "./model.ts";
 import { valueNoise } from "./portal-noise.ts";
 import { streetFireFlicker } from "./street-fires.ts";
+import { deliveryCarPose } from "./deliveries.ts";
 import { CityDetail, cityDetailAt, halogenLampStanding, halogenLamps, halogenPoolCell, isHalogenPoolAt } from "./city-details.ts";
 import { STREET_GLOW_TINT, streetGlowSpillAt } from "./street-glow.ts";
 import type { VoidSim } from "./sim.ts";
@@ -991,13 +992,15 @@ export function collectSceneLights(
   {
     const carCap = DELIVERY_CAR_LIGHT_CAP[quality] ?? DELIVERY_CAR_LIGHT_CAP.high;
     let carLights = 0;
+    const frac = sim.tickFraction;
     for (const car of sim.deliveries.routes) {
       if (carLights >= carCap) break;
-      if (!car.path || !inView(car.x, car.y, 12)) continue;
+      const pose = deliveryCarPose(world, car, frac);
+      if (!pose || !inView(pose.x, pose.y, 12)) continue;
       carLights++;
       lights.push({
-        x: car.x + 0.5,
-        y: car.y + 0.5,
+        x: pose.x + 0.5 + pose.ox * 0.5,
+        y: pose.y + 0.5 + pose.oy * 0.5,
         z: 1.8,
         r: 1.55,
         g: 0.66,
