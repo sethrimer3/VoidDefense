@@ -55,7 +55,7 @@ See `docs/architecture/lighting.md` for the full lighting design:
 - Adapts the Star Nest volumetric raymarch fractal (Pablo Roman Andrioli; Sign99 `starNestBackground.ts`) into a toroidal 96×96 discrete field with 11 folding iterations and 8 raymarch steps.
 - Torus UV sampling is polar-mapped around active portals with Keplerian-like accretion swirl ($\propto 1 / (1 + 0.15r)$) and logarithmic depth coordinates.
 - Recolored along the cosmic Void spectrum: calm deep indigo/violet nebula beds (`#150726`–`#4c1c78`), restrained plum/magenta filaments (`#622296`–`#7d2eb8`), and subtle violet-cyan dust only at peak fractal ridges (`intensity > 0.88`).
-- Interior wisps (`computeVoidInterior`) draw behind portal cores (`intensity > 0.48`, `r > coreR + 1.8`) so the `#000000` black-hole silhouette, photon rim, reservoir gauge, and accretion arc remain crisp.
+- Interior wisps (`computeVoidInterior` / `paintVoidInteriorDirect`) draw behind portal cores (`intensity > 0.48`, `r > coreR + 1.8`) so the `#000000` black-hole silhouette, photon rim, reservoir gauge, and accretion arc remain crisp. `paintVoidInteriorDirect` clips to `viewBounds`, reuses per-portal cached polar tables, and composites wisps via a single dirty-rect offscreen `ImageData` blit.
 - Inward motion halts under Reduced Motion settings, freezing the fractal field in place without visual artifacts.
 
 ## Tech DAG & Magic Circles

@@ -1343,6 +1343,9 @@ export class LightingEngine {
   private tileVisited = new Uint8Array(0);
   private tileAmbientClean = new Uint8Array(0);
   private tileHaloClean = new Uint8Array(0);
+  /** Per-tile revision bumped whenever `bakeHaloTile` writes new values into a tile. */
+  haloTileRevision = new Uint32Array(0);
+  private haloVersion = 0;
   /** 1 where a tile's halo was last baked with Void fluid glow in it, so it is re-baked once the fluid leaves. */
   private tileHaloHadFluid = new Uint8Array(0);
   private prevActiveTiles: number[] = [];
@@ -1442,6 +1445,7 @@ export class LightingEngine {
       this.tileVisited = new Uint8Array(tileCount);
       this.tileAmbientClean = new Uint8Array(tileCount);
       this.tileHaloClean = new Uint8Array(tileCount);
+      this.haloTileRevision = new Uint32Array(tileCount);
       this.tileHaloHadFluid = new Uint8Array(tileCount);
       this.prevActiveTiles.length = 0;
       this.curActiveTiles.length = 0;
@@ -2231,6 +2235,8 @@ export class LightingEngine {
     let putMaxY = 0;
     let hasTerrain = false;
     let hasBuilding = false;
+    let putTerrain = false;
+    let putBuilding = false;
 
     const sunDir = preset ? preset.sunDir : [SUN_DIRECTION.x, SUN_DIRECTION.y, SUN_DIRECTION.z];
     const reachScale = preset ? preset.shadowReachScale : 1;
@@ -2297,6 +2303,7 @@ export class LightingEngine {
         if (!this.tileHaloClean[tileIdx] || fluidTouchesTile || this.tileHaloHadFluid[tileIdx] === 1) {
           this.bakeHaloTile(spriteCache, x0 >> 1, y0 >> 1, Math.ceil(x1 / 2), Math.ceil(y1 / 2), voidFluid);
           this.tileHaloClean[tileIdx] = 1;
+          this.haloTileRevision[tileIdx] = ++this.haloVersion;
           this.tileHaloHadFluid[tileIdx] = fluidTouchesTile ? 1 : 0;
         }
       }
@@ -2328,6 +2335,7 @@ export class LightingEngine {
                 const b = (color >>> (IS_LITTLE_ENDIAN ? 16 : 8)) & 255;
                 terrainLightU32[i] = packRgba(Math.round(r * voidR), Math.round(g * voidG), Math.round(b * voidB));
                 hasTerrain = true;
+                putTerrain = true;
               } else {
                 terrainLightU32[i] = 0;
               }
@@ -2416,9 +2424,11 @@ export class LightingEngine {
             if (isBuilding) {
               buildingLightU32[i] = packed;
               hasBuilding = true;
+              putBuilding = true;
             } else {
               terrainLightU32[i] = packed;
               hasTerrain = true;
+              putTerrain = true;
             }
             continue;
           }
@@ -2510,6 +2520,7 @@ export class LightingEngine {
             const eb = toneMapChannel(bb * emBoost + ptB * 35 + 28);
             buildingLightU32[i] = packRgba(er, eg, eb);
             hasBuilding = true;
+            putBuilding = true;
             continue;
           }
 
@@ -2554,10 +2565,10 @@ export class LightingEngine {
       if (putMaxX > putMinX && putMaxY > putMinY) {
         const dw = putMaxX - putMinX;
         const dh = putMaxY - putMinY;
-        if (this.terrainCtx && this.terrainImageData) {
+        if (putTerrain && this.terrainCtx && this.terrainImageData) {
           this.terrainCtx.putImageData(this.terrainImageData, 0, 0, putMinX, putMinY, dw, dh);
         }
-        if (this.buildingCtx && this.buildingImageData) {
+        if (putBuilding && this.buildingCtx && this.buildingImageData) {
           this.buildingCtx.putImageData(this.buildingImageData, 0, 0, putMinX, putMinY, dw, dh);
         }
       }

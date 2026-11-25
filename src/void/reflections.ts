@@ -178,19 +178,41 @@ export function shadeReflection(
   const strength = Math.max(0, Math.min(1, rawStrength));
   const softness = 1 - settings.roughness * 0.35;
   const isWetGround = material === SurfaceMaterial.WET_PUDDLE || material === SurfaceMaterial.WET_SHEEN;
-  const blend = (shift: number, tint: number) => {
-    const baseC = channel(base, shift);
-    if (isWetGround) {
-      const refDelta = quantizeDelta((channel(reflected, shift) * tint * softness - baseC) * strength, 4);
-      const streakAdd = quantizeDelta((channel(glint, shift) + channel(streak, shift)) * wetScale, 4);
-      return Math.max(0, Math.min(255, baseC + refDelta + streakAdd));
-    }
-    return Math.min(255, Math.round(
-      baseC * (1 - strength) + channel(reflected, shift) * tint * strength * softness +
-      channel(glint, shift) + channel(streak, shift),
-    ));
-  };
-  return packElevAbgr(blend(RED, settings.tint[0]), blend(GREEN, settings.tint[1]), blend(BLUE, settings.tint[2]));
+  const t0 = settings.tint[0];
+  const t1 = settings.tint[1];
+  const t2 = settings.tint[2];
+  const bR = (base >>> RED) & 255;
+  const bG = (base >>> GREEN) & 255;
+  const bB = (base >>> BLUE) & 255;
+  const rR = (reflected >>> RED) & 255;
+  const rG = (reflected >>> GREEN) & 255;
+  const rB = (reflected >>> BLUE) & 255;
+  const gR = (glint >>> RED) & 255;
+  const gG = (glint >>> GREEN) & 255;
+  const gB = (glint >>> BLUE) & 255;
+  const sR = (streak >>> RED) & 255;
+  const sG = (streak >>> GREEN) & 255;
+  const sB = (streak >>> BLUE) & 255;
+  if (isWetGround) {
+    const outR = bR + Math.round(((rR * t0 * softness - bR) * strength) * 0.25) * 4 + Math.round(((gR + sR) * wetScale) * 0.25) * 4;
+    const outG = bG + Math.round(((rG * t1 * softness - bG) * strength) * 0.25) * 4 + Math.round(((gG + sG) * wetScale) * 0.25) * 4;
+    const outB = bB + Math.round(((rB * t2 * softness - bB) * strength) * 0.25) * 4 + Math.round(((gB + sB) * wetScale) * 0.25) * 4;
+    return packElevAbgr(
+      outR < 0 ? 0 : outR > 255 ? 255 : outR,
+      outG < 0 ? 0 : outG > 255 ? 255 : outG,
+      outB < 0 ? 0 : outB > 255 ? 255 : outB,
+    );
+  }
+  const invStr = 1 - strength;
+  const strSoft = strength * softness;
+  const outR = Math.round(bR * invStr + rR * t0 * strSoft + gR + sR);
+  const outG = Math.round(bG * invStr + rG * t1 * strSoft + gG + sG);
+  const outB = Math.round(bB * invStr + rB * t2 * strSoft + gB + sB);
+  return packElevAbgr(
+    outR > 255 ? 255 : outR,
+    outG > 255 ? 255 : outG,
+    outB > 255 ? 255 : outB,
+  );
 }
 
 type Samples = {
@@ -215,6 +237,9 @@ type WetSamples = {
   previousRay: Uint32Array;
   previousStreak: Uint32Array;
   glints: Uint32Array;
+  haloStreaks: Uint32Array;
+  haloScale: number;
+  haloRev: number;
 };
 
 type Tile = {
@@ -263,6 +288,9 @@ function wetSamples(
     previousRay: new Uint32Array(cells.length),
     previousStreak: new Uint32Array(cells.length),
     glints: new Uint32Array(cells.length),
+    haloStreaks: new Uint32Array(cells.length),
+    haloScale: -1,
+    haloRev: -1,
   };
 }
 
@@ -744,8 +772,13 @@ export class SurfaceReflections {
         for (const source of wetSample.sources) wetSourceRevision = Math.max(wetSourceRevision, lighting.surfaceTileRevision[source]);
         const rippleTickChanged = quality === "high" && wetSample.hasMirrorHits && tile.wetRipplePhase !== ripplePhase;
         tile.wetRipplePhase = ripplePhase;
+        const haloRevCur = lighting.haloTileRevision[tileIndex] | 0;
+        const haloRevNorth = ty > 0 ? (lighting.haloTileRevision[tileIndex - chunksW] | 0) : 0;
+        const maxHaloRev = haloRevCur > haloRevNorth ? haloRevCur : haloRevNorth;
+        const haloChanged = haloStreakScale !== wetSample.haloScale || maxHaloRev !== wetSample.haloRev;
         const wetRemainsClean =
           !wetSkyChanged &&
+          !haloChanged &&
           !hasWetStreak &&
           !tile.hadWetStreak &&
           !rippleTickChanged &&
@@ -754,7 +787,41 @@ export class SurfaceReflections {
         tile.wetRevision = wetSourceRevision;
         if (wetRemainsClean) continue;
 
+        if (haloChanged) {
+          wetSample.haloScale = haloStreakScale;
+          wetSample.haloRev = maxHaloRev;
+          const hs = wetSample.haloStreaks;
+          if (haloStreakScale <= 0) {
+            hs.fill(0);
+          } else {
+            for (let k = 0; k < wetSample.cells.length; k++) {
+              const i = wetSample.cells[k];
+              const x = i % w;
+              const y = (i / w) | 0;
+              const hx = Math.min(haloW - 1, x >> 1);
+              const hy1 = Math.max(0, (y - 3) >> 1);
+              const hy2 = Math.max(0, (y - 6) >> 1);
+              const hy3 = Math.max(0, (y - 10) >> 1);
+              const hi1 = (hy1 * haloW + hx) * 3;
+              const hi2 = (hy2 * haloW + hx) * 3;
+              const hi3 = (hy3 * haloW + hx) * 3;
+              const kGain = (wetSample.isPuddle[k] === 1 ? 1.25 : 0.85) * haloStreakScale;
+              const hr = (halo[hi1] * 0.68 + halo[hi2] * 0.46 + halo[hi3] * 0.26) * kGain;
+              const hg = (halo[hi1 + 1] * 0.68 + halo[hi2 + 1] * 0.46 + halo[hi3 + 1] * 0.26) * kGain;
+              const hb = (halo[hi1 + 2] * 0.68 + halo[hi2 + 2] * 0.46 + halo[hi3 + 2] * 0.26) * kGain;
+              hs[k] = hr + hg + hb > 5
+                ? packElevAbgr(
+                    Math.min(255, Math.round(hr)),
+                    Math.min(255, Math.round(hg)),
+                    Math.min(255, Math.round(hb)),
+                  )
+                : 0;
+            }
+          }
+        }
+
         let wetChanged = false;
+        const haloStreaks = wetSample.haloStreaks;
         for (let k = 0; k < wetSample.cells.length; k++) {
           const i = wetSample.cells[k];
           const isPuddle = wetSample.isPuddle[k] === 1;
@@ -806,24 +873,15 @@ export class SurfaceReflections {
             : Math.max(0.22, 1 - mirrorDepth / (MAX_ELEVATION_PX + 3));
           const base = terrainLightU32[i] || baseTerrain[i];
           let streak = this.streaks.size ? this.streaks.get(i) ?? 0 : 0;
-          if (haloStreakScale > 0) {
-            // Reuse the half-res emissive halo buffer to cast vertical neon streaks onto wet pavement south of storefronts
-            const hx = Math.min(haloW - 1, x >> 1);
-            const hy1 = Math.max(0, (y - 3) >> 1);
-            const hy2 = Math.max(0, (y - 6) >> 1);
-            const hy3 = Math.max(0, (y - 10) >> 1);
-            const hi1 = (hy1 * haloW + hx) * 3;
-            const hi2 = (hy2 * haloW + hx) * 3;
-            const hi3 = (hy3 * haloW + hx) * 3;
-            const kGain = (isPuddle ? 1.25 : 0.85) * haloStreakScale;
-            const hr = (halo[hi1] * 0.68 + halo[hi2] * 0.46 + halo[hi3] * 0.26) * kGain;
-            const hg = (halo[hi1 + 1] * 0.68 + halo[hi2 + 1] * 0.46 + halo[hi3 + 1] * 0.26) * kGain;
-            const hb = (halo[hi1 + 2] * 0.68 + halo[hi2 + 2] * 0.46 + halo[hi3 + 2] * 0.26) * kGain;
-            if (hr + hg + hb > 5) {
+          const hStreak = haloStreaks[k];
+          if (hStreak !== 0) {
+            if (streak === 0) {
+              streak = hStreak;
+            } else {
               streak = packElevAbgr(
-                Math.min(255, channel(streak, RED) + Math.round(hr)),
-                Math.min(255, channel(streak, GREEN) + Math.round(hg)),
-                Math.min(255, channel(streak, BLUE) + Math.round(hb)),
+                Math.min(255, ((streak >>> RED) & 255) + ((hStreak >>> RED) & 255)),
+                Math.min(255, ((streak >>> GREEN) & 255) + ((hStreak >>> GREEN) & 255)),
+                Math.min(255, ((streak >>> BLUE) & 255) + ((hStreak >>> BLUE) & 255)),
               );
             }
           }

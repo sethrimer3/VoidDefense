@@ -62,8 +62,9 @@ All world surfaces—terrain, buildings, placed towers, and infantry—generate 
 ## 5. Incremental Tiled Cache & Performance Budgets
 
 - **16×16 Tiled Cache (`CHUNK_SIZE = 16`):**
-  - `LightingEngine.syncChunks` and `BuildingSpriteCache.syncAtlasGbuffer` rebuild terrain normals, heights, occluder elevations, roof sun shadows, and building G-buffer rects **only** for dirtied 16×16 chunks (with a 2-pixel Sobel seam border).
+  - `VoidRenderer.syncDirtyChunks` separates geometry-dirty chunks (where `material`, `landCover`, `buildingAt`, `columnFloors`, or `towerAt` changed) from color-only paint-dirty chunks (such as corruption stains or HP cracks). `LightingEngine.syncChunks` and `SurfaceReflections.begin` only rebuild terrain normals, caster heights, roof sun shadows, shadow-cache revisions, halo tiles, and reflection ray geometry for geometry-dirty chunks (plus chunks overlapped by `BuildingSpriteCache.lastDirtyRects`), while color-only chunks invalidate only `tileAmbientClean`.
   - `LightingEngine.syncMovingCasters` clears and restamps only the sparse cells occupied by moving units and falling chunks.
+  - `VoidFluidGrid` maintains a per-16×16-tile hot-fluid mask (`hasHotFluidInTile`, including the 4-px blur margin) so `bakeHaloTile` only re-bakes tiles with hot emissive fluid rather than the entire fluid bounding box, and bumps `haloTileRevision` per tile so wet-ground halo streaks in `SurfaceReflections` are cached per tile and only recomputed when the tile's halo actually changes.
 - **64-Bit Tile Light Binning:**
   - Point lights are culled only once their influence clears the viewport margin. They are binned into visible 16×16 tiles using 64-bit bitmasks (`tileLightsLo`, `tileLightsHi`).
   - Ambient tiles retain both their CPU pixels and canvas pixels when they leave the viewport. Tiles shade before first use, after terrain or projected atlas edits, and after point lights leave their tile. Exact preset parameters invalidate all ambient validity flags, and each blend frame invalidates them again. The viewport controls which world tiles are needed and leaves their pixel mapping intact.
