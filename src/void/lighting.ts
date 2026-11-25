@@ -12,6 +12,7 @@ import {
   getLandmarkBuildingIds,
   MAX_ELEVATION_PX,
   TOWER_ELEVATION_PX,
+  towerRoofElevation,
 } from "./elevation.ts";
 import { hash, hash01 } from "./grid.ts";
 import { type Agent, CellMaterial, type FallingChunk, LandCover, SurfaceMaterial } from "./model.ts";
@@ -1030,7 +1031,7 @@ export function collectSceneLights(
     lights.push({
       x: cx,
       y: cy,
-      z: tElev + 3.2,
+      z: tElev + towerRoofElevation(world, t, buildingHeight) + 3.2,
       r: 1.38 * boost,
       g: 0.58 * boost,
       b: 0.11 * boost,
@@ -1562,7 +1563,12 @@ export class LightingEngine {
         } else {
           this.groundElev[idx] = tGround;
         }
-        if (towerAt[idx] >= 0) this.groundElev[idx] = Math.max(this.groundElev[idx], tElev);
+        if (towerAt[idx] >= 0) {
+          // Rooftop turrets rise from their roof, street structures from the ground.
+          this.groundElev[idx] = bId >= 0 && this.groundElev[idx] > 0
+            ? this.groundElev[idx] + tElev
+            : Math.max(this.groundElev[idx], tElev);
+        }
       }
     }
   }

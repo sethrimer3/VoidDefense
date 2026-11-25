@@ -23,7 +23,8 @@ import { type VoidSave } from "./save.ts";
 import { VoidSim } from "./sim.ts";
 import { VoidTechTreeView } from "./tech/tech-ui.ts";
 import { availableCurrencies, totalEarnedSparks } from "./tech/wallet.ts";
-import { STRIKE_SPECS, TOWER_SPECS } from "./towers.ts";
+import { STREET_LEVEL_TOWERS, STRIKE_SPECS, TOWER_SPECS, canMountOnRoof, ROOFTOP_RANGE_MULT } from "./towers.ts";
+import { roofCellUnderPointer } from "./elevation.ts";
 import { TowerMenuController, type TowerMenuTarget } from "./tower-menu.ts";
 import { installScrollArrows } from "../ui/scroll-arrows.ts";
 
@@ -157,6 +158,13 @@ function paintCardIcon(canvas: HTMLCanvasElement, kind: string): void {
   }
 }
 
+
+/** Palette hint naming where a structure can be built. */
+function placementHint(type: TowerTypeId): string {
+  return STREET_LEVEL_TOWERS.has(type)
+    ? "Street level only."
+    : `Street level or rooftops (+${Math.round((ROOFTOP_RANGE_MULT - 1) * 100)}% range on a roof).`;
+}
 export class VoidApp {
   private tab: VoidTab = "battle";
   sim: VoidSim;
@@ -749,6 +757,24 @@ export class VoidApp {
     window.addEventListener("pointercancel", (e) => finishPaletteDrag(e, true));
   }
 
+  /** Footprint origin for placing `type` under pointer cell `(cx, cy)`. Turrets aimed at a raised
+   * roof land on that roof (the pointer sees the roof drawn above its footprint), nudged inside the
+   * building's bounds so a tap near the edge still fits; everything else lands at street level. */
+  private towerOriginAt(type: TowerTypeId, cx: number, cy: number): { x: number; y: number } {
+    const spec = TOWER_SPECS[type];
+    let x = cx - Math.floor(spec.w / 2);
+    let y = cy - Math.floor(spec.h / 2);
+    if (!canMountOnRoof(type)) return { x, y };
+    const roof = roofCellUnderPointer(this.sim.world, cx, cy, this.renderer.buildingHeight);
+    if (!roof) return { x, y };
+    const b = this.sim.world.buildings[roof.buildingId];
+    x = roof.x - Math.floor(spec.w / 2);
+    y = roof.y - Math.floor(spec.h / 2);
+    if (b && b.w >= spec.w) x = Math.min(Math.max(x, b.x), b.x + b.w - spec.w);
+    if (b && b.h >= spec.h) y = Math.min(Math.max(y, b.y), b.y + b.h - spec.h);
+    return { x, y };
+  }
+
   private updateHover(e: PointerEvent): void {
     const { fx, fy, cx, cy } = this.renderer.toCell(e.clientX, e.clientY);
     if (this.activeTool.kind !== "none" && this.pointers.has(e.pointerId)) {
@@ -758,9 +784,7 @@ export class VoidApp {
     }
 
     if (this.activeTool.kind === "placeTower") {
-      const spec = TOWER_SPECS[this.activeTool.type];
-      const tx = cx - Math.floor(spec.w / 2);
-      const ty = cy - Math.floor(spec.h / 2);
+      const { x: tx, y: ty } = this.towerOriginAt(this.activeTool.type, cx, cy);
       const valid =
         this.sim.canModifyTowers() &&
         this.sim.supplies >= this.sim.towerPrice(this.activeTool.type) &&
@@ -799,9 +823,7 @@ export class VoidApp {
     const { fx, fy, cx, cy } = this.renderer.toCell(e.clientX, e.clientY);
 
     if (this.activeTool.kind === "placeTower") {
-      const spec = TOWER_SPECS[this.activeTool.type];
-      const tx = cx - Math.floor(spec.w / 2);
-      const ty = cy - Math.floor(spec.h / 2);
+      const { x: tx, y: ty } = this.towerOriginAt(this.activeTool.type, cx, cy);
       const placed = this.sim.placeTower(this.activeTool.type, tx, ty);
       if (placed) {
         this.soundEngine.playSfx("towerPlace");
@@ -937,7 +959,7 @@ export class VoidApp {
               return `
                 <button type="button" class="void-pal-btn ${active ? "selected" : ""}" data-pick-tower="${type}" ${
                   lockedByMode ? "disabled" : ""
-                } title="${spec.name}: ${spec.description} (Drag onto board or click then click board)">
+                } title="${spec.name}: ${spec.description} ${placementHint(type)} (Drag onto board or click then click board)">
                   <canvas class="void-card-icon" width="20" height="20" data-card-icon="${type}"></canvas>
                   <b>${spec.name}</b>
                   <small>${price} SUP</small>
@@ -1293,7 +1315,9 @@ export class VoidApp {
     const canUpgrade = upgCost > 0 && this.sim.canModifyTowers() && (this.save.settings.devMode || this.sim.supplies >= upgCost);
     const refund = this.sim.refundAmount(t.uid);
     const canModify = this.sim.canModifyTowers();
-    let extraInfo = "";
+    let extraInfo = t.roofBuildingId !== undefined
+      ? `<span>Rooftop: <b>+${Math.round((ROOFTOP_RANGE_MULT - 1) * 100)}% range</b></span>`
+      : "";
     let rotateBtn = "";
     let hasRotate = false;
     if (t.type === "deliveryDepot") {
@@ -1310,18 +1334,18 @@ export class VoidApp {
       const s = this.sim.combat.siphonStates.get(t.uid);
       if (s) {
         const pct = Math.round((s.stored / Math.max(1, s.maxStorage)) * 100);
-        extraInfo = `<span>Tank: <b>${pct}%</b> (${s.phase === "venting" ? `Venting ${s.ventRemaining.toFixed(1)}s` : "Intake"})</span>`;
+        extraInfo += `<span>Tank: <b>${pct}%</b> (${s.phase === "venting" ? `Venting ${s.ventRemaining.toFixed(1)}s` : "Intake"})</span>`;
       }
     } else if (t.type === "boundaryPrism") {
       const p = this.sim.combat.prismStates.get(t.uid);
       if (p) {
         const deg = Math.round((p.angleRad * 180) / Math.PI) % 360;
-        extraInfo = `<span>Plane: <b>${deg}°</b></span>`;
+        extraInfo += `<span>Plane: <b>${deg}°</b></span>`;
         rotateBtn = `<button type="button" data-insp-rotate class="secondary-btn">Rotate +45°</button>`;
         hasRotate = true;
       }
     } else if (t.type === "chronoCannon") {
-      extraInfo = `<span>Rewind: <b>${t.cooldown <= 0 ? "Ready" : `${t.cooldown.toFixed(1)}s`}</b></span>`;
+      extraInfo += `<span>Rewind: <b>${t.cooldown <= 0 ? "Ready" : `${t.cooldown.toFixed(1)}s`}</b></span>`;
     }
     const placing = this.activeTool.kind === "setReticle" && this.activeTool.towerUid === t.uid;
     const target: TowerMenuTarget = {

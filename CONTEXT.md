@@ -18,6 +18,8 @@ Domain terms used across code, UI, and documentation.
 - **Build Under Siege**: Real-time mode where players build, upgrade, and cast strikes while the Void expands.
 - **Build & Watch**: Planning mode where players spend a fixed starting budget during prep and then watch their defense run.
 - **Coach**: The 4-step guided onboarding callout shown on Sector 01 for new players.
+- **Rooftop Turret**: A turret mounted on a building's roof. It gains range from the height and crashes to the street, damaged, if the roof under it gives way.
+- **Street-Level Structure**: A structure that fields units, runs deliveries or works the ground (barracks, bays, depots, posts, mines); it is always built on streets, sidewalks, plazas or open ground, never on a building.
 
 ## Towers (16)
 

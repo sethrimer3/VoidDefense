@@ -324,6 +324,64 @@ export function cellTierElevation(
   return Math.max(1, Math.ceil(baseElev * 0.56));
 }
 
+/** Elevation in world pixels of the surviving roof at cell `idx` (0 at street level or once collapsed). */
+export function roofElevationAtCell(world: VoidWorld, idx: number, mode: BuildingHeightMode): number {
+  if (mode === "flat") return 0;
+  const bId = world.buildingAt[idx];
+  if (bId < 0 || world.material[idx] === CellMaterial.VOID) return 0;
+  const b = world.buildings[bId];
+  if (!b) return 0;
+  const floors = world.columnFloors ? world.columnFloors[idx] : b.height;
+  if (floors <= 0) return 0;
+  const x = world.grid.xOf(idx);
+  const y = world.grid.yOf(idx);
+  return cellTierElevation(b, x, y, elevationOf({ height: floors, archStyle: b.archStyle }, mode));
+}
+
+/** Height a rooftop turret stands at: the highest surviving roof tier under its footprint
+ * (0 for street-level structures). */
+export function towerRoofElevation(
+  world: VoidWorld,
+  t: Pick<PlacedTower, "x" | "y" | "w" | "h" | "roofBuildingId">,
+  mode: BuildingHeightMode,
+): number {
+  if (t.roofBuildingId === undefined || mode === "flat") return 0;
+  let best = 0;
+  for (let py = t.y; py < t.y + t.h; py++) {
+    for (let px = t.x; px < t.x + t.w; px++) {
+      if (!world.grid.inBounds(px, py)) continue;
+      const idx = world.grid.index(px, py);
+      if (world.buildingAt[idx] !== t.roofBuildingId) continue;
+      best = Math.max(best, roofElevationAtCell(world, idx, mode));
+    }
+  }
+  return best;
+}
+
+/** Maps a screen-space world pixel `(sx, sy)` to the footprint cell of the raised roof drawn there,
+ * or null when the pointer is over open ground. A pointer on a building's south facade resolves to
+ * that facade's roof edge, so tapping anywhere on a visible building targets its roof. */
+export function roofCellUnderPointer(
+  world: VoidWorld,
+  sx: number,
+  sy: number,
+  mode: BuildingHeightMode,
+): { x: number; y: number; buildingId: number } | null {
+  if (mode === "flat" || sx < 0 || sx >= world.grid.w) return null;
+  for (let dy = MAX_ELEVATION_PX; dy >= 1; dy--) {
+    const gy = sy + dy;
+    if (gy < 0 || gy >= world.grid.h) continue;
+    const idx = world.grid.index(sx, gy);
+    const e = roofElevationAtCell(world, idx, mode);
+    if (e <= 0) continue;
+    const bId = world.buildingAt[idx];
+    const southEdge = gy + 1 >= world.grid.h || world.buildingAt[idx + world.grid.w] !== bId ||
+      roofElevationAtCell(world, idx + world.grid.w, mode) <= 0;
+    if (e === dy || (southEdge && e > dy)) return { x: sx, y: gy, buildingId: bId };
+  }
+  return null;
+}
+
 export type BuildingPixelRun = {
   /** Offset from building `b.x` (`0 .. b.w - 1`). */
   dx: number;
@@ -1610,7 +1668,8 @@ export class BuildingSpriteCache {
     let bestTower: PlacedTower | null = null;
     for (let i = 0; i < towers.length; i++) {
       const t = towers[i];
-      if (px >= t.x && px < t.x + t.w && py >= t.y - tElev && py < t.y + t.h) {
+      const rElev = towerRoofElevation(world, t, mode);
+      if (px >= t.x && px < t.x + t.w && py >= t.y - tElev - rElev && py < t.y + t.h - rElev) {
         if (!bestTower || t.y + t.h >= bestTower.y + bestTower.h) {
           bestTower = t;
         }

@@ -324,6 +324,8 @@ export type PlacedTower = {
   lastDamageCause?: "enemy" | "masonry" | "void";
   /** Optional world-space focus/rally reticle set by the player. */
   focus?: { x: number; y: number };
+  /** Set while a turret is mounted on this building's roof; cleared if the roof gives way. */
+  roofBuildingId?: number;
 };
 
 export type WallBlueprint = {

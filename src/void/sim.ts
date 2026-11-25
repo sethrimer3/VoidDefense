@@ -20,7 +20,7 @@ import { StreetFires } from "./street-fires.ts";
 import { VoidPhysics } from "./physics.ts";
 import { computeCityIncomePerCycle, evaluateRunOutcome } from "./scoring.ts";
 import { evaluateTech, type EvaluatedTech, type VoidTechWallet } from "./tech/wallet.ts";
-import { STRIKE_SPECS, TOWER_SPECS, VoidCombatManager } from "./towers.ts";
+import { STRIKE_SPECS, TOWER_SPECS, VoidCombatManager, towerRange } from "./towers.ts";
 import { VoidField } from "./void-field.ts";
 import { VoidWorld } from "./world.ts";
 
@@ -302,7 +302,7 @@ export class VoidSim {
     for (let i = 0; i < this.combat.towers.length; i++) {
       const t = this.combat.towers[i];
       if (t.type === "countervoidHeart" && t.hp > 0) {
-        hearts.push({ x: t.x, y: t.y, range: TOWER_SPECS.countervoidHeart.range });
+        hearts.push({ x: t.x, y: t.y, range: towerRange(t) });
       }
     }
     this.voidField.stepCountervoidField(this.world, TICK_DT, hearts, this.tech);

@@ -29,6 +29,7 @@ import {
   elevationOf,
   MAX_ELEVATION_PX,
   TOWER_ELEVATION_PX,
+  towerRoofElevation,
 } from "./elevation.ts";
 import {
   blendTimeOfDayPresets,
@@ -96,7 +97,7 @@ import { depotBoltPixels, depotLinks, type DeliveryRoute } from "./deliveries.ts
 import { streetFireFlicker } from "./street-fires.ts";
 import { CITY_DETAIL_COLORS, cityDetailAt, halogenLampStanding, halogenLamps } from "./city-details.ts";
 import type { VoidSim } from "./sim.ts";
-import { STRIKE_SPECS, TOWER_SPECS } from "./towers.ts";
+import { STRIKE_SPECS, TOWER_SPECS, canMountOnRoof, footprintBuilding, towerRange } from "./towers.ts";
 import type { VoidWorld } from "./world.ts";
 
 export { findStreetPath, type StreetBfsScratch } from "./street-routes.ts";
@@ -537,6 +538,39 @@ export class VoidRenderer {
         : Math.min(60 + roofMargin, Math.max(ch - bh - 60, this.cam.y));
     this.cam.x = Math.round(this.cam.x);
     this.cam.y = Math.round(this.cam.y);
+  }
+
+  /** The roof a tower placement preview would stand on: building id (-1 at street level) and its elevation. */
+  private previewRoof(
+    world: VoidWorld,
+    preview: { type: TowerTypeId; x: number; y: number },
+  ): { id: number; elev: number } {
+    const spec = TOWER_SPECS[preview.type];
+    const id = canMountOnRoof(preview.type) ? footprintBuilding(world, preview.x, preview.y, spec.w, spec.h) : -1;
+    if (id < 0) return { id: -1, elev: 0 };
+    return {
+      id,
+      elev: towerRoofElevation(world, { x: preview.x, y: preview.y, w: spec.w, h: spec.h, roofBuildingId: id }, this.buildingHeight),
+    };
+  }
+
+  /** Whether a building south of rooftop turret `t` rises in front of it on screen. */
+  private rooftopTowerOccluded(world: VoidWorld, t: PlacedTower): boolean {
+    const { w, h } = world.grid;
+    const screenY = t.y + t.h - 1 - towerRoofElevation(world, t, this.buildingHeight);
+    for (let px = t.x; px < t.x + t.w; px += Math.max(1, t.w - 1)) {
+      let lastBId = -1;
+      for (let dy = 1; dy <= MAX_ELEVATION_PX; dy++) {
+        const gy = t.y + t.h - 1 + dy;
+        if (gy >= h || px < 0 || px >= w) break;
+        const bId = world.buildingAt[gy * w + px];
+        if (bId < 0 || bId === t.roofBuildingId || bId === lastBId) continue;
+        lastBId = bId;
+        const sp = this.spriteCache.getSprite(world, world.buildings[bId], this.buildingHeight, false);
+        if (sp.intactCount > 0 && screenY >= sp.y && screenY < sp.bottomY) return true;
+      }
+    }
+    return false;
   }
 
   /** Picks the topmost visible structure (tower or elevated building roof/facade) at client coordinates. */
@@ -1254,7 +1288,8 @@ export class VoidRenderer {
       }
       const tw = towerAt[cIdx];
       if (tw >= 0 && tw !== selfTower) {
-        elev = Math.max(elev, tElev);
+        // A rooftop turret rises from its roof; a street-level one from the ground.
+        elev = elev > 0 ? elev + tElev : tElev;
       }
       return elev;
     };
@@ -1885,6 +1920,7 @@ export class VoidRenderer {
         return reflectionColor([r * 255, g * 255, b * 255]);
       };
       for (const tower of combat.towers) {
+        if (tower.roofBuildingId !== undefined) continue;
         const y = tower.y + tower.h - 1;
         for (let z = 1; z <= towerRise; z++) {
           const color = z === towerRise ? TOWER_SPECS[tower.type].color : "#424657";
@@ -2354,7 +2390,7 @@ export class VoidRenderer {
       if (t.type === "shieldProjector") {
         const pool = combat.shieldPools.get(t.uid) ?? 0;
         if (pool > 5) {
-          const r = TOWER_SPECS.shieldProjector.range + sim.tech.shieldExtraRadius;
+          const r = towerRange(t, TOWER_SPECS.shieldProjector.range + sim.tech.shieldExtraRadius);
           c.strokeStyle = `rgba(72, 229, 255, ${Math.min(0.75, pool / 160)})`;
           c.lineWidth = 0.55;
           c.beginPath();
@@ -2365,7 +2401,7 @@ export class VoidRenderer {
         c.strokeStyle = "rgba(116, 148, 255, 0.38)";
         c.lineWidth = 0.42;
         c.beginPath();
-        c.arc(cx, cy, TOWER_SPECS.gravityAnchor.range, 0, Math.PI * 2);
+        c.arc(cx, cy, towerRange(t), 0, Math.PI * 2);
         c.stroke();
       } else if (t.type === "voidSiphon") {
         const s = combat.siphonStates.get(t.uid);
@@ -2423,7 +2459,7 @@ export class VoidRenderer {
         c.lineWidth = 0.45;
         c.setLineDash([2.2, 1.8]);
         c.beginPath();
-        c.arc(cx, cy, TOWER_SPECS.chronoCannon.range, -(sim.tick * 0.05) * 0.5, -(sim.tick * 0.05) * 0.5 + Math.PI * 1.75);
+        c.arc(cx, cy, towerRange(t), -(sim.tick * 0.05) * 0.5, -(sim.tick * 0.05) * 0.5 + Math.PI * 1.75);
         c.stroke();
         c.setLineDash([]);
       }
@@ -2721,13 +2757,15 @@ export class VoidRenderer {
 
     const drawTower = (t: (typeof combat.towers)[number]): void => {
       const spec = TOWER_SPECS[t.type];
-      const topY = t.y - tElev;
+      // Rooftop turrets stand on their roof's raised surface; street structures on the ground.
+      const rElev = towerRoofElevation(world, t, this.buildingHeight);
+      const topY = t.y - tElev - rElev;
       const centerX = t.x + (t.w - 1) * 0.5;
       const centerY = t.y + (t.h - 1) * 0.5;
       const top = this.lighting.surfacePalette(
         centerX,
         centerY,
-        tElev + 0.8,
+        rElev + tElev + 0.8,
         TOWER_SOBEL_NORMALS.nx[4],
         TOWER_SOBEL_NORMALS.ny[4],
         TOWER_SOBEL_NORMALS.nz[4],
@@ -2736,7 +2774,7 @@ export class VoidRenderer {
       const front = this.lighting.surfacePalette(
         centerX,
         t.y + t.h - 1,
-        tElev * 0.5,
+        rElev + tElev * 0.5,
         TOWER_SOBEL_NORMALS.nx[7],
         TOWER_SOBEL_NORMALS.ny[7],
         TOWER_SOBEL_NORMALS.nz[7],
@@ -2745,7 +2783,7 @@ export class VoidRenderer {
       const nwRim = this.lighting.surfacePalette(
         t.x,
         t.y,
-        tElev + 0.5,
+        rElev + tElev + 0.5,
         TOWER_SOBEL_NORMALS.nx[0],
         TOWER_SOBEL_NORMALS.ny[0],
         TOWER_SOBEL_NORMALS.nz[0],
@@ -2754,7 +2792,7 @@ export class VoidRenderer {
       const seRim = this.lighting.surfacePalette(
         t.x + t.w - 1,
         t.y + t.h - 1,
-        tElev + 0.5,
+        rElev + tElev + 0.5,
         TOWER_SOBEL_NORMALS.nx[8],
         TOWER_SOBEL_NORMALS.ny[8],
         TOWER_SOBEL_NORMALS.nz[8],
@@ -2765,7 +2803,7 @@ export class VoidRenderer {
       rawScene.fillRect(t.x, topY, t.w, t.h + tElev);
       if (tElev > 0) {
         rawScene.fillStyle = front("#18202c");
-        rawScene.fillRect(t.x, t.y + t.h - tElev, t.w, tElev);
+        rawScene.fillRect(t.x, t.y + t.h - tElev - rElev, t.w, tElev);
       }
       rawScene.fillStyle = top("#242c3a");
       rawScene.fillRect(t.x, topY, t.w, t.h);
@@ -2893,7 +2931,7 @@ export class VoidRenderer {
         c.strokeStyle = "rgba(255, 190, 59, 0.42)";
         c.lineWidth = 0.35;
         c.beginPath();
-        c.arc(t.x + t.w * 0.5, t.y + t.h * 0.5, spec.range, 0, Math.PI * 2);
+        c.arc(t.x + t.w * 0.5, t.y + t.h * 0.5, towerRange(t), 0, Math.PI * 2);
         c.stroke();
       }
 
@@ -3006,7 +3044,18 @@ export class VoidRenderer {
 
     // Draw placed Resistance towers and agents before the building atlas so north-of-building
     // towers/agents are naturally occluded by southern building roofs.
-    for (let i = 0; i < combat.towers.length; i++) drawTower(combat.towers[i]);
+    // Rooftop turrets are drawn after the atlas, on top of their own roof, unless a taller
+    // building to the south stands in front of them.
+    const rooftopFront = new Set<number>();
+    for (let i = 0; i < combat.towers.length; i++) {
+      const t = combat.towers[i];
+      if (t.roofBuildingId !== undefined && this.buildingHeight !== "flat" &&
+        !this.rooftopTowerOccluded(world, t)) {
+        rooftopFront.add(t.uid);
+      } else {
+        drawTower(t);
+      }
+    }
     for (let i = 0; i < combat.agents.length; i++) drawAgent(combat.agents[i]);
 
     // Composite the sorted building structure atlas + bump-mapped 2.5D lighting & dynamic shadows
@@ -3022,6 +3071,9 @@ export class VoidRenderer {
     const glassBlit = performance.now();
     this.reflections.drawGlass(rawScene);
     T.reflections += performance.now() - glassBlit;
+    for (let i = 0; i < combat.towers.length; i++) {
+      if (rooftopFront.has(combat.towers[i].uid)) drawTower(combat.towers[i]);
+    }
 
     // Fire is authoritative; flames/smoke are bounded visual witnesses, including elevated farm roofs.
     for (const [idx, fire] of sim.farms.active) {
@@ -3077,6 +3129,7 @@ export class VoidRenderer {
     // footprint bottom so southern units stand in front of northern building facades.
     for (let i = 0; i < combat.towers.length; i++) {
       const t = combat.towers[i];
+      if (t.roofBuildingId !== undefined) continue;
       const ty0 = Math.max(0, t.y - tElev);
       const ty1 = Math.min(h - 1, t.y + t.h - 1);
       let needsFront = false;
@@ -3120,13 +3173,15 @@ export class VoidRenderer {
     // Occlusion fade: when a placement preview or selected tower lies north of a tall building
     // whose raised roof overlaps it, punch a whole-pixel checkerboard dither through that building
     // and re-stamp any towers/agents that sit in front of (south of) that building.
-    const occluders: { x0: number; y0: number; x1: number; y1: number; footY: number }[] = [];
+    const occluders: { x0: number; y0: number; x1: number; y1: number; footY: number; ownBuilding?: number }[] = [];
     if (preview) {
       if (preview.kind === "tower") {
         const spec = TOWER_SPECS[preview.type];
+        const roof = this.previewRoof(world, preview);
         occluders.push({
+          ownBuilding: roof.id >= 0 ? roof.id : undefined,
           x0: preview.x - 1,
-          y0: preview.y - 1,
+          y0: preview.y - roof.elev - 1,
           x1: preview.x + spec.w + 1,
           y1: preview.y + spec.h + 1,
           footY: preview.y + spec.h,
@@ -3158,7 +3213,14 @@ export class VoidRenderer {
     if (selectedTowerUid !== null) {
       const st = combat.towers.find((tw) => tw.uid === selectedTowerUid);
       if (st) {
-        occluders.push({ x0: st.x, y0: st.y - tElev, x1: st.x + st.w, y1: st.y + st.h, footY: st.y + st.h });
+        occluders.push({
+          x0: st.x,
+          y0: st.y - tElev - towerRoofElevation(world, st, this.buildingHeight),
+          x1: st.x + st.w,
+          y1: st.y + st.h,
+          footY: st.y + st.h,
+          ownBuilding: st.roofBuildingId,
+        });
       }
     }
 
@@ -3170,6 +3232,7 @@ export class VoidRenderer {
         for (let j = 0; j < occluders.length; j++) {
           const occ = occluders[j];
           if (
+            occ.ownBuilding !== sp.id &&
             occ.footY <= sp.bottomY - 1 &&
             occ.x1 > sp.x &&
             occ.x0 < sp.x + sp.w &&
@@ -3417,16 +3480,19 @@ export class VoidRenderer {
     if (preview) {
       if (preview.kind === "tower") {
         const spec = TOWER_SPECS[preview.type];
+        // A rooftop footprint is outlined on the raised roof it will stand on.
+        const roof = this.previewRoof(world, preview);
+        const py0 = preview.y - roof.elev;
         c.fillStyle = preview.valid ? "rgba(255, 174, 56, 0.48)" : "rgba(255, 68, 68, 0.48)";
-        c.fillRect(preview.x, preview.y, spec.w, spec.h);
+        c.fillRect(preview.x, py0, spec.w, spec.h);
         c.strokeStyle = preview.valid ? "#ffbe3b" : "#ff4444";
         c.lineWidth = 0.35;
-        c.strokeRect(preview.x, preview.y, spec.w, spec.h);
+        c.strokeRect(preview.x, py0, spec.w, spec.h);
         c.beginPath();
         c.arc(
           preview.x + spec.w * 0.5,
           preview.y + spec.h * 0.5,
-          spec.range,
+          towerRange({ type: preview.type, roofBuildingId: roof.id >= 0 ? roof.id : undefined }),
           0,
           Math.PI * 2,
         );

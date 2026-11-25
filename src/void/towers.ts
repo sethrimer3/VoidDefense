@@ -48,6 +48,55 @@ export type TowerSpec = {
   voidRemovalRadius?: number;
 };
 
+/** Structures that field units, run deliveries or work the ground: they stand at street level
+ * (streets, sidewalks, plazas, open ground) and can never be built on a building. Every other
+ * structure is a turret, which may stand at street level or be mounted on one building's roof. */
+export const STREET_LEVEL_TOWERS: ReadonlySet<TowerTypeId> = new Set<TowerTypeId>([
+  "deliveryDepot",
+  "repairDepot",
+  "infantryBarracks",
+  "constructorHub",
+  "wallSerpent",
+  "rocketTeam",
+  "heavyMechBay",
+  "lanternBearer",
+  "seamwalker",
+  "echoMine",
+]);
+
+/** Whether `type` is a turret that may be mounted on a rooftop. */
+export function canMountOnRoof(type: TowerTypeId): boolean {
+  return !STREET_LEVEL_TOWERS.has(type);
+}
+
+/** Range multiplier for a rooftop turret: the height gives it a wider field of fire. */
+export const ROOFTOP_RANGE_MULT = 1.2;
+
+/** A turret's effective range: `base` (its catalog range by default), widened on a rooftop. */
+export function towerRange(t: Pick<PlacedTower, "type" | "roofBuildingId">, base = TOWER_SPECS[t.type].range): number {
+  return t.roofBuildingId !== undefined ? base * ROOFTOP_RANGE_MULT : base;
+}
+
+/** Share of max HP a rooftop turret loses when the roof under it gives way and it crashes to the street. */
+export const ROOF_COLLAPSE_DAMAGE = 0.6;
+
+/** The building every footprint cell stands on: its id when all cells are one building's
+ * surviving roof, -1 when all cells are at street level, -2 when the footprint is mixed. */
+export function footprintBuilding(world: VoidWorld, x: number, y: number, w: number, h: number): number {
+  let found = -3;
+  for (let py = y; py < y + h; py++) {
+    for (let px = x; px < x + w; px++) {
+      if (!world.grid.inBounds(px, py)) return -2;
+      const idx = world.grid.index(px, py);
+      let b = world.buildingAt[idx];
+      if (b >= 0 && world.columnFloors && world.columnFloors[idx] <= 0) b = -1;
+      if (found === -3) found = b;
+      else if (found !== b) return -2;
+    }
+  }
+  return found === -3 ? -1 : found;
+}
+
 export const TOWER_SPECS: Record<TowerTypeId, TowerSpec> = {
   deliveryDepot: {
     id: "deliveryDepot",
@@ -517,7 +566,8 @@ export class VoidCombatManager {
       }
       const tx = t.x + t.w * 0.5;
       const ty = t.y + t.h * 0.5;
-      const rangeSq = TOWER_SPECS.chronoCannon.range * TOWER_SPECS.chronoCannon.range;
+      const chronoRange = towerRange(t);
+      const rangeSq = chronoRange * chronoRange;
 
       // Find an unclaimed eligible loss within tower range and 6s window
       let targetLoss: ChronoLossEvent | null = null;
@@ -649,12 +699,15 @@ export class VoidCombatManager {
     if (x < 1 || y < 1 || x + spec.w > world.grid.w - 1 || y + spec.h > world.grid.h - 1) {
       return false;
     }
+    // Turrets go on one building's roof or at street level, never straddling a roof edge;
+    // unit, delivery and ground structures always stand at street level.
+    const roof = footprintBuilding(world, x, y, spec.w, spec.h);
+    if (roof === -2 || (roof >= 0 && !canMountOnRoof(type))) return false;
     for (let py = y; py < y + spec.h; py++) {
       for (let px = x; px < x + spec.w; px++) {
         const idx = world.grid.index(px, py);
         const mat = world.material[idx];
         if (mat === CellMaterial.VOID || mat === CellMaterial.UNCLAIMED || mat === CellMaterial.EMPTY) return false;
-        if (type === "deliveryDepot" && world.buildingAt[idx] >= 0) return false;
         const occ = world.towerAt[idx];
         if (occ >= 0 && occ !== ignoreUid) return false;
       }
@@ -687,6 +740,8 @@ export class VoidCombatManager {
       placedAtTick: tick,
       cooldown: 0.2,
     };
+    const roof = footprintBuilding(world, x, y, spec.w, spec.h);
+    if (roof >= 0) tower.roofBuildingId = roof;
     for (let py = y; py < y + spec.h; py++) {
       for (let px = x; px < x + spec.w; px++) {
         world.towerAt[world.grid.index(px, py)] = uid;
@@ -714,6 +769,9 @@ export class VoidCombatManager {
     world.grid.markRectDirty({ x: t.x, y: t.y, w: t.w, h: t.h });
     t.x = newX;
     t.y = newY;
+    const roof = footprintBuilding(world, newX, newY, t.w, t.h);
+    if (roof >= 0) t.roofBuildingId = roof;
+    else delete t.roofBuildingId;
     const ncx = newX + t.w * 0.5;
     const ncy = newY + t.h * 0.5;
     const s = this.siphonStates.get(uid);
@@ -769,7 +827,7 @@ export class VoidCombatManager {
       if (t.type !== "gravityAnchor") continue;
       const cx = t.x + t.w * 0.5;
       const cy = t.y + t.h * 0.5;
-      const r = TOWER_SPECS.gravityAnchor.range;
+      const r = towerRange(t);
       const rCeil = Math.ceil(r);
       for (let y = Math.max(0, Math.floor(cy - rCeil)); y <= Math.min(world.grid.h - 1, Math.ceil(cy + rCeil)); y++) {
         for (let x = Math.max(0, Math.floor(cx - rCeil)); x <= Math.min(world.grid.w - 1, Math.ceil(cx + rCeil)); x++) {
@@ -1121,7 +1179,7 @@ export class VoidCombatManager {
       if (pool <= 0.1) continue;
       const tx = t.x + t.w * 0.5;
       const ty = t.y + t.h * 0.5;
-      if (dist(cx - tx, cy - ty) <= maxR) {
+      if (dist(cx - tx, cy - ty) <= towerRange(t, maxR)) {
         const take = Math.min(pool, workAmount - absorbed);
         this.shieldPools.set(t.uid, pool - take);
         absorbed += take;
@@ -1218,6 +1276,36 @@ export class VoidCombatManager {
       physics.pendingImpacts.length = 0;
     }
 
+    // 2a. A rooftop turret whose roof gives way (collapse, demolition) crashes down to the street
+    for (const t of this.towers) {
+      if (t.roofBuildingId === undefined) continue;
+      let held = 0;
+      for (let py = t.y; py < t.y + t.h; py++) {
+        for (let px = t.x; px < t.x + t.w; px++) {
+          const idx = world.grid.index(px, py);
+          if (world.buildingAt[idx] === t.roofBuildingId && world.material[idx] !== CellMaterial.VOID &&
+            (!world.columnFloors || world.columnFloors[idx] > 0)) held++;
+        }
+      }
+      if (held * 2 >= t.w * t.h) continue;
+      delete t.roofBuildingId;
+      t.hp -= t.maxHp * ROOF_COLLAPSE_DAMAGE;
+      t.lastDamageCause = "masonry";
+      if (t.type === "gravityAnchor") this.rebuildGravityMask(world);
+      if (physics.shockwaves.length < 48) {
+        physics.shockwaves.push({
+          x: t.x + t.w * 0.5,
+          y: t.y + t.h * 0.5,
+          maxRadius: Math.max(t.w, t.h),
+          color: "#9a8f84",
+          secondaryColor: "#5c5650",
+          life: 0,
+          maxLife: 0.35,
+        });
+      }
+      world.grid.markRectDirty({ x: t.x, y: t.y, w: t.w, h: t.h });
+    }
+
     // 2. Check if any tower sits on Void and destroy it (spawning a falling tower chunk into the abyss)
     for (let i = this.towers.length - 1; i >= 0; i--) {
       const t = this.towers[i];
@@ -1301,7 +1389,7 @@ export class VoidCombatManager {
             voidField,
             t.focus?.x ?? cx,
             t.focus?.y ?? cy,
-            spec.range,
+            towerRange(t),
             tick + t.uid,
           );
           if (target) {
