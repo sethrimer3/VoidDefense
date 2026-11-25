@@ -409,3 +409,64 @@ test("7. Fluid halo glow blurs across 16-px lighting tile edges without dark sea
   const lit = halo[rightTexel] + halo[rightTexel + 2];
   assert.ok(lit > baseline + 5, `glow from fluid just left of a tile edge spills into the next tile (${lit} > ${baseline})`);
 });
+
+test("8. Torn matter travels as a compact stream that stretches along the flow instead of smearing into a disc", () => {
+  const sim = new VoidSim("tutorialBreach", "underSiege", emptyTechWallet());
+  const { world } = sim;
+  const p = world.portals[0];
+  p.active = true;
+  const fluid = new VoidFluidGrid();
+  fluid.ensureSize(world.grid.w, world.grid.h, 1);
+  fluid.syncFlowField(world);
+
+  const coreR = Math.max(3.6, p.radius * 0.42);
+  const startR = coreR + 22;
+  fluid.depositAtWorld(p.x + startR, p.y + 0.5, 2.4, FluidMaterial.GRASS, startR, [70, 150, 60], 0);
+  const centroidDist = (): number => {
+    let sx = 0;
+    let sy = 0;
+    let m = 0;
+    for (let i = 0; i < fluid.amount.length; i++) {
+      const a = fluid.amount[i];
+      if (a <= 0) continue;
+      sx += (i % fluid.gridW + fluid.offX[i]) * a;
+      sy += (Math.floor(i / fluid.gridW) + fluid.offY[i]) * a;
+      m += a;
+    }
+    return Math.hypot(sx / m - p.x, sy / m - p.y);
+  };
+  const before = centroidDist();
+  for (let t = 0; t < 12; t++) fluid.step(world, 1 / 30);
+
+  // No numerical diffusion: a clump of a few cells may stretch into a short streak, never a blurred cloud
+  assert.ok(fluid.activeCellCount >= 2, `a clump stretches into a trail (${fluid.activeCellCount} cells)`);
+  assert.ok(fluid.activeCellCount <= 14, `a clump stays a narrow stream, not a smear (${fluid.activeCellCount} cells)`);
+  assert.ok(centroidDist() < before - 2, "the stream falls inward toward the hole");
+
+  // Same inputs, same result: the flow and its turbulence are deterministic
+  const replay = new VoidFluidGrid();
+  replay.ensureSize(world.grid.w, world.grid.h, 1);
+  replay.syncFlowField(world);
+  replay.depositAtWorld(p.x + startR, p.y + 0.5, 2.4, FluidMaterial.GRASS, startR, [70, 150, 60], 0);
+  for (let t = 0; t < 12; t++) replay.step(world, 1 / 30);
+  assert.deepEqual(Array.from(replay.amount), Array.from(fluid.amount));
+});
+
+test("9. Matter keeps its own color far out in a large Void and only heats close to the hole", () => {
+  const sim = new VoidSim("tutorialBreach", "underSiege", emptyTechWallet());
+  const { world } = sim;
+  const p = world.portals[0];
+  p.active = true;
+  const fluid = new VoidFluidGrid();
+  fluid.ensureSize(world.grid.w, world.grid.h, 1);
+  fluid.syncFlowField(world);
+  const coreR = Math.max(3.6, p.radius * 0.42);
+  // Torn from 90 px out: 45 px from the hole it is still ground-colored
+  const far = Math.floor(p.y) * fluid.gridW + Math.floor(p.x + coreR + 45);
+  fluid.depositAtWorld(p.x + coreR + 45, p.y, 1.2, FluidMaterial.GRASS, coreR + 90, [70, 150, 60]);
+  assert.ok(fluid.computeCellHeat(far) < 0.15, `far matter keeps its color (heat ${fluid.computeCellHeat(far)})`);
+  // White-hot is the limit until the last pixels before the horizon
+  const near = Math.floor(p.y) * fluid.gridW + Math.floor(p.x + coreR + 8);
+  fluid.depositAtWorld(p.x + coreR + 8, p.y, 1.2, FluidMaterial.GRASS, coreR + 90, [70, 150, 60], 1);
+  assert.ok(fluid.computeCellHeat(near) <= 0.66 + 1e-6, "violet is reserved for the event horizon");
+});

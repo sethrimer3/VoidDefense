@@ -1,23 +1,17 @@
-/** Deterministic grid-based Void accretion fluid and short-lived flair sparks for Void Defense.
+/** Deterministic parcel-grid Void accretion fluid and short-lived flair sparks for Void Defense.
  *
- * Matter sucked into the Void reads as itself first, then blends, heats up into trails, and glows:
- * 1. True Source Color per Cell: stores real RGB channels (`colorR`, `colorG`, `colorB` in `Float32Array`)
- *    alongside `amount`, `heat`, and `material`. When a cell or chunk dissolves, `sampleSourceCellColors`
- *    samples the actual rendered pixel colors of the tile or building sprite it came from (road asphalt
- *    and orange lane lines, sidewalks, crosswalks, grass, crops, water, building roofs, facades, and neon).
- * 2. Weighted Color & Heat Blending: when fluid moves between cells along the precomputed spiral flow field,
- *    incoming RGB and heat mix weighted by fluid `amount` so streams of different materials blend smoothly
- *    where they meet, with a subtle per-cell deterministic variation so blended streams never turn to flat mud.
- * 3. Advected Per-Cell Heat (`0..1`): rises with time spent in the flow, closeness to the Void, and faster
- *    flow (friction), and travels with the fluid along elongated flow-aligned streaks to form hot glowing
- *    trails rather than concentric distance rings.
- * 4. Continuous Heat Ramp & Smooth Halo Emission: interpolates continuously from the cell's true source
- *    color through dull red -> molten orange -> incandescent yellow-white -> event-horizon violet/magenta.
- *    Cool fluid is lit by the scene (`TimeOfDayPreset`, sun, rain); hot fluid is self-emissive and feeds
- *    the half-resolution (`1/2` res) halo buffer proportionally to `heat`.
- * 5. Ordered Bayer Dithering & Glossy Liquid Depth: uses continuous color/alpha with deterministic 4x4 Bayer
- *    dithering at pixel scale (skipped on Low quality), a sunward/outer-edge highlight, an inner-side shadow
- *    edge, and depth darkening on thick cores so streams read as thick, glossy liquid.
+ * Ground the Void eats tears loose in its own colors, stretches into irregular streams, and heats as it falls in:
+ * 1. True Source Color: each parcel stores the real RGB (`colorR`, `colorG`, `colorB`) sampled from the tile or
+ *    building sprite it came from (`sampleSourceCellColors`), plus `amount`, `material`, `heat` and a `grain`.
+ * 2. Exact Parcels: each cell holds one parcel with a sub-cell position (`offX`, `offY`). Parcels move exactly along
+ *    the inflow plus time-varying noise turbulence (curl eddies and strand-gathering slope), so matter never blurs
+ *    into a disc. Converging parcels merge weighted by amount; each cell crossing leaves `TRAIL_SHARE` behind,
+ *    which stretches clumps into tapering streams.
+ * 3. Heat: rises with time in the flow, friction, and closeness to the hole over `fluidHeatSpan`, so a big Void
+ *    keeps ground colors far out and only the last stretch glows red -> orange -> white-hot, turning violet at the
+ *    horizon. Hot matter is self-emissive and feeds the half-resolution halo buffer.
+ * 4. Render: a tent-smoothed density fuses neighbouring parcels into ribbons with hard pixel edges, lit top edges
+ *    and shadowed undersides, per-clump grain and stepped alpha, in one `ImageData` blit.
  */
 
 import { dist } from "../exact.ts";
@@ -417,32 +411,46 @@ export function evaluateFluidHeatColor(
   heat: number,
   cheap = false,
 ): [number, number, number] {
-  if (heat <= 0.02) return [sr, sg, sb];
+  const out = new Float32Array(3);
+  heatColorInto(out, sr, sg, sb, heat, cheap);
+  return [out[0], out[1], out[2]];
+}
+
+/** Allocation-free `evaluateFluidHeatColor`: writes `[r, g, b]` into `out`. */
+export function heatColorInto(
+  out: Float32Array,
+  sr: number,
+  sg: number,
+  sb: number,
+  heat: number,
+  cheap = false,
+): void {
+  if (heat <= 0.02) {
+    out[0] = sr;
+    out[1] = sg;
+    out[2] = sb;
+    return;
+  }
   const h = Math.min(1, Math.max(0, heat));
 
   if (cheap) {
     if (h < 0.45) {
       const t = h / 0.45;
-      return [
-        sr + (235 - sr) * t,
-        sg + (92 - sg) * t,
-        sb + (24 - sb) * t,
-      ];
-    }
-    if (h < 0.76) {
+      out[0] = sr + (235 - sr) * t;
+      out[1] = sg + (92 - sg) * t;
+      out[2] = sb + (24 - sb) * t;
+    } else if (h < 0.76) {
       const t = (h - 0.45) / 0.31;
-      return [
-        235 + (255 - 235) * t,
-        92 + (208 - 92) * t,
-        24 + (112 - 24) * t,
-      ];
+      out[0] = 235 + (255 - 235) * t;
+      out[1] = 92 + (208 - 92) * t;
+      out[2] = 24 + (112 - 24) * t;
+    } else {
+      const t = (h - 0.76) / 0.24;
+      out[0] = 255 + (174 - 255) * t;
+      out[1] = 208 + (56 - 208) * t;
+      out[2] = 112 + (236 - 112) * t;
     }
-    const t = (h - 0.76) / 0.24;
-    return [
-      255 + (174 - 255) * t,
-      208 + (56 - 208) * t,
-      112 + (236 - 112) * t,
-    ];
+    return;
   }
 
   // Smooth multi-stop blackbody-to-Void-violet ramp while preserving source color in the cool/warm transition
@@ -487,20 +495,10 @@ export function evaluateFluidHeatColor(
   // Below h = 0.22, true source color dominates (> 85%); between 0.22 and 0.56 it heats into glowing dark red -> orange -> yellow-white trails
   const rawMix = Math.min(1, Math.max(0, (h - 0.14) / 0.36));
   const mix = rawMix * rawMix * (3 - 2 * rawMix);
-  return [
-    sr + (hr - sr) * mix,
-    sg + (hg - sg) * mix,
-    sb + (hb - sb) * mix,
-  ];
+  out[0] = sr + (hr - sr) * mix;
+  out[1] = sg + (hg - sg) * mix;
+  out[2] = sb + (hb - sb) * mix;
 }
-
-/** Deterministic 4x4 Bayer ordered dither matrix normalized to `[-0.5, +0.4375]`. */
-const BAYER_4X4: readonly number[] = [
-  0 / 16 - 0.5,  8 / 16 - 0.5,  2 / 16 - 0.5, 10 / 16 - 0.5,
-  12 / 16 - 0.5, 4 / 16 - 0.5, 14 / 16 - 0.5,  6 / 16 - 0.5,
-  3 / 16 - 0.5, 11 / 16 - 0.5,  1 / 16 - 0.5,  9 / 16 - 0.5,
-  15 / 16 - 0.5, 7 / 16 - 0.5, 13 / 16 - 0.5,  5 / 16 - 0.5,
-];
 
 export type FluidSpark = {
   active: boolean;
@@ -532,10 +530,31 @@ export const MAX_SPARKS_HIGH = 200;
 export const MAX_SPARKS_MEDIUM = 120;
 export const MAX_SPARKS_LOW = 48;
 
+/** Smallest `amount` a cell keeps; anything thinner drains away. */
+const ACTIVE_CUTOFF = 0.02;
+/** Densest a cell gets; converging parcels past this feed the Void sink. */
+const MAX_CELL_AMOUNT = 4;
+/** Share of a parcel left in its old cell when it crosses into a new one. Repeated every crossing, this
+ * stretches each torn clump into a tapering stream behind it instead of smearing it into a disc. */
+const TRAIL_SHARE = 0.17;
+/** Turbulence noise scale: converts the potential's per-pixel slope into roughly unit flow speed. */
+const TURB_GAIN = 8;
+/** Smoothed density a pixel needs before it is drawn: lone dust grains stay invisible, strands fuse. */
+const DRAW_DENSITY = 0.26;
+
+/** Distance over which fluid heats from its source color to white-hot: the distance it was torn from, capped
+ * so matter in a huge Void stays its own color until it nears the black hole. */
+export function fluidHeatSpan(coreR: number, startDist: number): number {
+  return Math.max(4, Math.min(startDist - coreR, 14 + coreR * 1.7));
+}
+
+/** Writes the continuous thermal ramp (see `evaluateFluidHeatColor`) into `out` without allocating. */
+const heatScratch = new Float32Array(3);
+
 export class VoidFluidGrid {
   w = 0;
   h = 0;
-  /** Fluid cell size in world pixels (`1` on High/Medium = 3-4 screen px at default zoom; `2` on Low). */
+  /** Fluid cell size in world pixels (`1` on High/Medium; `2` on Low). */
   cellSize = 1;
   gridW = 0;
   gridH = 0;
@@ -546,7 +565,7 @@ export class VoidFluidGrid {
   /** Dominant source material index (`FluidMaterialId`, `0..6`) per cell. */
   material = new Uint8Array(0);
   private nextMaterial = new Uint8Array(0);
-  /** True source RGB color channels (`0..255`) per cell, blended weighted by amount when streams merge. */
+  /** True source RGB color channels (`0..255`) per cell, blended weighted by amount when parcels merge. */
   colorR = new Float32Array(0);
   colorG = new Float32Array(0);
   colorB = new Float32Array(0);
@@ -559,18 +578,33 @@ export class VoidFluidGrid {
   /** Distance from detachment origin (`Float32Array`). */
   startDist = new Float32Array(0);
   private nextStartDist = new Float32Array(0);
+  /** Sub-cell position (`0..1`) of the parcel each cell holds. Parcels move exactly and never blur. */
+  offX = new Float32Array(0);
+  offY = new Float32Array(0);
+  private nextOffX = new Float32Array(0);
+  private nextOffY = new Float32Array(0);
+  /** Per-parcel brightness grain (`0..255`) that travels with the matter, so torn clumps keep a lumpy texture. */
+  grain = new Uint8Array(0);
+  private nextGrain = new Uint8Array(0);
 
-  /** Precomputed flow field arrays (rebuilt only when active portals move, grow, or change). */
+  /** Precomputed base inflow (rebuilt only when active portals move, grow, or change). */
   flowVx = new Float32Array(0);
   flowVy = new Float32Array(0);
   flowSpeed = new Float32Array(0);
   flowDist = new Float32Array(0);
-  flowAngle = new Float32Array(0);
   flowCoreR = new Float32Array(0);
-  flowReachR = new Float32Array(0);
-  flowSpiralPhase = new Float32Array(0);
+  /** Turbulence speed (px/s) per cell: strong at the rim where ground tears loose, calmer near the core. */
+  flowTurb = new Float32Array(0);
+  /** Two world-space turbulence fields (curl + converging slope of a noise potential), blended over time. */
+  private turbAx = new Float32Array(0);
+  private turbAy = new Float32Array(0);
+  private turbBx = new Float32Array(0);
+  private turbBy = new Float32Array(0);
+  private turbBuilt = false;
   private flowSignature = "";
   flowRebuilds = 0;
+  /** Seconds of simulated flow, which drives the turbulence blend deterministically. */
+  simTime = 0;
 
   /** Active dirty bounding box in fluid grid coordinates (`[minX..maxX, minY..maxY]`, inclusive). */
   minX = 0;
@@ -622,6 +656,8 @@ export class VoidFluidGrid {
 
   /** Offscreen buffer for single-call rendering (`one putImageData + drawImage`). */
   rasterU32 = new Uint32Array(0);
+  /** Horizontal pass of the render's smoothed density. */
+  private densH = new Float32Array(0);
   private imageData: ImageData | null = null;
   private readonly touchedSparks: number[] = [];
   /** Per-16x16-chunk mask of tiles with hot emissive fluid (including 4 px blur margin). */
@@ -662,6 +698,7 @@ export class VoidFluidGrid {
       b: number;
       heat: number;
       sDist: number;
+      grain: number;
     }[] = [];
     if (this.w === worldW && this.h === worldH && this.amount.length > 0 && oldMaxX >= oldMinX && oldMaxY >= oldMinY) {
       for (let oy = oldMinY; oy <= oldMaxY; oy++) {
@@ -671,8 +708,8 @@ export class VoidFluidGrid {
           const a = this.amount[oi];
           if (a <= 0.015) continue;
           savedCells.push({
-            wx: (ox + 0.5) * oldCs,
-            wy: (oy + 0.5) * oldCs,
+            wx: (ox + this.offX[oi]) * oldCs,
+            wy: (oy + this.offY[oi]) * oldCs,
             amt: a,
             mat: this.material[oi] as FluidMaterialId,
             r: this.colorR[oi],
@@ -680,6 +717,7 @@ export class VoidFluidGrid {
             b: this.colorB[oi],
             heat: this.heat[oi],
             sDist: this.startDist[oi],
+            grain: this.grain[oi],
           });
         }
       }
@@ -706,18 +744,28 @@ export class VoidFluidGrid {
     this.nextHeat = new Float32Array(count);
     this.startDist = new Float32Array(count);
     this.nextStartDist = new Float32Array(count);
+    this.offX = new Float32Array(count);
+    this.offY = new Float32Array(count);
+    this.nextOffX = new Float32Array(count);
+    this.nextOffY = new Float32Array(count);
+    this.grain = new Uint8Array(count);
+    this.nextGrain = new Uint8Array(count);
 
     this.flowVx = new Float32Array(count);
     this.flowVy = new Float32Array(count);
     this.flowSpeed = new Float32Array(count);
     this.flowDist = new Float32Array(count);
-    this.flowAngle = new Float32Array(count);
     this.flowCoreR = new Float32Array(count);
-    this.flowReachR = new Float32Array(count);
-    this.flowSpiralPhase = new Float32Array(count);
+    this.flowTurb = new Float32Array(count);
+    this.turbAx = new Float32Array(count);
+    this.turbAy = new Float32Array(count);
+    this.turbBx = new Float32Array(count);
+    this.turbBy = new Float32Array(count);
+    this.turbBuilt = false;
     this.flowSignature = "";
 
     this.rasterU32 = new Uint32Array(count);
+    this.densH = new Float32Array(count);
     if (this.canvas && this.ctx) {
       this.canvas.width = gw;
       this.canvas.height = gh;
@@ -734,53 +782,70 @@ export class VoidFluidGrid {
     this.hotTilesH = Math.ceil(worldH / 16);
     this.hotTiles = new Uint8Array(this.hotTilesW * this.hotTilesH);
 
-    if (savedCells.length > 0) {
-      for (let i = 0; i < savedCells.length; i++) {
-        const sc = savedCells[i];
-        if (cs === 1 && oldCs === 2) {
-          for (let dy = 0; dy < 2; dy++) {
-            for (let dx = 0; dx < 2; dx++) {
-              const gx = Math.floor(sc.wx) - 1 + dx;
-              const gy = Math.floor(sc.wy) - 1 + dy;
-              if (gx < 0 || gx >= gw || gy < 0 || gy >= gh) continue;
-              const idx = gy * gw + gx;
-              this.amount[idx] = sc.amt;
-              this.material[idx] = sc.mat;
-              this.colorR[idx] = sc.r;
-              this.colorG[idx] = sc.g;
-              this.colorB[idx] = sc.b;
-              this.heat[idx] = sc.heat;
-              this.startDist[idx] = sc.sDist;
-              if (gx < this.minX) this.minX = gx;
-              if (gx > this.maxX) this.maxX = gx;
-              if (gy < this.minY) this.minY = gy;
-              if (gy > this.maxY) this.maxY = gy;
-              this.activeCellCount++;
-            }
-          }
-        } else {
-          const gx = Math.floor(sc.wx / cs);
-          const gy = Math.floor(sc.wy / cs);
-          if (gx < 0 || gx >= gw || gy < 0 || gy >= gh) continue;
-          const idx = gy * gw + gx;
-          const prev = this.amount[idx];
-          const next = Math.min(3.6, prev + sc.amt * 0.35);
-          const wNew = (next - prev) / Math.max(0.001, next);
-          this.amount[idx] = next;
-          this.material[idx] = sc.mat;
-          this.colorR[idx] = this.colorR[idx] * (1 - wNew) + sc.r * wNew;
-          this.colorG[idx] = this.colorG[idx] * (1 - wNew) + sc.g * wNew;
-          this.colorB[idx] = this.colorB[idx] * (1 - wNew) + sc.b * wNew;
-          this.heat[idx] = Math.max(this.heat[idx], sc.heat);
-          this.startDist[idx] = Math.max(this.startDist[idx], sc.sDist);
-          if (gx < this.minX) this.minX = gx;
-          if (gx > this.maxX) this.maxX = gx;
-          if (gy < this.minY) this.minY = gy;
-          if (gy > this.maxY) this.maxY = gy;
-          if (prev <= 0.022) this.activeCellCount++;
-        }
-      }
+    for (let i = 0; i < savedCells.length; i++) {
+      const sc = savedCells[i];
+      const fx = sc.wx / cs;
+      const fy = sc.wy / cs;
+      const gx = Math.floor(fx);
+      const gy = Math.floor(fy);
+      if (gx < 0 || gx >= gw || gy < 0 || gy >= gh) continue;
+      // A finer grid holds each coarse parcel in one cell; a coarser grid merges up to four parcels
+      const amt = cs < oldCs ? sc.amt : sc.amt * 0.35;
+      this.mergeParcel(gy * gw + gx, gx, gy, amt, sc.mat, sc.r, sc.g, sc.b, sc.heat, sc.sDist, fx - gx, fy - gy, sc.grain);
     }
+  }
+
+  /** Adds a parcel into the live arrays (outside `step`), blending color, heat and sub-cell position by amount. */
+  private mergeParcel(
+    idx: number,
+    gx: number,
+    gy: number,
+    amt: number,
+    mat: number,
+    r: number,
+    g: number,
+    b: number,
+    heat: number,
+    sDist: number,
+    ox: number,
+    oy: number,
+    grain: number,
+  ): void {
+    const prev = this.amount[idx];
+    if (prev <= ACTIVE_CUTOFF && prev + amt > ACTIVE_CUTOFF) this.activeCellCount++;
+    const total = prev + amt;
+    const wNew = amt / Math.max(0.001, total);
+    if (prev <= 0.01) {
+      this.colorR[idx] = r;
+      this.colorG[idx] = g;
+      this.colorB[idx] = b;
+      this.heat[idx] = heat;
+      this.offX[idx] = ox;
+      this.offY[idx] = oy;
+      this.grain[idx] = grain;
+      this.startDist[idx] = sDist;
+    } else {
+      this.colorR[idx] += (r - this.colorR[idx]) * wNew;
+      this.colorG[idx] += (g - this.colorG[idx]) * wNew;
+      this.colorB[idx] += (b - this.colorB[idx]) * wNew;
+      this.heat[idx] += (heat - this.heat[idx]) * wNew;
+      this.offX[idx] += (ox - this.offX[idx]) * wNew;
+      this.offY[idx] += (oy - this.offY[idx]) * wNew;
+      if (wNew > 0.5) this.grain[idx] = grain;
+      if (sDist > this.startDist[idx]) this.startDist[idx] = sDist;
+    }
+    if (total > MAX_CELL_AMOUNT) {
+      this.consumedAmount += total - MAX_CELL_AMOUNT;
+      this.amount[idx] = MAX_CELL_AMOUNT;
+    } else {
+      this.amount[idx] = total;
+    }
+    if (prev < 0.05 || amt >= prev * 0.35) this.material[idx] = mat;
+    if (gx < this.minX) this.minX = gx;
+    if (gx > this.maxX) this.maxX = gx;
+    if (gy < this.minY) this.minY = gy;
+    if (gy > this.maxY) this.maxY = gy;
+    if (this.amount[idx] >= 0.16 && this.heat[idx] > 0.34) this.markHotTile(gx, gy);
   }
 
   /** Clears all fluid cells and sparks. */
@@ -792,11 +857,15 @@ export class VoidFluidGrid {
     this.colorB.fill(0);
     this.heat.fill(0);
     this.startDist.fill(0);
+    this.offX.fill(0);
+    this.offY.fill(0);
+    this.grain.fill(0);
     this.minX = this.gridW;
     this.minY = this.gridH;
     this.maxX = -1;
     this.maxY = -1;
     this.activeCellCount = 0;
+    this.hotTiles.fill(0);
     for (let i = 0; i < this.sparks.length; i++) {
       this.sparks[i].active = false;
     }
@@ -815,9 +884,49 @@ export class VoidFluidGrid {
     return evaluateFluidHeatColor(this.colorR[idx], this.colorG[idx], this.colorB[idx], this.heat[idx], cheap);
   }
 
-  /** Rebuilds the precomputed spiral accretion flow field ONLY when active portals move, grow, or activate. */
+  /** Builds the two world-space turbulence fields once per grid size. Each is the curl of a two-octave value
+   * noise potential (swirling eddies) plus some of its slope (which gathers matter into ragged filaments). */
+  private buildTurbulence(): void {
+    if (this.turbBuilt) return;
+    this.turbBuilt = true;
+    const { gridW, gridH, cellSize } = this;
+    const count = gridW * gridH;
+    const potential = new Float32Array(count);
+    const fields: [Float32Array, Float32Array, number, number][] = [
+      [this.turbAx, this.turbAy, 37.1, 11.3],
+      [this.turbBx, this.turbBy, 191.7, 73.9],
+    ];
+    const inv2 = TURB_GAIN / (2 * cellSize);
+    for (const [outX, outY, ox, oy] of fields) {
+      for (let gy = 0; gy < gridH; gy++) {
+        const wy = (gy + 0.5) * cellSize;
+        for (let gx = 0; gx < gridW; gx++) {
+          const wx = (gx + 0.5) * cellSize;
+          potential[gy * gridW + gx] =
+            valueNoise(wx / 15 + ox, wy / 15 + oy) + 0.5 * valueNoise(wx / 6.5 + oy, wy / 6.5 + ox);
+        }
+      }
+      for (let gy = 0; gy < gridH; gy++) {
+        const up = Math.max(0, gy - 1) * gridW;
+        const dn = Math.min(gridH - 1, gy + 1) * gridW;
+        const row = gy * gridW;
+        for (let gx = 0; gx < gridW; gx++) {
+          const l = Math.max(0, gx - 1);
+          const r = Math.min(gridW - 1, gx + 1);
+          const dPx = (potential[row + r] - potential[row + l]) * inv2;
+          const dPy = (potential[dn + gx] - potential[up + gx]) * inv2;
+          // Curl (dPy, -dPx) swirls; the slope term (gradient) pulls matter together into strands and clumps.
+          outX[row + gx] = dPy * 0.85 + dPx * 0.9;
+          outY[row + gx] = -dPx * 0.85 + dPy * 0.9;
+        }
+      }
+    }
+  }
+
+  /** Rebuilds the precomputed accretion inflow ONLY when active portals move, grow, or activate. */
   syncFlowField(world: VoidWorld): void {
     this.ensureSize(world.grid.w, world.grid.h, this.cellSize || 1);
+    this.buildTurbulence();
     const active = world.portals.filter((p) => p.active);
     const portals = active.length > 0 ? active : world.portals;
     let sig = `${this.cellSize}:${active.length}:`;
@@ -829,36 +938,8 @@ export class VoidFluidGrid {
     this.flowSignature = sig;
     this.flowRebuilds++;
 
-    const { gridW, gridH, cellSize } = this;
-    const { flowVx, flowVy, flowSpeed, flowDist, flowAngle, flowCoreR, flowReachR, flowSpiralPhase } = this;
-
-    if (portals.length === 0) {
-      const cx = world.grid.w * 0.5;
-      const cy = world.grid.h * 0.5;
-      for (let gy = 0; gy < gridH; gy++) {
-        const wy = (gy + 0.5) * cellSize;
-        const row = gy * gridW;
-        for (let gx = 0; gx < gridW; gx++) {
-          const wx = (gx + 0.5) * cellSize;
-          const idx = row + gx;
-          const dx = cx - wx;
-          const dy = cy - wy;
-          const d = Math.max(0.5, dist(dx, dy));
-          const ang = Math.atan2(-dy, -dx);
-          flowDist[idx] = d;
-          flowAngle[idx] = ang;
-          flowCoreR[idx] = 4.0;
-          flowReachR[idx] = 28.0;
-          flowSpiralPhase[idx] = Math.sin(ang * 3 + (d - 4.0) * 0.42);
-          const nx = dx / d;
-          const ny = dy / d;
-          flowVx[idx] = nx * 8 - ny * 10;
-          flowVy[idx] = ny * 8 + nx * 10;
-          flowSpeed[idx] = Math.hypot(flowVx[idx], flowVy[idx]);
-        }
-      }
-      return;
-    }
+    const { gridW, gridH, cellSize, flowVx, flowVy, flowSpeed, flowDist, flowCoreR, flowTurb } = this;
+    const fallback = { x: world.grid.w * 0.5, y: world.grid.h * 0.5, radius: 9.5 };
 
     for (let gy = 0; gy < gridH; gy++) {
       const wy = (gy + 0.5) * cellSize;
@@ -867,43 +948,39 @@ export class VoidFluidGrid {
         const wx = (gx + 0.5) * cellSize;
         const idx = row + gx;
 
-        let bestP = portals[0];
-        let bestD = dist(wx - bestP.x, wy - bestP.y);
+        let best: { x: number; y: number; radius: number } = portals[0] ?? fallback;
+        let bestD = dist(wx - best.x, wy - best.y);
         for (let i = 1; i < portals.length; i++) {
           const p = portals[i];
           const d = dist(wx - p.x, wy - p.y);
           if (d < bestD) {
             bestD = d;
-            bestP = p;
+            best = p;
           }
         }
 
-        const coreR = Math.max(3.6, bestP.radius * 0.42);
-        const reachR = Math.max(coreR + 18, bestP.radius * 3.1);
+        const coreR = Math.max(3.6, best.radius * 0.42);
+        const reachR = Math.max(coreR + 22, best.radius * 3.1);
         const d = Math.max(0.25, bestD);
         const prox = Math.min(1, Math.max(0, 1 - (d - coreR) / Math.max(4, reachR - coreR)));
         const p2 = prox * prox;
-        const radialSpeed = 5.5 + 9.5 * prox + 11.0 * p2;
-        const tangentialSpeed = 7.4 + 14.0 * prox + 15.5 * p2;
+        // Matter falls steadily from the rim and only whips into orbit close to the hole, so it spirals in
+        // about one turn instead of circling forever as rings.
+        const radialSpeed = 9 + 9 * prox + 14 * p2;
+        const tangentialSpeed = 5 + 13 * prox + 26 * p2;
 
-        const rx = wx - bestP.x;
-        const ry = wy - bestP.y;
-        const inX = -rx / d;
-        const inY = -ry / d;
-        const tanX = -inY;
-        const tanY = inX;
-
-        const vx = inX * radialSpeed + tanX * tangentialSpeed;
-        const vy = inY * radialSpeed + tanY * tangentialSpeed;
-        const ang = Math.atan2(ry, rx);
+        const inX = (best.x - wx) / d;
+        const inY = (best.y - wy) / d;
+        const vx = inX * radialSpeed - inY * tangentialSpeed;
+        const vy = inY * radialSpeed + inX * tangentialSpeed;
         flowVx[idx] = vx;
         flowVy[idx] = vy;
         flowSpeed[idx] = Math.hypot(vx, vy);
         flowDist[idx] = bestD;
-        flowAngle[idx] = ang;
         flowCoreR[idx] = coreR;
-        flowReachR[idx] = reachR;
-        flowSpiralPhase[idx] = Math.sin(ang * 3 + (bestD - coreR) * 0.42);
+        // Turbulence is strongest where ground tears loose and fades as the orbit takes over near the core
+        const nearCore = Math.min(1, Math.max(0, (d - coreR) / 3));
+        flowTurb[idx] = (8 + 10 * (1 - prox)) * nearCore;
       }
     }
   }
@@ -923,11 +1000,12 @@ export class VoidFluidGrid {
     const { gridW, gridH, cellSize } = this;
     if (gridW === 0 || gridH === 0) return;
     // A coarse Low-quality cell covers 4 world pixels and catches 4x the deposits; unscaled it
-    // saturates and fills the whole Void with an opaque disc. Dividing by 3 (not 4) offsets the
-    // coarse grid's extra evaporation so Low keeps the same spiral arms as High.
-    if (cellSize > 1) addedAmount /= 3;
-    const gx = Math.floor(wx / cellSize);
-    const gy = Math.floor(wy / cellSize);
+    // saturates and fills the whole Void with an opaque disc.
+    if (cellSize > 1) addedAmount /= 4;
+    const fx = wx / cellSize;
+    const fy = wy / cellSize;
+    const gx = Math.floor(fx);
+    const gy = Math.floor(fy);
     if (gx < 0 || gx >= gridW || gy < 0 || gy >= gridH) return;
 
     const idx = gy * gridW + gx;
@@ -939,7 +1017,6 @@ export class VoidFluidGrid {
       return;
     }
 
-    // Resolve true RGB from sourceColor or material default
     let sr: number;
     let sg: number;
     let sb: number;
@@ -957,8 +1034,8 @@ export class VoidFluidGrid {
     }
 
     const effStart = sDist > coreR + 2 ? sDist : Math.max(d, coreR + 6);
-    const span = Math.max(4, effStart - coreR);
-    // Streams keep their true source color for the outer third (`uProx <= 0.33`), then heat toward the horizon
+    const span = fluidHeatSpan(coreR, effStart);
+    // Torn ground keeps its true color until it has fallen most of the way in, then heats toward the horizon
     const uProx = Math.min(1, Math.max(0, 1 - (d - coreR) / span));
     const baseHeat =
       initialHeat !== undefined
@@ -967,66 +1044,30 @@ export class VoidFluidGrid {
           ? 0
           : Math.min(1, Math.pow((uProx - 0.33) / 0.67, 1.18) * 0.94);
 
-    const stampCell = (cx: number, cy: number, amt: number, heatOffset = 0): void => {
+    // Each deposit is its own clump: its grain and a little color jitter travel with it
+    const g = hash01(gx, gy, this.stepTick, Math.round(addedAmount * 64));
+    const grain = (g * 255) | 0;
+    const jitter = (g - 0.5) * 9;
+    const jr = Math.max(0, Math.min(255, sr + jitter));
+    const jg = Math.max(0, Math.min(255, sg + jitter));
+    const jb = Math.max(0, Math.min(255, sb + jitter));
+
+    const stamp = (cx: number, cy: number, amt: number, ox: number, oy: number, heatOffset: number): void => {
       if (amt <= 0.005 || cx < 0 || cx >= gridW || cy < 0 || cy >= gridH) return;
       const cIdx = cy * gridW + cx;
-      const cd = this.flowDist[cIdx] || d;
-      const cCore = this.flowCoreR[cIdx] || coreR;
-      if (cd <= cCore) return;
-      const prev = this.amount[cIdx];
-      if (prev <= 0.022 && prev + amt > 0.022) {
-        this.activeCellCount++;
-      }
-      const total = prev + amt;
-      const next = Math.min(3.6, total);
-      const wNew = amt / Math.max(0.001, total);
-
-      // Subtle deterministic per-cell variation (+/- 4 RGB) so a wide stream of one material keeps organic pixel texture
-      const jitter = (((cx * 73 + cy * 37) & 7) - 3.5) * 1.1;
-      const jr = Math.max(0, Math.min(255, sr + jitter));
-      const jg = Math.max(0, Math.min(255, sg + jitter));
-      const jb = Math.max(0, Math.min(255, sb + jitter));
-
-      if (prev <= 0.01) {
-        this.colorR[cIdx] = jr;
-        this.colorG[cIdx] = jg;
-        this.colorB[cIdx] = jb;
-        this.heat[cIdx] = Math.min(1, Math.max(0, baseHeat + heatOffset));
-      } else {
-        this.colorR[cIdx] = this.colorR[cIdx] * (1 - wNew) + jr * wNew;
-        this.colorG[cIdx] = this.colorG[cIdx] * (1 - wNew) + jg * wNew;
-        this.colorB[cIdx] = this.colorB[cIdx] * (1 - wNew) + jb * wNew;
-        this.heat[cIdx] = Math.min(1, this.heat[cIdx] * (1 - wNew) + Math.max(0, baseHeat + heatOffset) * wNew);
-      }
-
-      this.amount[cIdx] = next;
-      if (prev < 0.05 || amt >= prev * 0.35) {
-        this.material[cIdx] = mat;
-      }
-      this.startDist[cIdx] = prev > 0.05 ? Math.max(this.startDist[cIdx], effStart) : effStart;
-
-      if (cx < this.minX) this.minX = cx;
-      if (cx > this.maxX) this.maxX = cx;
-      if (cy < this.minY) this.minY = cy;
-      if (cy > this.maxY) this.maxY = cy;
-      if (next >= 0.16 && this.heat[cIdx] > 0.34) {
-        this.markHotTile(cx, cy);
-      }
+      if ((this.flowDist[cIdx] || d) <= (this.flowCoreR[cIdx] || coreR)) return;
+      this.mergeParcel(cIdx, cx, cy, amt, mat, jr, jg, jb, Math.min(1, baseHeat + heatOffset), effStart, ox, oy, grain);
     };
 
     if (addedAmount >= 0.45 && cellSize === 1) {
-      // Stretch deposit slightly along the local spiral flow vector so dissolving chunks form elongated stream trails
-      const vx = this.flowVx[idx];
-      const vy = this.flowVy[idx];
+      // A big deposit tears into a short smear along the inflow, the first stretch of a stream
       const vLen = this.flowSpeed[idx] || 1;
-      const dirX = Math.round(vx / vLen);
-      const dirY = Math.round(vy / vLen);
-      stampCell(gx, gy, addedAmount * 0.72, 0);
-      if (dirX !== 0 || dirY !== 0) {
-        stampCell(gx + dirX, gy + dirY, addedAmount * 0.28, 0.02);
-      }
+      const dirX = Math.round(this.flowVx[idx] / vLen);
+      const dirY = Math.round(this.flowVy[idx] / vLen);
+      stamp(gx, gy, addedAmount * 0.72, fx - gx, fy - gy, 0);
+      if (dirX !== 0 || dirY !== 0) stamp(gx + dirX, gy + dirY, addedAmount * 0.28, 0.5, 0.5, 0.02);
     } else {
-      stampCell(gx, gy, addedAmount, 0);
+      stamp(gx, gy, addedAmount, fx - gx, fy - gy, 0);
     }
   }
 
@@ -1075,10 +1116,12 @@ export class VoidFluidGrid {
     s.maxLife = maxLife;
   }
 
-  /** Advances the fluid grid (amount, weighted RGB color, advected heat) and short-lived sparks by `dt` seconds
-   * inside the active dirty bounding box. */
+  /** Advances the fluid by `dt` seconds inside the active dirty bounding box. Each cell holds one parcel with an
+   * exact sub-cell position; parcels ride the inflow plus time-varying turbulence, merge where they converge,
+   * and leave a share behind whenever they cross a cell, so clumps stretch into irregular tapering streams. */
   step(world: VoidWorld, dt: number): void {
     this.stepTick++;
+    this.simTime += dt;
     this.syncFlowField(world);
     const { gridW, gridH, cellSize } = this;
 
@@ -1117,71 +1160,50 @@ export class VoidFluidGrid {
       return;
     }
 
-    // Expand simulation window by 2 cells around current dirty bounding box
     const x0 = Math.max(0, this.minX - 2);
     const y0 = Math.max(0, this.minY - 2);
     const x1 = Math.min(gridW - 1, this.maxX + 2);
     const y1 = Math.min(gridH - 1, this.maxY + 2);
 
     const {
-      amount,
-      nextAmount,
-      material,
-      nextMaterial,
-      colorR,
-      colorG,
-      colorB,
-      nextColorR,
-      nextColorG,
-      nextColorB,
-      heat,
-      nextHeat,
-      startDist,
-      nextStartDist,
-      flowVx,
-      flowVy,
-      flowSpeed,
-      flowDist,
-      flowCoreR,
+      amount, nextAmount, material, nextMaterial, colorR, colorG, colorB, nextColorR, nextColorG, nextColorB,
+      heat, nextHeat, startDist, nextStartDist, offX, offY, nextOffX, nextOffY, grain, nextGrain,
+      flowVx, flowVy, flowSpeed, flowDist, flowCoreR, flowTurb, turbAx, turbAy, turbBx, turbBy,
     } = this;
 
-    // Clear target window in scratch buffers (nextColorR/G/B and nextHeat accumulate mass-weighted sums: sum(amt * val))
+    // Scratch buffers accumulate mass-weighted sums: sum(amt * val)
     for (let gy = y0; gy <= y1; gy++) {
-      const row = gy * gridW;
-      nextAmount.fill(0, row + x0, row + x1 + 1);
-      nextMaterial.fill(0, row + x0, row + x1 + 1);
-      nextColorR.fill(0, row + x0, row + x1 + 1);
-      nextColorG.fill(0, row + x0, row + x1 + 1);
-      nextColorB.fill(0, row + x0, row + x1 + 1);
-      nextHeat.fill(0, row + x0, row + x1 + 1);
-      nextStartDist.fill(0, row + x0, row + x1 + 1);
+      const a = gy * gridW + x0;
+      const b = gy * gridW + x1 + 1;
+      nextAmount.fill(0, a, b);
+      nextMaterial.fill(0, a, b);
+      nextColorR.fill(0, a, b);
+      nextColorG.fill(0, a, b);
+      nextColorB.fill(0, a, b);
+      nextHeat.fill(0, a, b);
+      nextStartDist.fill(0, a, b);
+      nextOffX.fill(0, a, b);
+      nextOffY.fill(0, a, b);
     }
 
     const invCell = 1 / cellSize;
-    const retention = Math.max(0.92, 1 - dt * 0.14);
-    const activeCutoff = 0.022;
+    // Matter barely thins on its way in: it is swallowed at the horizon, not evaporated
+    const retention = 1 - dt * 0.07;
+    // The two turbulence fields trade places slowly, so eddies and strands keep reshaping
+    const phase = this.simTime * 0.21;
+    const wA = Math.cos(phase);
+    const wB = Math.sin(phase);
 
     const depositCell = (
-      tx: number,
-      ty: number,
-      amt: number,
-      mat: number,
-      cr: number,
-      cg: number,
-      cb: number,
-      hVal: number,
-      sDist: number,
+      tx: number, ty: number, amt: number, mat: number, cr: number, cg: number, cb: number,
+      hVal: number, sDist: number, ox: number, oy: number, gr: number,
     ): void => {
       if (amt <= 0.004 || tx < 0 || tx >= gridW || ty < 0 || ty >= gridH) return;
       const tIdx = ty * gridW + tx;
-      const d = flowDist[tIdx];
-      const coreR = flowCoreR[tIdx];
-      if (d <= coreR + 0.35) {
+      if (flowDist[tIdx] <= flowCoreR[tIdx] + 0.35) {
         this.consumedAmount += amt;
         this.consumedCells++;
-        if (amt >= 0.04) {
-          this.spawnHorizonFlash((tx + 0.5) * cellSize, (ty + 0.5) * cellSize);
-        }
+        if (amt >= 0.04) this.spawnHorizonFlash((tx + 0.5) * cellSize, (ty + 0.5) * cellSize);
         return;
       }
       const prev = nextAmount[tIdx];
@@ -1189,31 +1211,29 @@ export class VoidFluidGrid {
       nextColorG[tIdx] += cg * amt;
       nextColorB[tIdx] += cb * amt;
       nextHeat[tIdx] += hVal * amt;
+      nextOffX[tIdx] += ox * amt;
+      nextOffY[tIdx] += oy * amt;
       nextAmount[tIdx] = prev + amt;
       if (prev < amt || nextMaterial[tIdx] === 0) {
         nextMaterial[tIdx] = mat;
+        nextGrain[tIdx] = gr;
       }
-      if (sDist > nextStartDist[tIdx]) {
-        nextStartDist[tIdx] = sDist;
-      }
+      if (sDist > nextStartDist[tIdx]) nextStartDist[tIdx] = sDist;
     };
 
-    // Forward semi-Lagrangian advection + flow-aligned streak trail
     for (let gy = y0; gy <= y1; gy++) {
       const row = gy * gridW;
       for (let gx = x0; gx <= x1; gx++) {
         const idx = row + gx;
         const amt = amount[idx];
-        if (amt <= activeCutoff) continue;
+        if (amt <= ACTIVE_CUTOFF) continue;
 
         const d = flowDist[idx];
         const coreR = flowCoreR[idx];
         if (d <= coreR + 0.35) {
           this.consumedAmount += amt;
           this.consumedCells++;
-          if (amt >= 0.08) {
-            this.spawnHorizonFlash((gx + 0.5) * cellSize, (gy + 0.5) * cellSize);
-          }
+          if (amt >= 0.08) this.spawnHorizonFlash((gx + 0.5) * cellSize, (gy + 0.5) * cellSize);
           continue;
         }
 
@@ -1222,54 +1242,48 @@ export class VoidFluidGrid {
         const cg = colorG[idx];
         const cb = colorB[idx];
         const sDist = Math.max(coreR + 5, startDist[idx] || d);
-        const keptAmt = amt * retention;
+        const kept = amt * retention;
 
-        // Per-cell heat evolution:
-        // Streams keep their source color for the outer third (`prox <= 0.33`), then heat up with dwell time,
-        // flow speed friction, and proximity to the Void event horizon.
+        // Heat rises with time in the flow, flow friction, and closeness to the hole
         const spd = flowSpeed[idx];
-        const prox = Math.min(1, Math.max(0, 1 - (d - coreR) / Math.max(4, sDist - coreR)));
-        const frictionRate = prox > 0.25 ? Math.max(0, (spd - 10.0) * 0.018) : Math.max(0, (spd - 10.0) * 0.008);
-        const proxRate = prox > 0.30 ? ((prox - 0.30) * (1 / 0.70)) ** 1.4 * 0.95 : 0;
-        const dwellRate = prox > 0.30 ? 0.14 : 0.06;
+        const prox = Math.min(1, Math.max(0, 1 - (d - coreR) / fluidHeatSpan(coreR, sDist)));
+        const frictionRate = prox > 0.25 ? Math.max(0, (spd - 10.0) * 0.018) : Math.max(0, (spd - 10.0) * 0.004);
+        const proxRate = prox > 0.3 ? ((prox - 0.3) * (1 / 0.7)) ** 1.4 * 0.95 : 0;
+        const dwellRate = prox > 0.3 ? 0.14 : 0.02;
         const pFloor = prox > 0.33 ? (prox - 0.33) * (1 / 0.67) : 0;
         const targetFloor = pFloor * pFloor * 0.92;
         let curHeat = heat[idx] + (dwellRate + frictionRate + proxRate) * dt;
         if (curHeat < targetFloor) curHeat = targetFloor;
         if (curHeat > 1) curHeat = 1;
 
-        // Flow displacement in grid cells
-        const vx = flowVx[idx] * dt * invCell * 0.85;
-        const vy = flowVy[idx] * dt * invCell * 0.85;
+        // Inflow plus blended turbulence, in cells this step (capped so a parcel never skips a cell)
+        const turb = flowTurb[idx];
+        let vx = (flowVx[idx] + turb * (wA * turbAx[idx] + wB * turbBx[idx])) * dt * invCell;
+        let vy = (flowVy[idx] + turb * (wA * turbAy[idx] + wB * turbBy[idx])) * dt * invCell;
         const magSq = vx * vx + vy * vy;
-        const clampScale = magSq > 1.5625 ? 1.25 / Math.sqrt(magSq) : 1.0;
-        const fx = gx + vx * clampScale;
-        const fy = gy + vy * clampScale;
-
-        const bx = Math.floor(fx);
-        const by = Math.floor(fy);
-        const tx = fx - bx;
-        const ty = fy - by;
-
-        // Stretch a trailing streak back to the origin cell (gx, gy) on denser stream filaments
-        const hasTrail = keptAmt > 0.36;
-        const trailShare = hasTrail ? 0.14 : 0;
-        const coreMass = keptAmt * (1 - trailShare);
-        const w00 = (1 - tx) * (1 - ty);
-        const w10 = tx * (1 - ty);
-        const w01 = (1 - tx) * ty;
-        const w11 = tx * ty;
-        depositCell(bx, by, coreMass * w00, mat, cr, cg, cb, curHeat, sDist);
-        depositCell(bx + 1, by, coreMass * w10, mat, cr, cg, cb, curHeat, sDist);
-        depositCell(bx, by + 1, coreMass * w01, mat, cr, cg, cb, curHeat, sDist);
-        depositCell(bx + 1, by + 1, coreMass * w11, mat, cr, cg, cb, curHeat, sDist);
-        if (hasTrail) {
-          depositCell(gx, gy, keptAmt * trailShare, mat, cr, cg, cb, curHeat * 0.96, sDist);
+        if (magSq > 1.5625) {
+          const s = 1.25 / Math.sqrt(magSq);
+          vx *= s;
+          vy *= s;
+        }
+        const ox = offX[idx];
+        const oy = offY[idx];
+        const px = gx + ox + vx;
+        const py = gy + oy + vy;
+        const tx = Math.floor(px);
+        const ty = Math.floor(py);
+        const gr = grain[idx];
+        if (tx === gx && ty === gy) {
+          depositCell(gx, gy, kept, mat, cr, cg, cb, curHeat, sDist, px - tx, py - ty, gr);
+        } else {
+          const trail = kept * TRAIL_SHARE >= 0.03 ? kept * TRAIL_SHARE : 0;
+          depositCell(tx, ty, kept - trail, mat, cr, cg, cb, curHeat, sDist, px - tx, py - ty, gr);
+          if (trail > 0) depositCell(gx, gy, trail, mat, cr, cg, cb, curHeat * 0.97, sDist, ox, oy, gr);
         }
       }
     }
 
-    // Normalize weighted color & heat sums and compute tight active dirty bounding box
+    // Normalize weighted sums and compute the tight active bounding box
     let newMinX = gridW;
     let newMinY = gridH;
     let newMaxX = -1;
@@ -1282,36 +1296,36 @@ export class VoidFluidGrid {
       for (let gx = x0; gx <= x1; gx++) {
         const idx = row + gx;
         const rawA = nextAmount[idx];
-        if (rawA > activeCutoff) {
+        if (rawA > ACTIVE_CUTOFF) {
           const invA = 1 / rawA;
-          const clampedA = rawA > 3.6 ? 3.6 : rawA;
+          let clampedA = rawA;
+          if (rawA > MAX_CELL_AMOUNT) {
+            this.consumedAmount += rawA - MAX_CELL_AMOUNT;
+            clampedA = MAX_CELL_AMOUNT;
+          }
           amount[idx] = clampedA;
           material[idx] = nextMaterial[idx];
-          const mixVar = (((gx * 29 + gy * 53) & 3) - 1.5) * 0.75;
-          const r = nextColorR[idx] * invA + mixVar;
-          const g = nextColorG[idx] * invA + mixVar;
-          const b = nextColorB[idx] * invA + mixVar;
-          colorR[idx] = r < 0 ? 0 : r > 255 ? 255 : r;
-          colorG[idx] = g < 0 ? 0 : g > 255 ? 255 : g;
-          colorB[idx] = b < 0 ? 0 : b > 255 ? 255 : b;
+          grain[idx] = nextGrain[idx];
+          colorR[idx] = nextColorR[idx] * invA;
+          colorG[idx] = nextColorG[idx] * invA;
+          colorB[idx] = nextColorB[idx] * invA;
           const h = nextHeat[idx] * invA;
           const clampedH = h < 0 ? 0 : h > 1 ? 1 : h;
           heat[idx] = clampedH;
           startDist[idx] = nextStartDist[idx];
+          const ox = nextOffX[idx] * invA;
+          const oy = nextOffY[idx] * invA;
+          offX[idx] = ox < 0 ? 0 : ox > 0.999 ? 0.999 : ox;
+          offY[idx] = oy < 0 ? 0 : oy > 0.999 ? 0.999 : oy;
           activeCount++;
           if (gx < newMinX) newMinX = gx;
           if (gx > newMaxX) newMaxX = gx;
           if (gy < newMinY) newMinY = gy;
           if (gy > newMaxY) newMaxY = gy;
-          if (clampedA >= 0.16 && clampedH > 0.34) {
-            this.markHotTile(gx, gy);
-          }
+          if (clampedA >= 0.16 && clampedH > 0.34) this.markHotTile(gx, gy);
         } else {
           amount[idx] = 0;
           material[idx] = 0;
-          colorR[idx] = 0;
-          colorG[idx] = 0;
-          colorB[idx] = 0;
           heat[idx] = 0;
           startDist[idx] = 0;
         }
@@ -1347,21 +1361,20 @@ export class VoidFluidGrid {
     return this.hotTiles[ty * this.hotTilesW + tx] === 1;
   }
 
-  /** Computes the effective thermal heat (`0..1`) at cell `idx`, combining advected per-cell `heat[idx]`
-   * with precomputed spiral flow filament modulation (no per-cell `Math.sin` or `Math.log`).
-   * Keeps source color in the outer third (`uRaw <= 0.33`), then ramps through red -> orange -> yellow-white -> violet. */
+  /** Effective thermal heat (`0..1`) at cell `idx`: the parcel's advected heat, eased toward how far it has fallen.
+   * Keeps source color while matter is still far out, then ramps red -> orange -> yellow-white -> violet. */
   computeCellHeat(idx: number, _animTime = 0): number {
     const hAdv = this.heat[idx];
     const d = this.flowDist[idx];
     const coreR = this.flowCoreR[idx] || 4.0;
-    const sDist = Math.max(coreR + 5, this.startDist[idx] || this.flowReachR[idx] || 22);
-    const span = Math.max(3.5, sDist - coreR);
-    const uRaw = Math.min(1, Math.max(0, 1 - (d - coreR) / span));
-    const uThird = uRaw <= 0.30 ? uRaw * 0.45 : 0.135 + ((uRaw - 0.30) * (1 / 0.70)) * 0.865;
-    const baseH = hAdv > 0.001 ? hAdv * 0.68 + uThird * 0.32 : uThird;
-    const waveScale = 0.12 * (1 - uRaw * 0.5) * Math.min(1, uRaw * 2.4);
-    const spiralWave = this.flowSpiralPhase[idx] * waveScale;
-    const res = baseH + spiralWave;
+    const sDist = Math.max(coreR + 5, this.startDist[idx] || 22);
+    const uRaw = Math.min(1, Math.max(0, 1 - (d - coreR) / fluidHeatSpan(coreR, sDist)));
+    const uThird = uRaw <= 0.3 ? uRaw * 0.45 : 0.135 + (uRaw - 0.3) * (1 / 0.7) * 0.865;
+    let res = hAdv > 0.001 ? hAdv * 0.68 + uThird * 0.32 : uThird;
+    // White-hot is as far as matter gets until the last few pixels, where it turns Void violet and vanishes
+    const rim = d - coreR;
+    const cap = rim >= 5 ? 0.66 : 0.66 + (1 - rim / 5) * 0.34;
+    if (res > cap) res = cap;
     return res < 0 ? 0 : res > 1 ? 1 : res;
   }
 
@@ -1385,6 +1398,7 @@ export class VoidFluidGrid {
     let samplesEmitted = 0;
     const gain = Math.min(1.45, 0.72 + neonIntensity * 0.38);
     const cheap = cellSize >= 2;
+    const out = heatScratch;
 
     for (let gy = this.minY; gy <= this.maxY; gy += step) {
       const wy = Math.floor((gy + 0.5) * cellSize);
@@ -1397,36 +1411,38 @@ export class VoidFluidGrid {
         const h = this.computeCellHeat(idx, 0);
         if (h <= 0.22) continue;
 
-        const [r, g, b] = evaluateFluidHeatColor(colorR[idx], colorG[idx], colorB[idx], h, cheap);
+        heatColorInto(out, colorR[idx], colorG[idx], colorB[idx], h, cheap);
         const heatNorm = (h - 0.22) / 0.78;
         const heatWeight = heatNorm * heatNorm * Math.min(1.25, amt * 0.95) * gain;
 
         const wx = Math.floor((gx + 0.5) * cellSize);
         const hx = Math.max(0, Math.min(haloW - 1, wx >> 1));
         const hi = (hy * haloW + hx) * 3;
-        halo[hi] = Math.min(255, halo[hi] + r * heatWeight);
-        halo[hi + 1] = Math.min(255, halo[hi + 1] + g * heatWeight);
-        halo[hi + 2] = Math.min(255, halo[hi + 2] + b * heatWeight);
+        halo[hi] = Math.min(255, halo[hi] + out[0] * heatWeight);
+        halo[hi + 1] = Math.min(255, halo[hi + 1] + out[1] * heatWeight);
+        halo[hi + 2] = Math.min(255, halo[hi + 2] + out[2] * heatWeight);
         samplesEmitted++;
       }
     }
     return samplesEmitted;
   }
 
-  /** Renders the entire active fluid grid and optional spark layer into one `ImageData` buffer
-   * and blits it to `targetCtx` with a single `putImageData` + `drawImage` call. */
+  /** Renders the active fluid and optional spark layer into one `ImageData` buffer and blits it to `targetCtx`
+   * with a single `putImageData` + `drawImage` call. Each parcel is shaded as a clump of torn ground: its own
+   * grain, a lit top edge and a shadowed underside where the stream thins, stepped pixel-art alpha for thin
+   * tails, and self-emission once it heats near the hole. */
   render(
     targetCtx: CanvasRenderingContext2D,
     world: VoidWorld,
     preset: TimeOfDayPreset,
     weather: VoidWeatherMode,
     wetness: number,
-    animTime: number,
+    _animTime: number,
     reduceEffects: boolean,
     viewBounds?: { x0: number; y0: number; x1: number; y1: number },
   ): { drawnCells: number; drawnSparks: number } {
     this.ensureSize(world.grid.w, world.grid.h, this.cellSize || 1);
-    const { gridW, gridH, cellSize, amount, colorR, colorG, colorB, flowDist, flowCoreR } = this;
+    const { gridW, gridH, cellSize, amount, colorR, colorG, colorB, flowDist, flowCoreR, grain } = this;
     if (!this.imageData && this.ctx && this.canvas) {
       this.canvas.width = gridW;
       this.canvas.height = gridH;
@@ -1452,12 +1468,17 @@ export class VoidFluidGrid {
     const bx1 = hasFluid ? Math.min(vx1, this.maxX + 1) : vx1;
     const by1 = hasFluid ? Math.min(vy1, this.maxY + 1) : vy1;
 
-    // Scene lighting for cool fluid (Time of Day ambient + sun + wet rain sheen)
+    // Scene lighting for cool matter (Time of Day ambient + wet rain sheen)
     const sky = looseMaterialLight(preset);
     const isRain = weather === "rain" || wetness > 0.05;
-    const wetSheen = isRain ? 1 + wetness * 0.14 : 1.0;
+    const wetSheen = isRain ? 1 + wetness * 0.12 : 1.0;
     const lowTier = cellSize >= 2;
-    const effTime = reduceEffects ? 0 : animTime;
+    // A coarse Low cell's tent spans four times the ground, so it needs more matter before it shows
+    const drawDensity = lowTier ? DRAW_DENSITY * 2.2 : DRAW_DENSITY;
+    const out = heatScratch;
+    const worldW = world.grid.w;
+    const worldH = world.grid.h;
+    const mats = world.material;
 
     let drawMinX = gridW;
     let drawMinY = gridH;
@@ -1467,166 +1488,100 @@ export class VoidFluidGrid {
 
     if (hasFluid && bx1 >= bx0 && by1 >= by0) {
       this.syncFlowField(world);
+      // Smoothed density: a separable [1/2, 1, 1/2] tent over `amount`, so neighbouring parcels fuse into solid
+      // ribbons with clean pixel edges, while a lone grain of dust stays below the draw threshold.
+      const sx0 = Math.max(0, bx0 - 1);
+      const sx1 = Math.min(gridW - 1, bx1 + 1);
+      const sy0 = Math.max(0, by0 - 1);
+      const sy1 = Math.min(gridH - 1, by1 + 1);
+      const densH = this.densH;
+      for (let gy = sy0; gy <= sy1; gy++) {
+        const row = gy * gridW;
+        for (let gx = sx0; gx <= sx1; gx++) {
+          const i = row + gx;
+          densH[i] = amount[i] + 0.5 * ((gx > 0 ? amount[i - 1] : 0) + (gx + 1 < gridW ? amount[i + 1] : 0));
+        }
+      }
+      const densAt = (i: number, gy: number): number =>
+        densH[i] + 0.5 * ((gy > sy0 ? densH[i - gridW] : 0) + (gy < sy1 ? densH[i + gridW] : 0));
+
       for (let gy = by0; gy <= by1; gy++) {
         const row = gy * gridW;
-        const bayerRow = (gy & 3) << 2;
+        const wy = Math.min(worldH - 1, Math.floor((gy + 0.5) * cellSize));
         for (let gx = bx0; gx <= bx1; gx++) {
           const idx = row + gx;
-          const amt = amount[idx];
-          if (amt <= 0.025) {
-            rasterU32[idx] = 0;
+          if (densH[idx] <= 0.02 && (gy <= sy0 || densH[idx - gridW] <= 0.02) && (gy >= sy1 || densH[idx + gridW] <= 0.02)) {
             continue;
           }
+          const dens = densAt(idx, gy);
+          if (dens < drawDensity) continue;
           const d = flowDist[idx];
           const coreR = flowCoreR[idx] || 4.0;
-          if (d <= coreR + 0.15) {
-            rasterU32[idx] = 0;
-            continue;
-          }
+          if (d <= coreR + 0.15) continue;
 
-          // Only render inside Void or EMPTY space
-          const wx = Math.min(world.grid.w - 1, Math.floor((gx + 0.5) * cellSize));
-          const wy = Math.min(world.grid.h - 1, Math.floor((gy + 0.5) * cellSize));
-          const wIdx = wy * world.grid.w + wx;
-          if (world.material[wIdx] !== CellMaterial.VOID && world.material[wIdx] !== CellMaterial.EMPTY) {
-            rasterU32[idx] = 0;
-            continue;
-          }
+          // Only inside the Void (or open space), and hidden behind northern cliff walls
+          const wx = Math.min(worldW - 1, Math.floor((gx + 0.5) * cellSize));
+          const m = mats[wy * worldW + wx];
+          if (m !== CellMaterial.VOID && m !== CellMaterial.EMPTY) continue;
+          if (wy >= 1 && isOccludedByLedge(world, wx, wy)) continue;
 
-          // Early-out spiral arm gaps & northern cliff ledge occlusion before heat/color shading
-          const spiralArm = this.flowSpiralPhase[idx];
-          const nearHorizon = d - coreR;
-          if (nearHorizon < 2.2 && spiralArm < 0.25 && amt < 1.35) {
-            rasterU32[idx] = 0;
-            continue;
-          }
-          if (nearHorizon >= 2.2 && spiralArm < -0.16) {
-            rasterU32[idx] = 0;
-            continue;
-          }
-          if (wy >= 1 && isOccludedByLedge(world, wx, wy)) {
-            rasterU32[idx] = 0;
-            continue;
-          }
-
-          // 1. Continuous heat & thermal ramp from true source color
-          const h = this.computeCellHeat(idx, effTime);
-          let baseR: number;
-          let baseG: number;
-          let baseB: number;
-          if (h <= 0.02) {
-            baseR = colorR[idx];
-            baseG = colorG[idx];
-            baseB = colorB[idx];
-          } else if (lowTier) {
-            if (h < 0.45) {
-              const t = h * (1 / 0.45);
-              baseR = colorR[idx] + (235 - colorR[idx]) * t;
-              baseG = colorG[idx] + (92 - colorG[idx]) * t;
-              baseB = colorB[idx] + (24 - colorB[idx]) * t;
-            } else if (h < 0.76) {
-              const t = (h - 0.45) * (1 / 0.31);
-              baseR = 235 + 20 * t;
-              baseG = 92 + 116 * t;
-              baseB = 24 + 88 * t;
-            } else {
-              const t = (h - 0.76) * (1 / 0.24);
-              baseR = 255 - 81 * t;
-              baseG = 208 - 152 * t;
-              baseB = 112 + 124 * t;
-            }
-          } else {
-            let hr: number;
-            let hg: number;
-            let hb: number;
-            if (h < 0.36) {
-              const u = h * (1 / 0.36);
-              hr = 156 + 78 * u;
-              hg = 28 + 50 * u;
-              hb = 16 + 6 * u;
-            } else if (h < 0.64) {
-              const u = (h - 0.36) * (1 / 0.28);
-              if (u < 0.58) {
-                const v = u * (1 / 0.58);
-                hr = 234 + 21 * v;
-                hg = 78 + 70 * v;
-                hb = 22 + 14 * v;
-              } else {
-                const v = (u - 0.58) * (1 / 0.42);
-                hr = 255;
-                hg = 148 + 84 * v;
-                hb = 36 + 112 * v;
+          // Color comes from this cell's parcel, or the densest neighbour when this pixel only bridges a gap
+          let src = idx;
+          if (amount[idx] <= 0.03) {
+            let best = 0;
+            for (let oy = -1; oy <= 1; oy++) {
+              const ny = gy + oy;
+              if (ny < 0 || ny >= gridH) continue;
+              for (let ox = -1; ox <= 1; ox++) {
+                const nx = gx + ox;
+                if (nx < 0 || nx >= gridW) continue;
+                const a = amount[ny * gridW + nx];
+                if (a > best) {
+                  best = a;
+                  src = ny * gridW + nx;
+                }
               }
-            } else if (h < 0.84) {
-              const u = (h - 0.64) * 5;
-              hr = 255 - 17 * u;
-              hg = 232 - 156 * u;
-              hb = 148 + 50 * u;
-            } else {
-              const u = (h - 0.84) * (1 / 0.16);
-              hr = 238 - 76 * u;
-              hg = 76 - 24 * u;
-              hb = 198 + 40 * u;
             }
-            const rawMix = h <= 0.14 ? 0 : h >= 0.50 ? 1 : (h - 0.14) * (1 / 0.36);
-            const mix = rawMix * rawMix * (3 - 2 * rawMix);
-            const sr = colorR[idx];
-            const sg = colorG[idx];
-            const sb = colorB[idx];
-            baseR = sr + (hr - sr) * mix;
-            baseG = sg + (hg - sg) * mix;
-            baseB = sb + (hb - sb) * mix;
           }
 
-          // 2. Smooth emissive transition: cool fluid is lit by scene sky/sun; hot fluid glows with self-emission
-          const emission = h <= 0.05 ? 0 : Math.min(1, h * h * 1.1);
-          let litR = baseR * (sky[0] + (1 - sky[0]) * emission);
-          let litG = baseG * (sky[1] + (1 - sky[1]) * emission);
-          let litB = baseB * (sky[2] + (1 - sky[2]) * emission);
+          // 1. Source color heated along the thermal ramp
+          // Each clump heats a little unevenly, so molten streams flicker between orange and white-hot
+          const hc = this.computeCellHeat(src, 0);
+          const h = hc > 0.2 ? Math.min(1, hc + (grain[src] - 128) * (0.07 / 128)) : hc;
+          heatColorInto(out, colorR[src], colorG[src], colorB[src], h, lowTier);
 
-          const nAmt = gy > 0 ? amount[idx - gridW] : 0;
-          const wAmt = gx > 0 ? amount[idx - 1] : 0;
-          const sAmt = gy + 1 < gridH ? amount[idx + gridW] : 0;
-          const eAmt = gx + 1 < gridW ? amount[idx + 1] : 0;
+          // 2. Cool matter is lit by the scene; hot matter lights itself
+          const emission = h <= 0.05 ? 0 : Math.min(1, h * h * 1.15);
+          // Clump grain: +/-12% on cool ground, fading as heat melts it into a glowing stream
+          const grainMul = 1 + ((grain[src] - 128) / 128) * 0.12 * (1 - emission * 0.4);
+          let shade = grainMul * wetSheen * (0.86 + 0.14 * Math.min(1, dens));
+          let lift = 0;
 
-          const isSunwardEdge = amt >= 0.08 && (nAmt < amt * 0.65 || wAmt < amt * 0.65 || spiralArm > 0.62);
-          const isInnerShadowEdge = !isSunwardEdge && amt >= 0.08 && (sAmt < amt * 0.58 || eAmt < amt * 0.58 || spiralArm < -0.15);
-
-          // Slight depth darkening as cool/warm fluid gets deeper (`amt > 0.85`) so streams feel like thick glossy liquid
-          const deepDarken = amt > 0.85 ? Math.max(0.76, 1 - (amt - 0.85) * 0.14 * (1 - emission * 0.7)) : 1.0;
-          let shadeScale = (0.94 + 0.24 * Math.min(1, amt * 1.15)) * deepDarken * wetSheen;
-          let specularAdd = 0;
-
-          if (isSunwardEdge) {
-            shadeScale *= 1.18;
-            specularAdd = isRain ? 28 : 22;
-          } else if (isInnerShadowEdge) {
-            shadeScale *= 0.78;
+          // 3. Pixel-art clump relief: a lit top edge where the stream ends to the north, shadow on its underside
+          const nDens = gy > sy0 ? densAt(idx - gridW, gy - 1) : 0;
+          const sDens = gy < sy1 ? densAt(idx + gridW, gy + 1) : 0;
+          if (nDens < drawDensity) {
+            shade *= 1.18;
+            lift = isRain ? 22 : 14;
+          } else if (sDens < drawDensity) {
+            shade *= 0.68;
           }
 
-          // Hot core incandescence boost so hot trails visibly glow at night and read crisply in daylight
-          const hotBoost = h > 0.40 ? (h - 0.40) * 56 : 0;
-          litR = litR * shadeScale + specularAdd + hotBoost;
-          litG = litG * shadeScale + specularAdd * 0.92 + hotBoost * 0.68;
-          litB = litB * shadeScale + specularAdd * 1.08 + hotBoost * (h > 0.72 ? 1.25 : 0.35);
+          const hotBoost = h > 0.42 ? (h - 0.42) * 60 : 0;
+          const r = (out[0] * (sky[0] + (1 - sky[0]) * emission) * shade + lift + hotBoost + 0.5) | 0;
+          const g = (out[1] * (sky[1] + (1 - sky[1]) * emission) * shade + lift * 0.94 + hotBoost * 0.66 + 0.5) | 0;
+          const b = (out[2] * (sky[2] + (1 - sky[2]) * emission) * shade + lift * 1.06 +
+            hotBoost * (h > 0.72 ? 1.2 : 0.3) + 0.5) | 0;
 
-          // 4. Deterministic 4x4 Bayer ordered dithering on color and mostly-opaque alpha (skipped on Low quality)
-          const bayer = lowTier ? 0 : BAYER_4X4[bayerRow + (gx & 3)];
-          const colorDither = bayer * 10;
+          // 4. Stepped alpha: dense streams are solid, thinning tails fall off in hard pixel-art steps
+          const alpha = dens >= 0.9 || h > 0.5 ? 255 : dens >= 0.55 ? 225 : dens >= 0.36 ? 175 : 120;
 
-          // Mostly opaque streams: dense matter (`amt >= 0.18`) is 90-100% opaque; only the very thinnest tail pixels taper
-          const rawAlpha = amt >= 0.24 ? 1.0 : amt >= 0.10 ? 0.84 + (amt - 0.10) * 1.14 : 0.45 + amt * 3.9;
-          const ditheredAlpha = Math.max(0, Math.min(255, ((rawAlpha + bayer * 0.12) * 255) | 0));
-          if (ditheredAlpha <= 32) {
-            rasterU32[idx] = 0;
-            continue;
-          }
-
-          const r = Math.min(255, Math.max(0, (litR + colorDither + 0.5) | 0));
-          const g = Math.min(255, Math.max(0, (litG + colorDither + 0.5) | 0));
-          const b = Math.min(255, Math.max(0, (litB + colorDither + 0.5) | 0));
-
-          rasterU32[idx] = packAbgr(r, g, b, ditheredAlpha);
+          rasterU32[idx] = packAbgr(
+            r < 0 ? 0 : r > 255 ? 255 : r,
+            g < 0 ? 0 : g > 255 ? 255 : g,
+            b < 0 ? 0 : b > 255 ? 255 : b,
+            alpha,
+          );
           drawnCells++;
           if (gx < drawMinX) drawMinX = gx;
           if (gx > drawMaxX) drawMaxX = gx;
@@ -1647,17 +1602,17 @@ export class VoidFluidGrid {
         const gx = Math.floor(s.x / cellSize);
         const gy = Math.floor(s.y / cellSize);
         if (gx < vx0 || gx > vx1 || gy < vy0 || gy > vy1) continue;
-        const wx = Math.min(world.grid.w - 1, Math.floor((gx + 0.5) * cellSize));
-        const wy = Math.min(world.grid.h - 1, Math.floor((gy + 0.5) * cellSize));
+        const wx = Math.min(worldW - 1, Math.floor((gx + 0.5) * cellSize));
+        const wy = Math.min(worldH - 1, Math.floor((gy + 0.5) * cellSize));
         if (isOccludedByLedge(world, wx, wy)) continue;
         const idx = gy * gridW + gx;
         const lifeRatio = s.life / Math.max(0.05, s.maxLife);
-        const [sr, sg, sb] = evaluateFluidHeatColor(s.r, s.g, s.b, Math.min(1, 0.45 + lifeRatio * 0.5), lowTier);
+        heatColorInto(out, s.r, s.g, s.b, Math.min(1, 0.45 + lifeRatio * 0.5), lowTier);
         const fade = Math.max(40, Math.min(250, Math.round((1 - lifeRatio * 0.65) * 250)));
         rasterU32[idx] = packAbgr(
-          Math.min(255, Math.round(sr + 36)),
-          Math.min(255, Math.round(sg + 28)),
-          Math.min(255, Math.round(sb + 38)),
+          Math.min(255, Math.round(out[0] + 36)),
+          Math.min(255, Math.round(out[1] + 28)),
+          Math.min(255, Math.round(out[2] + 38)),
           fade,
         );
         touchedSparks.push(idx);
@@ -1668,7 +1623,7 @@ export class VoidFluidGrid {
         if (gy > drawMaxY) drawMaxY = gy;
       }
 
-      // Stamp small bright flashes where streams cross the event horizon ring
+      // Small bright flashes where streams cross the event horizon
       for (let i = 0; i < this.horizonFlashes.length; i++) {
         const f = this.horizonFlashes[i];
         if (!f.active) continue;
@@ -1677,12 +1632,8 @@ export class VoidFluidGrid {
         if (gx < vx0 || gx > vx1 || gy < vy0 || gy > vy1) continue;
         const idx = gy * gridW + gx;
         const t = f.life / Math.max(0.02, f.maxLife);
-        // Bright white-cyan to violet-magenta flash pixel at the event horizon
-        const fr = t < 0.45 ? 255 : 235;
-        const fg = t < 0.45 ? 248 : 145;
-        const fb = 255;
         const fa = Math.max(90, Math.min(255, Math.round((1 - t * 0.65) * 255)));
-        rasterU32[idx] = packAbgr(fr, fg, fb, fa);
+        rasterU32[idx] = t < 0.45 ? packAbgr(255, 246, 228, fa) : packAbgr(255, 170, 120, fa);
         touchedSparks.push(idx);
         drawnSparks++;
         if (gx < drawMinX) drawMinX = gx;
@@ -1710,19 +1661,19 @@ export class VoidFluidGrid {
         dh * cellSize,
       );
       targetCtx.imageSmoothingEnabled = prevSmooth;
-
-      // Wipe the blitted rect so pixels from cells that drained or sparks that moved never reappear as ghosts
+    }
+    // Wipe the blitted rect so drained cells or moved sparks never reappear as ghosts
+    if (drawMaxX >= drawMinX && drawMaxY >= drawMinY) {
       for (let gy = drawMinY; gy <= drawMaxY; gy++) {
         const row = gy * gridW;
         rasterU32.fill(0, row + drawMinX, row + drawMaxX + 1);
       }
-    } else {
-      for (let i = 0; i < touchedSparks.length; i++) rasterU32[touchedSparks[i]] = 0;
     }
 
     return { drawnCells, drawnSparks };
   }
 }
+
 
 /** Deterministic helper to pick a crack count (2..4) for a melting chunk. */
 export function chunkCrackCount(seed: number, cellIdx: number, size: number): number {

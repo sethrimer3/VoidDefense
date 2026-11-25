@@ -51,6 +51,7 @@ import {
   type VoidTimeOfDay,
   type VoidWeatherMode,
 } from "./lighting.ts";
+import { drawBlackHole } from "./black-hole.ts";
 import { isOccludedByLedge, paintVoidLedge } from "./ledge.ts";
 import { valueNoise } from "./portal-noise.ts";
 import { computeOrganismContour, computeNodeContour, paintOrganismContour, paintNodeContour } from "./contour.ts";
@@ -2428,63 +2429,14 @@ export class VoidRenderer {
       Math.max(0, Math.min(1, voidField.energyRemaining / Math.max(1, sim.scenario.initialVoidEnergy)));
     for (const p of world.portals) {
       if (p.active) {
-        const coreR = Math.max(3.6, p.radius * 0.42);
-
-        // Lightless core
-        c.fillStyle = "#000000";
-        c.beginPath();
-        c.arc(p.x, p.y, coreR, 0, Math.PI * 2);
-        c.fill();
-
-        // Crisp photon rim & restrained violet-magenta event horizon
-        c.strokeStyle = "rgba(230, 185, 255, 0.78)";
-        c.lineWidth = 0.32;
-        c.beginPath();
-        c.arc(p.x, p.y, coreR + 0.05, 0, Math.PI * 2);
-        c.stroke();
-        c.strokeStyle = `rgba(195, 62, 225, ${Math.min(0.86, 0.4 + activePreset.neonIntensity * 0.23)})`;
-        c.lineWidth = 0.55;
-        c.beginPath();
-        c.arc(p.x, p.y, coreR + 0.65 + 0.08 * pulse, 0, Math.PI * 2);
-        c.stroke();
-
-        // The sun catches the near side of the lens. At night the violet rim lights itself.
-        const rimAngle = Math.atan2(activePreset.sunDir[1], activePreset.sunDir[0]);
-        c.strokeStyle = `rgba(192, 153, 255, ${0.12 + activePreset.sunIntensity * 0.92})`;
-        c.lineWidth = 0.85;
-        c.beginPath();
-        c.arc(p.x, p.y, coreR + 1.15, rimAngle - 0.88, rimAngle + 0.88);
-        c.stroke();
-
-        // The bright arc shows the remaining reservoir against a dim, complete track.
-        const gaugeR = coreR * 0.73;
-        const gaugeTop = -Math.PI / 2;
-        c.lineWidth = 1.1;
-        c.strokeStyle = "#51365f";
-        c.beginPath();
-        c.arc(p.x, p.y, gaugeR, 0, Math.PI * 2);
-        c.stroke();
-        if (energy > 0) {
-          c.strokeStyle = energy > 0.25 ? "#b4edff" : "#ff9d70";
-          c.beginPath();
-          c.arc(p.x, p.y, gaugeR, gaugeTop, gaugeTop + Math.PI * 2 * energy);
-          c.stroke();
-        }
-        c.fillStyle = "#e5d7fb";
-        c.fillRect(p.x - 0.45, p.y - gaugeR - 0.9, 0.9, 1.4);
-
-        // Single restrained tilted accretion arc
-        if (!this.reduceEffects) {
-          c.save();
-          c.translate(p.x, p.y);
-          c.rotate(animTime * 0.42 + p.id);
-          c.strokeStyle = "rgba(110, 215, 240, 0.5)";
-          c.lineWidth = 0.4;
-          c.beginPath();
-          c.ellipse(0, 0, coreR + 1.9, coreR * 0.72, 0, Math.PI * 0.15, Math.PI * 1.45);
-          c.stroke();
-          c.restore();
-        }
+        drawBlackHole(rawScene, {
+          x: p.x,
+          y: p.y,
+          coreR: Math.max(3.6, p.radius * 0.42),
+          energy,
+          animTime,
+          seed: p.id * 7.31,
+        });
       } else {
         // A dashed survey ring and small diamond mark the breach on intact terrain.
         c.strokeStyle = "#251533";
