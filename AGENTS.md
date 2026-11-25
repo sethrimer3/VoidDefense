@@ -42,8 +42,8 @@ The detailed module-by-module reference lives in `docs/architecture/`. Read only
 
 | File | Covers |
 |------|--------|
-| `docs/architecture/void-defense.md` | Void Defense (`src/void/`): metropolitan `VoidWorld`, perimeter-budget `VoidField`, structural collapse & matter deposition (`VoidPhysics`), 17 structures & 6 strikes (`VoidCombatManager`), `VoidSim`, 63-node global tech DAG (`VoidTechWallet`), Resistance Operations, `voiddefense.v1` saves |
-| `docs/architecture/rendering.md` | Renderer passes, crisp zoom, 1:1 cell pixel rendering, organic noise-based contours (`portal-noise.ts`, `contour.ts`), ledge cross-sections, living interior wisps, magic circles, render performance |
+| `docs/architecture/void-defense.md` | Void Defense (`src/void/`): metropolitan `VoidWorld`, perimeter-budget `VoidField`, structural collapse, grid-based `VoidFluidGrid` & matter deposition (`VoidPhysics`), 17 structures & 6 strikes (`VoidCombatManager`), `VoidSim`, 63-node global tech DAG (`VoidTechWallet`), Resistance Operations, `voiddefense.v1` saves |
+| `docs/architecture/rendering.md` | Renderer passes, crisp zoom, 1:1 cell pixel rendering, grid-based Void accretion fluid (`void-fluid.ts`), organic noise-based contours (`portal-noise.ts`, `contour.ts`), ledge cross-sections, living interior wisps, magic circles, render performance |
 | `docs/architecture/lighting.md` | 2.5D surface lighting (`src/void/lighting.ts`), Time of Day presets (`day`/`sunset`/`night`), procedural 3×3 Sobel normal maps, coherent building neon & 1/2-res emissive halo spill, Tron neon blue building & neon orange tower lights, soft-penumbra shadow raycasting, incremental 16×16 tiled G-buffer cache, and quality tiers (`low`/`medium`/`high`) with auto-drop |
 | `docs/architecture/shell-ui.md` | Startup, sole-game bootstrap (`boot.ts`), HUD and dialogs, settings, localization, sound, profile, saves (`voiddefense.v1`) |
 | `docs/architecture/commands.md` | Per-feature browser checks (`tests/*.mjs`), focused Node tests, benchmarks and tools |

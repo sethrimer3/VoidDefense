@@ -518,6 +518,9 @@ export class VoidFluidGrid {
       const cCore = this.flowCoreR[cIdx] || coreR;
       if (cd <= cCore) return;
       const prev = this.amount[cIdx];
+      if (prev <= 0.022 && prev + amt > 0.022) {
+        this.activeCellCount++;
+      }
       const next = Math.min(3.6, prev + amt);
       this.amount[cIdx] = next;
       if (prev < 0.05 || amt >= prev * 0.35) {
@@ -760,7 +763,7 @@ export class VoidFluidGrid {
 
   /** Computes the discrete pixel-art heat band (`0..6`) for a fluid cell at `distToPortal`.
    * Band shifts cleanly from material color (0..2) -> orange-hot (3..4) -> violet/magenta (5..6)
-   * near the event horizon, with a subtle spiral arm modulation for swirling accretion bands. */
+   * near the event horizon, with a spiral arm modulation for swirling accretion bands. */
   computeCellBand(idx: number, animTime = 0): number {
     const d = this.flowDist[idx];
     const coreR = this.flowCoreR[idx] || 4.0;
@@ -768,11 +771,13 @@ export class VoidFluidGrid {
     const span = Math.max(3.5, sDist - coreR);
     // Normalized inward progress u in [0, 1] (0 at outer edge, 1 at event horizon)
     const uRaw = Math.min(1, Math.max(0, 1 - (d - coreR) / span));
-    // Slight ease-in so material colors remain readable in the outer ring and heat rapidly near the core
-    const u = Math.pow(uRaw, 0.85);
-    // Spiral arm wave so bands visibly swirl around the accretion disk like pixel art
+    // Ease-in so outer/mid rings preserve distinct material colors (grass, dirt, stone, concrete, crops, water)
+    // before heating into orange-hot and violet/magenta near the event horizon
+    const u = Math.pow(uRaw, 1.15);
+    // Spiral arm wave so bands visibly swirl around the accretion disk like pixel art (fades right at the core rim)
     const ang = this.flowAngle[idx];
-    const spiralWave = Math.sin(ang * 3 + Math.log(Math.max(1, d - coreR + 1)) * 4.5 - animTime * 2.2) * 0.11;
+    const waveScale = 0.13 * (1 - uRaw * 0.72);
+    const spiralWave = Math.sin(ang * 3 + Math.log(Math.max(1, d - coreR + 1)) * 5.2 - animTime * 2.2) * waveScale;
     const bandRaw = Math.min(0.999, Math.max(0, u + spiralWave));
     return Math.min(FLUID_BAND_COUNT - 1, Math.floor(bandRaw * FLUID_BAND_COUNT));
   }

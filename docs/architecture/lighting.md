@@ -73,9 +73,9 @@ All world surfaces—terrain, buildings, placed towers, and infantry—generate 
   - `VoidRenderer` monitors the combined lighting and reflection computation time and automatically drops `effectiveLightingQuality` one tier after sustained slow frames (`> 11.5 ms`), recovering when frame times drop (`< 4.5 ms`).
 
 
-## 6. Void Debris and Traffic
+## 6. Void Accretion Fluid, Chunks, and Traffic
 
-Loose fragments and submerged chunks use cached heat palettes shaded by the current sky. Heat adds its own emission near the event horizon. The Void's floor takes the preset's ambient tint, with a directional highlight on the portal rim. Blue civilian traffic and amber delivery trucks cast small, additive pools on nearby road and park pixels at native resolution.
+Short-lived torn-off chunks (`0.4–0.6 s`) melt into the grid-based Void accretion fluid (`src/void/void-fluid.ts`), which uses 7-band pixel-art palettes per material (`grass`, `dirt`, `stone`, `concrete`, `crops`, `water`). Outer material bands take the current `TimeOfDayPreset` sky lighting (`looseMaterialLight`), while hot inner orange and violet/magenta bands are self-emissive and feed the half-resolution (`1/2` res) emissive halo buffer via low-res 2×2 texel sampling inside the dirty fluid bounding box. The Void's floor takes the preset's ambient tint, with a directional highlight on the portal rim. Blue civilian traffic and amber delivery trucks cast small, additive pools on nearby road and park pixels at native resolution.
 
 ## 7. Water and Glass Reflections
 

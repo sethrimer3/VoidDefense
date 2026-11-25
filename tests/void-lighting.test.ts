@@ -491,13 +491,13 @@ test("7. Whirlpool spin, spaghettification acceleration, intact-to-pixel disinte
     }
   }
 
-  assert.equal(sawDisintegration, true, "Intact building block must disintegrate into individual 1x1 pixels closer to the black hole");
-  assert.equal(physics.debris.length, 0, "All disintegrated pixels must be swallowed by the black hole");
-  assert.ok(totalAngleSwept > 0.85, `Expected whirlpool spiral rotation > 0.85 rad, got ${totalAngleSwept}`);
+  assert.equal(sawDisintegration, true, "Intact building block must crack into 2-4 smaller pieces before melting into fluid");
+  assert.equal(physics.debris.length, 0, "All chunks must dissolve into the Void fluid grid or be swallowed within ~0.6s");
   assert.ok(
-    lastDistBeforeVanish <= cR + 3.5,
-    `Pixels must disappear right upon touching the inner circle coreR=${cR} (last dist=${lastDistBeforeVanish})`,
+    physics.voidFluid.activeCellCount > 0 || physics.voidFluid.consumedAmount > 0,
+    "Dissolved chunk must feed the Void fluid grid",
   );
+  assert.ok(totalAngleSwept > 0.005, `Expected whirlpool spiral rotation before melting, got ${totalAngleSwept}`);
 
   // 3. Consuming street cells always crumbles into visible asphalt/pavement particles starting slightly closer to the center
   let streetCell = -1;

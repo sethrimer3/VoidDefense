@@ -1839,16 +1839,30 @@ export class LightingEngine {
           }
         }
         // Sample hot inner Void fluid bands at low resolution (1 sample per 2x2 world texel)
-        if (fActive && voidFluid && ((x + y) & 1) === 0) {
+        if (fActive && voidFluid) {
           const fgx = Math.floor(px / fCellSize);
           const fgy = Math.floor(py / fCellSize);
-          if (fgx >= voidFluid.minX && fgx <= voidFluid.maxX && fgy >= voidFluid.minY && fgy <= voidFluid.maxY) {
-            const fIdx = fgy * fGridW + fgx;
-            const fAmt = voidFluid.amount[fIdx];
-            if (fAmt >= 0.14) {
-              const band = voidFluid.computeCellBand(fIdx, 0);
+          if (fgx + 1 >= voidFluid.minX && fgx <= voidFluid.maxX && fgy + 1 >= voidFluid.minY && fgy <= voidFluid.maxY) {
+            let bestIdx = -1;
+            let fAmt = 0;
+            const span = fCellSize === 1 ? 2 : 1;
+            for (let dy = 0; dy < span; dy++) {
+              for (let dx = 0; dx < span; dx++) {
+                const nx = fgx + dx;
+                const ny = fgy + dy;
+                if (nx >= voidFluid.minX && nx <= voidFluid.maxX && ny >= voidFluid.minY && ny <= voidFluid.maxY) {
+                  const nIdx = ny * fGridW + nx;
+                  if (voidFluid.amount[nIdx] > fAmt) {
+                    fAmt = voidFluid.amount[nIdx];
+                    bestIdx = nIdx;
+                  }
+                }
+              }
+            }
+            if (bestIdx >= 0 && fAmt >= 0.14) {
+              const band = voidFluid.computeCellBand(bestIdx, 0);
               if (band >= 3) {
-                const fMat = (voidFluid.material[fIdx] || FluidMaterial.CONCRETE) as FluidMaterialId;
+                const fMat = (voidFluid.material[bestIdx] || FluidMaterial.CONCRETE) as FluidMaterialId;
                 const pal = FLUID_MATERIAL_PALETTES[fMat] ?? FLUID_MATERIAL_PALETTES[FluidMaterial.CONCRETE];
                 const rgb = pal[Math.min(FLUID_BAND_COUNT - 1, band)];
                 const wGain = Math.min(1, (band - 2) * 0.28 * Math.min(1.2, fAmt));
@@ -2100,7 +2114,15 @@ export class LightingEngine {
       const nLocal = localLights.length;
       if (nLocal === 0 && !preset) continue;
       if (preset && nLocal === 0) {
-        if (this.tileAmbientClean[tileIdx]) {
+        const fluidTouchesTile =
+          useHalo &&
+          voidFluid &&
+          voidFluid.maxX >= voidFluid.minX &&
+          (tileIdx % chunksW) * CHUNK_SIZE + CHUNK_SIZE >= voidFluid.minX * voidFluid.cellSize - 4 &&
+          (tileIdx % chunksW) * CHUNK_SIZE <= (voidFluid.maxX + 1) * voidFluid.cellSize + 4 &&
+          ((tileIdx / chunksW) | 0) * CHUNK_SIZE + CHUNK_SIZE >= voidFluid.minY * voidFluid.cellSize - 4 &&
+          ((tileIdx / chunksW) | 0) * CHUNK_SIZE <= (voidFluid.maxY + 1) * voidFluid.cellSize + 4;
+        if (this.tileAmbientClean[tileIdx] && !fluidTouchesTile) {
           const tx = tileIdx % chunksW;
           const ty = (tileIdx / chunksW) | 0;
           const x0 = tx * CHUNK_SIZE;

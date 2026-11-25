@@ -924,8 +924,8 @@ export class VoidPhysics {
         continue;
       }
 
-      // Dissolve into fluid cells once the chunk's 0.4-0.6 s lifetime finishes, or before it gets swallowed raw
-      if (d.life >= d.maxLife || distToPortal <= Math.max(coreR + 3.2, startDist * 0.42)) {
+      // Dissolve into fluid cells once the chunk's 0.4-0.6 s lifetime finishes, or near the core rim
+      if (d.life >= d.maxLife || distToPortal <= coreR + 2.8) {
         const mass = Math.max(0.85, (d.mergedGrains ?? 1) * (d.intact ? d.size * 0.9 : 0.85));
         this.voidFluid.depositAtWorld(d.x, d.y, mass, fluidMat, startDist);
         if ((i + this.supportTick) % 3 === 0) {
@@ -968,7 +968,7 @@ export class VoidPhysics {
           const uy = ry / distToPortal;
           const tx = -uy;
           const ty = ux;
-          for (let k = 1; k < pieceCount; k++) {
+          for (let k = 1; k <= pieceCount; k++) {
             const radOff = (k - 1.5) * 0.7;
             const tanOff = ((k & 1) === 0 ? 1 : -1) * 0.8;
             const sx = d.x + ux * radOff + tx * tanOff;
