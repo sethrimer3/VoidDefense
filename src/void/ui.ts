@@ -209,6 +209,7 @@ export class VoidApp {
   private lastPreservedPercent = 100;
   private lastProfileKey = "";
   private lastCtrlKey = "";
+  private lastPaletteHtml = "";
   private lastSoundInBattle = false;
   private awaitingDeploy = false;
   private titleOpen = true;
@@ -997,7 +998,10 @@ export class VoidApp {
             })
             .join("");
 
-    drawer.innerHTML = catPicker + towerItems + strikeItems;
+    const nextHtml = catPicker + towerItems + strikeItems;
+    if (nextHtml === this.lastPaletteHtml) return;
+    this.lastPaletteHtml = nextHtml;
+    drawer.innerHTML = nextHtml;
 
     const catToggle = drawer.querySelector<HTMLButtonElement>("[data-pal-cat-toggle]");
     if (catToggle) {

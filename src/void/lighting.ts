@@ -1834,12 +1834,12 @@ export class LightingEngine {
       b += hb * hBoost;
       lightEnergy += (hr + hg + hb) * (hBoost * (1 / 255));
     }
-    const qr = Math.min(255, Math.max(40, Math.round(r * 0.125) * 8));
-    const qg = Math.min(255, Math.max(40, Math.round(g * 0.125) * 8));
-    const qb = Math.min(255, Math.max(40, Math.round(b * 0.125) * 8));
+    const qr = Math.min(255, Math.max(40, Math.round(r * (1 / 16)) * 16));
+    const qg = Math.min(255, Math.max(40, Math.round(g * (1 / 16)) * 16));
+    const qb = Math.min(255, Math.max(40, Math.round(b * (1 / 16)) * 16));
     const glint = Math.min(1, lightEnergy * 0.45);
-    const alphaCent = Math.round((splash ? 0.16 + glint * 0.12 : 0.11 + glint * 0.11) * 100);
-    const cacheKey = (qr >> 3) | ((qg >> 3) << 5) | ((qb >> 3) << 10) | (alphaCent << 15);
+    const alphaCent = Math.round((splash ? 0.16 + glint * 0.12 : 0.11 + glint * 0.11) * 50) * 2;
+    const cacheKey = (qr >> 4) | ((qg >> 4) << 4) | ((qb >> 4) << 8) | (alphaCent << 12);
     let style = this.rainStyleCache.get(cacheKey);
     if (style === undefined) {
       if (this.rainStyleCache.size >= 512) this.rainStyleCache.clear();

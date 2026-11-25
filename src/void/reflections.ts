@@ -255,6 +255,8 @@ type Tile = {
   glassRevision?: number;
   wetRevision?: number;
   wetRipplePhase?: number;
+  wetStreakSig?: number;
+  wetActorSig?: number;
   hadStreak?: boolean;
   hadWetStreak?: boolean;
 };
@@ -350,7 +352,9 @@ export class SurfaceReflections {
   private world?: VoidWorld;
   private dirty = new Uint8Array(0);
   private streakTiles = new Uint8Array(0);
+  private streakTileSig = new Uint32Array(0);
   private actorTileFlags = new Uint8Array(0);
+  private actorTileSig = new Uint32Array(0);
   private tiles: (Tile | undefined)[] = [];
   private bounds: Bounds = { x0: 0, y0: 0, x1: 0, y1: 0 };
   private waterBounds?: Bounds;
@@ -366,7 +370,9 @@ export class SurfaceReflections {
       this.tiles = new Array(chunkCount);
       this.dirty = new Uint8Array(chunkCount).fill(1);
       this.streakTiles = new Uint8Array(chunkCount);
+      this.streakTileSig = new Uint32Array(chunkCount);
       this.actorTileFlags = new Uint8Array(chunkCount);
+      this.actorTileSig = new Uint32Array(chunkCount);
       this.wasWet = false;
     }
     // A roof can project 15 pixels north and reflect 15 south. Glass rays reach 12 sideways.
@@ -387,7 +393,9 @@ export class SurfaceReflections {
     this.actorPixels.clear();
     this.streaks.clear();
     this.streakTiles.fill(0);
+    this.streakTileSig.fill(0);
     this.actorTileFlags.fill(0);
+    this.actorTileSig.fill(0);
   }
 
   stampActor(
@@ -411,7 +419,9 @@ export class SurfaceReflections {
       if (!matches || (this.actorPixels.get(idx)?.height ?? Infinity) <= height) continue;
       stamp ??= { lit: color(), height };
       this.actorPixels.set(idx, stamp);
-      this.actorTileFlags[((projectedY / CHUNK_SIZE) | 0) * chunksW + ((px / CHUNK_SIZE) | 0)] = 1;
+      const tIdx = ((projectedY / CHUNK_SIZE) | 0) * chunksW + ((px / CHUNK_SIZE) | 0);
+      this.actorTileFlags[tIdx] = 1;
+      this.actorTileSig[tIdx] = (Math.imul(this.actorTileSig[tIdx] ^ idx, 16777619) ^ stamp.lit) >>> 0;
     }
   }
 
@@ -454,13 +464,16 @@ export class SurfaceReflections {
             const wFalloff = Math.max(0, 1 - Math.abs(y - cy) / length);
             const energy = wFalloff * wFalloff * (1 - Math.abs(x - cx - wave) / (halfWidth + 1)) * 113 * bankFalloff;
             if (energy < 3) continue;
-            this.streakTiles[((y / CHUNK_SIZE) | 0) * chunksW + ((x / CHUNK_SIZE) | 0)] = 1;
+            const tIdx = ((y / CHUNK_SIZE) | 0) * chunksW + ((x / CHUNK_SIZE) | 0);
+            this.streakTiles[tIdx] = 1;
             const old = this.streaks.get(idx) ?? 0;
-            this.streaks.set(idx, packElevAbgr(
+            const packed = packElevAbgr(
               Math.min(255, channel(old, RED) + Math.round(light.r * energy)),
               Math.min(255, channel(old, GREEN) + Math.round(light.g * energy)),
               Math.min(255, channel(old, BLUE) + Math.round(light.b * energy)),
-            ));
+            );
+            this.streaks.set(idx, packed);
+            this.streakTileSig[tIdx] = (Math.imul(this.streakTileSig[tIdx] ^ idx, 16777619) ^ packed) >>> 0;
           } else if (wetActive && (s === SurfaceMaterial.WET_PUDDLE || s === SurfaceMaterial.WET_SHEEN)) {
             // Wet ground streaks stretch south below the light source in screen space
             if (y < cy - 2) continue;
@@ -473,13 +486,16 @@ export class SurfaceReflections {
             const rawEnergy = FALLOFF_POW_155[(falloff * 256 + 0.5) | 0] * (1 - xDist / (halfWidth + 1)) * (isPuddle ? 128 : 92) * bankFalloff * localWet;
             const energy = Math.round(rawEnergy / 6) * 6;
             if (energy < 4) continue;
-            this.streakTiles[((y / CHUNK_SIZE) | 0) * chunksW + ((x / CHUNK_SIZE) | 0)] = 1;
+            const tIdx = ((y / CHUNK_SIZE) | 0) * chunksW + ((x / CHUNK_SIZE) | 0);
+            this.streakTiles[tIdx] = 1;
             const old = this.streaks.get(idx) ?? 0;
-            this.streaks.set(idx, packElevAbgr(
+            const packed = packElevAbgr(
               Math.min(255, channel(old, RED) + Math.round(light.r * energy)),
               Math.min(255, channel(old, GREEN) + Math.round(light.g * energy)),
               Math.min(255, channel(old, BLUE) + Math.round(light.b * energy)),
-            ));
+            );
+            this.streaks.set(idx, packed);
+            this.streakTileSig[tIdx] = (Math.imul(this.streakTileSig[tIdx] ^ idx, 16777619) ^ packed) >>> 0;
           }
         }
       }
@@ -507,6 +523,8 @@ export class SurfaceReflections {
       tile.wetSky = undefined;
       tile.wetRevision = undefined;
       tile.wetRipplePhase = undefined;
+      tile.wetStreakSig = undefined;
+      tile.wetActorSig = undefined;
       tile.hadWetStreak = false;
       if (cleared) {
         const tx = idx % world.grid.chunksW;
@@ -767,7 +785,8 @@ export class SurfaceReflections {
         expand(waterDraw, ix, iy, ex, ey);
         const wetSkyChanged = tile.wetSky !== wetSkyKey;
         tile.wetSky = wetSkyKey;
-        const hasWetStreak = this.streakTiles[tileIndex] !== 0 || this.actorTileFlags[tileIndex] !== 0;
+        const streakSig = this.streakTileSig[tileIndex];
+        const actorSig = this.actorTileSig[tileIndex];
         let wetSourceRevision = localRevision;
         for (const source of wetSample.sources) wetSourceRevision = Math.max(wetSourceRevision, lighting.surfaceTileRevision[source]);
         const rippleTickChanged = quality === "high" && wetSample.hasMirrorHits && tile.wetRipplePhase !== ripplePhase;
@@ -779,11 +798,12 @@ export class SurfaceReflections {
         const wetRemainsClean =
           !wetSkyChanged &&
           !haloChanged &&
-          !hasWetStreak &&
-          !tile.hadWetStreak &&
+          tile.wetStreakSig === streakSig &&
+          tile.wetActorSig === actorSig &&
           !rippleTickChanged &&
           tile.wetRevision === wetSourceRevision;
-        tile.hadWetStreak = hasWetStreak;
+        tile.wetStreakSig = streakSig;
+        tile.wetActorSig = actorSig;
         tile.wetRevision = wetSourceRevision;
         if (wetRemainsClean) continue;
 

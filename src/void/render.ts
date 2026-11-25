@@ -670,13 +670,21 @@ export class VoidRenderer {
     const ty0 = Math.max(0, Math.floor(viewBounds.y0 / CHUNK_SIZE));
     const tx1 = Math.min(chunksW - 1, Math.floor(viewBounds.x1 / CHUNK_SIZE));
     const ty1 = Math.min(chunksH - 1, Math.floor(viewBounds.y1 / CHUNK_SIZE));
-    const dropsPerTile = this.effectiveLightingQuality === "low" ? 1 : 2;
+    const dropsPerTile = this.effectiveLightingQuality === "low" || this.isPhoneDevice ? 1 : 2;
     const period = 0.14;
     const invPeriod = 1 / period;
     const { material } = world;
     const { atlasElev } = this.spriteCache;
     const tileLights: Parameters<LightingEngine["filterLightsForRect"]>[4] = [];
-    let lastFill = "";
+    const batches = new Map<string, number[]>();
+    const pushDrop = (style: string, x: number, y: number): void => {
+      let arr = batches.get(style);
+      if (!arr) {
+        arr = [];
+        batches.set(style, arr);
+      }
+      arr.push((x << 16) | y);
+    };
 
     for (let ty = ty0; ty <= ty1; ty++) {
       const iy = ty * CHUNK_SIZE;
@@ -706,27 +714,26 @@ export class VoidRenderer {
             const sy = gy - roofZ - altitude;
             if (sx < 0 || sx >= w - 1 || sy < 1 || sy >= h) continue;
             const style = this.lighting.rainGlintStyle(gx, gy, roofZ + altitude + 1, false, tileLights);
-            if (style !== lastFill) {
-              rawScene.fillStyle = style;
-              lastFill = style;
-            }
-            // Tiny fast-falling 1-px droplet (with a fainter 1-px upper tail at close zoom)
-            rawScene.fillRect(sx, sy, 1, 1);
+            pushDrop(style, sx, sy);
             if (this.cam.s >= 2.5 && ((sx + sy) & 1) === 0) {
-              rawScene.fillRect(sx, sy - 1, 1, 1);
+              pushDrop(style, sx, sy - 1);
             }
           } else {
             // Tiny 1-pixel impact splash on ground or roof
             const sy = gy - roofZ;
             if (sy < 1 || sy >= h) continue;
             const style = this.lighting.rainGlintStyle(gx, gy, roofZ + 0.5, true, tileLights);
-            if (style !== lastFill) {
-              rawScene.fillStyle = style;
-              lastFill = style;
-            }
-            rawScene.fillRect(gx, sy, 1, 1);
+            pushDrop(style, gx, sy);
           }
         }
+      }
+    }
+
+    for (const [style, coords] of batches) {
+      rawScene.fillStyle = style;
+      for (let i = 0; i < coords.length; i++) {
+        const packed = coords[i];
+        rawScene.fillRect(packed >>> 16, packed & 0xffff, 1, 1);
       }
     }
   }
