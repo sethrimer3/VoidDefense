@@ -99,6 +99,7 @@ import { CITY_DETAIL_COLORS, cityDetailAt, halogenLampStanding, halogenLamps } f
 import { STREET_GLOW_COLORS, streetGlowAt } from "./street-glow.ts";
 import type { VoidSim } from "./sim.ts";
 import { STRIKE_SPECS, TOWER_SPECS, canMountOnRoof, footprintBuilding, towerRange } from "./towers.ts";
+import { forEachTowerSpritePixel } from "./tower-sprites.ts";
 import type { VoidWorld } from "./world.ts";
 
 export { findStreetPath, type StreetBfsScratch } from "./street-routes.ts";
@@ -2983,149 +2984,38 @@ export class VoidRenderer {
         TOWER_SOBEL_NORMALS.nz[7],
         t.uid,
       );
-      const nwRim = this.lighting.surfacePalette(
-        t.x,
-        t.y,
-        rElev + tElev + 0.5,
-        TOWER_SOBEL_NORMALS.nx[0],
-        TOWER_SOBEL_NORMALS.ny[0],
-        TOWER_SOBEL_NORMALS.nz[0],
-        t.uid,
+      // Hand-drawn whole-pixel sprite: roof, raised parts and south wall, each pixel lit by its face.
+      const litCache = new Map<string, string>();
+      const siphon = t.type === "voidSiphon" ? combat.siphonStates.get(t.uid) : undefined;
+      forEachTowerSpritePixel(
+        t.type,
+        spec.color,
+        t.w,
+        t.h,
+        tElev,
+        {
+          tick: sim.tick,
+          uid: t.uid,
+          fired: spec.cooldownSeconds > 0 && t.cooldown > spec.cooldownSeconds * 0.72,
+          fill: siphon ? Math.min(1, siphon.stored / Math.max(1, siphon.maxStorage)) : 0,
+          venting: siphon?.phase === "venting",
+          reduceEffects: this.reduceEffects,
+        },
+        (dx, dy, color, light) => {
+          let style = color;
+          if (light !== "emit") {
+            const key = light + color;
+            const cached = litCache.get(key);
+            if (cached) style = cached;
+            else {
+              style = light === "top" ? top(color) : front(color);
+              litCache.set(key, style);
+            }
+          }
+          rawScene.fillStyle = style;
+          rawScene.fillRect(t.x + dx, topY + dy, 1, 1);
+        },
       );
-      const seRim = this.lighting.surfacePalette(
-        t.x + t.w - 1,
-        t.y + t.h - 1,
-        rElev + tElev + 0.5,
-        TOWER_SOBEL_NORMALS.nx[8],
-        TOWER_SOBEL_NORMALS.ny[8],
-        TOWER_SOBEL_NORMALS.nz[8],
-        t.uid,
-      );
-      // Armored shadow & south base facade (2 px tall)
-      rawScene.fillStyle = front("#0d1118");
-      rawScene.fillRect(t.x, topY, t.w, t.h + tElev);
-      if (tElev > 0) {
-        rawScene.fillStyle = front("#18202c");
-        rawScene.fillRect(t.x, t.y + t.h - tElev - rElev, t.w, tElev);
-      }
-      rawScene.fillStyle = top("#242c3a");
-      rawScene.fillRect(t.x, topY, t.w, t.h);
-      // Corner rivets / mounting brackets lit via Sobel corner normals
-      rawScene.fillStyle = nwRim("#5c6b82");
-      rawScene.fillRect(t.x, topY, 1, 1);
-      rawScene.fillRect(t.x + t.w - 1, topY, 1, 1);
-      rawScene.fillStyle = seRim("#5c6b82");
-      rawScene.fillRect(t.x, topY + t.h - 1, 1, 1);
-      rawScene.fillRect(t.x + t.w - 1, topY + t.h - 1, 1, 1);
-      // Tron-style neon orange indicator accent on the south tower collar
-      rawScene.fillStyle = "#ff7b18";
-      rawScene.fillRect(t.x + Math.floor(t.w * 0.5), topY + t.h - 1, 1, 1);
-      // Primary colored turret housing
-      if (t.type === "deliveryDepot") {
-        rawScene.fillStyle = top("#8f4a28");
-        rawScene.fillRect(t.x + 1, topY + 1, t.w - 2, t.h - 2);
-        rawScene.fillStyle = top("#f09946");
-        rawScene.fillRect(t.x + 1, topY + 1, t.w - 2, 1);
-        rawScene.fillRect(t.x + 1, topY + 3, t.w - 2, 1);
-        rawScene.fillStyle = front("#e5a868");
-        rawScene.fillRect(t.x + 2, topY + t.h - 1, t.w - 4, 1);
-      } else if (t.type === "voidSiphon") {
-        const s = combat.siphonStates.get(t.uid);
-        const fillFrac = s ? Math.min(1, s.stored / Math.max(1, s.maxStorage)) : 0;
-        // Round glass reservoir
-        c.fillStyle = top("#1a1426");
-        c.beginPath();
-        c.arc(t.x + t.w * 0.5, topY + t.h * 0.5, t.w * 0.42, 0, Math.PI * 2);
-        c.fill();
-        c.fillStyle = top(s?.phase === "venting" ? "#ffb052" : "#9a6bff");
-        const fillH = Math.max(0.4, (t.h * 0.72) * fillFrac);
-        c.fillRect(t.x + t.w * 0.2, topY + t.h * 0.86 - fillH, t.w * 0.6, fillH);
-        c.strokeStyle = top("#d8c4ff");
-        c.lineWidth = 0.25;
-        c.beginPath();
-        c.arc(t.x + t.w * 0.5, topY + t.h * 0.5, t.w * 0.42, 0, Math.PI * 2);
-        c.stroke();
-        // Vertical venting plume
-        if (s?.phase === "venting") {
-          const plumeH = 2.0 + Math.sin(sim.tick * 0.35) * 0.8;
-          c.fillStyle = "rgba(255, 176, 82, 0.78)";
-          c.fillRect(t.x + t.w * 0.5 - 0.5, topY - plumeH, 1.0, plumeH);
-        }
-      } else if (t.type === "boundaryPrism") {
-        // Tall triangular faceted crystal
-        c.fillStyle = top("#5ce1e6");
-        c.beginPath();
-        c.moveTo(t.x + t.w * 0.5, topY - 0.6);
-        c.lineTo(t.x + t.w - 0.2, topY + t.h - 0.2);
-        c.lineTo(t.x + 0.2, topY + t.h - 0.2);
-        c.closePath();
-        c.fill();
-        c.fillStyle = top("#d4fcff");
-        c.beginPath();
-        c.moveTo(t.x + t.w * 0.5, topY - 0.6);
-        c.lineTo(t.x + t.w * 0.5, topY + t.h - 0.2);
-        c.lineTo(t.x + 0.2, topY + t.h - 0.2);
-        c.closePath();
-        c.fill();
-      } else if (t.type === "chronoCannon") {
-        // Golden clock-ring and reverse barrel
-        c.fillStyle = top("#3a2e18");
-        c.fillRect(t.x + 0.35, topY + 0.35, t.w - 0.7, t.h - 0.7);
-        c.strokeStyle = top("#f2c14e");
-        c.lineWidth = 0.35;
-        c.beginPath();
-        c.arc(t.x + t.w * 0.5, topY + t.h * 0.5, t.w * 0.38, 0, Math.PI * 2);
-        c.stroke();
-        c.fillStyle = top("#fff3d1");
-        c.fillRect(t.x + t.w * 0.5 - 0.4, topY + t.h * 0.5 - 0.4, 0.8, 0.8);
-        // Counter-rotating clock hand
-        const handAng = -(sim.tick * 0.12);
-        c.strokeStyle = top("#ffe599");
-        c.lineWidth = 0.3;
-        c.beginPath();
-        c.moveTo(t.x + t.w * 0.5, topY + t.h * 0.5);
-        c.lineTo(
-          t.x + t.w * 0.5 + Math.cos(handAng) * (t.w * 0.32),
-          topY + t.h * 0.5 + Math.sin(handAng) * (t.h * 0.32),
-        );
-        c.stroke();
-      } else if (t.type === "echoMine") {
-        c.fillStyle = top("#2b2530");
-        c.fillRect(t.x + 0.35, topY + 0.35, t.w - 0.7, t.h - 0.7);
-        const pulse = this.reduceEffects ? 0.65 : 0.45 + 0.55 * Math.abs(Math.sin(sim.tick * 0.12 + t.uid));
-        c.fillStyle = `rgba(255, 136, 48, ${pulse.toFixed(2)})`;
-        c.fillRect(t.x + t.w * 0.5 - 0.55, topY + t.h * 0.5 - 0.55, 1.1, 1.1);
-        c.strokeStyle = "rgba(255, 178, 82, 0.45)";
-        c.lineWidth = 0.25;
-        c.beginPath();
-        c.arc(t.x + t.w * 0.5, topY + t.h * 0.5, t.w * 0.55, 0, Math.PI * 2);
-        c.stroke();
-      } else if (t.type === "countervoidHeart") {
-        c.fillStyle = top("#1f1528");
-        c.fillRect(t.x + 0.2, topY + 0.2, t.w - 0.4, t.h - 0.4);
-        c.strokeStyle = top("#ff9a34");
-        c.lineWidth = 0.35;
-        c.strokeRect(t.x + 0.2, topY + 0.2, t.w - 0.4, t.h - 0.4);
-        const beat = this.reduceEffects ? 0.8 : 0.65 + 0.35 * Math.sin(sim.tick * 0.16);
-        c.fillStyle = beat > 0.75 ? "#ffe39c" : "#ff8c24";
-        c.fillRect(t.x + t.w * 0.5 - 0.75, topY + t.h * 0.5 - 0.75, 1.5, 1.5);
-      } else if (t.type === "lanternBearer") {
-        c.fillStyle = top("#4d3822");
-        c.fillRect(t.x + 0.35, topY + 0.35, t.w - 0.7, t.h - 0.7);
-        c.fillStyle = top("#ffd875");
-        c.fillRect(t.x + t.w * 0.5 - 0.4, topY + t.h * 0.5 - 0.5, 0.8, 1.0);
-      } else if (t.type === "seamwalker") {
-        c.fillStyle = top("#3c324a");
-        c.fillRect(t.x + 0.35, topY + 0.35, t.w - 0.7, t.h - 0.7);
-        c.fillStyle = top("#f29d38");
-        c.fillRect(t.x + t.w * 0.5 - 0.45, topY + t.h * 0.5 - 0.3, 0.9, 0.6);
-      } else {
-        c.fillStyle = top(spec.color);
-        c.fillRect(t.x + 0.35, topY + 0.35, t.w - 0.7, t.h - 0.7);
-        // Glowing energy core / barrel mount
-        c.fillStyle = top("#fff3d1");
-        c.fillRect(t.x + t.w * 0.5 - 0.45, topY + t.h * 0.5 - 0.45, 0.9, 0.9);
-      }
 
       if (t.uid === selectedTowerUid) {
         c.strokeStyle = "#ffbe3b";
@@ -3711,6 +3601,17 @@ export class VoidRenderer {
         const py0 = preview.y - roof.elev;
         c.fillStyle = preview.valid ? "rgba(255, 174, 56, 0.48)" : "rgba(255, 68, 68, 0.48)";
         c.fillRect(preview.x, py0, spec.w, spec.h);
+        // Ghost of the tower sprite so the player sees what will stand there.
+        rawScene.globalAlpha = preview.valid ? 0.72 : 0.4;
+        forEachTowerSpritePixel(
+          preview.type, spec.color, spec.w, spec.h, tElev,
+          { tick: sim.tick, uid: 0, fired: false, fill: 0, venting: false, reduceEffects: true },
+          (dx, dy, color) => {
+            rawScene.fillStyle = color;
+            rawScene.fillRect(preview.x + dx, py0 - tElev + dy, 1, 1);
+          },
+        );
+        rawScene.globalAlpha = 1;
         c.strokeStyle = preview.valid ? "#ffbe3b" : "#ff4444";
         c.lineWidth = 0.35;
         c.strokeRect(preview.x, py0, spec.w, spec.h);

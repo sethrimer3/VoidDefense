@@ -1769,7 +1769,9 @@ export class LightingEngine {
     (color: string) => string {
     const world = this.world;
     if (!world) return unlitColor;
-    const hasPointLight = this.illuminate(world, this.compiledLights, x, y, z, nx, ny, nz, 0.3, -1, tower, 0);
+    // A tower's own neon lamp hangs just above its roof: skip it so the sprite keeps its colours
+    // instead of blowing out, while neighbouring lamps still light it.
+    const hasPointLight = this.illuminate(world, this.compiledLights, x, y, z, nx, ny, nz, 0.3, -1, tower, 0, -1, tower >= 0);
     const [pr, pg, pb, sr, sg, sb, shadow] = hasPointLight ? this.surfaceLight : [0, 0, 0, 0, 0, 0, 0];
     const preset = this.activePreset;
     const sunDot = Math.max(0, nx * preset.sunDir[0] + ny * preset.sunDir[1] + nz * preset.sunDir[2]);
@@ -2623,6 +2625,7 @@ export class LightingEngine {
     world: VoidWorld, lights: readonly CompiledLight[],
     wx: number, wy: number, wz: number, nx: number, ny: number, nz: number,
     specWeight: number, selfBuilding: number, selfTower: number, shadow: number, screenY = -1,
+    skipOwnTowerLight = false,
   ): boolean {
     let red = 0;
     let green = 0;
@@ -2632,6 +2635,7 @@ export class LightingEngine {
     let specBlue = 0;
     for (let m = 0; m < lights.length; m++) {
       const light = lights[m];
+      if (skipOwnTowerLight && light.sourceTower === selfTower) continue;
       const dx = light.x - wx;
       const dy = light.y - wy;
       const d2 = dx * dx + dy * dy;

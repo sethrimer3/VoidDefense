@@ -46,7 +46,7 @@ All world surfaces—terrain, buildings, placed towers, and infantry—generate 
   - The building atlas supplies emissive pixels and stable building IDs. Every surviving emissive fixture contributes unshadowed spill, including buildings outside the point-light budget. Each world-space halo tile samples a two-texel border so the kernel gives the same result at viewport and tile boundaries.
   - The cache stores spill before the time-of-day multiplier. Terrain and atlas edits dirty nearby halo tiles, and the current preset scales the spill during shading. The effect stays at world-pixel scale.
 - **Tron-Style Neon Orange Tower Lights (`#ff7b18`–`#ff9e38`):**
-  - Placed Resistance towers emit Tron neon orange point lights (`r: 1.38, g: 0.58, b: 0.11`, radius `19..24 px`) from their elevated housings, casting shadows and pooling warm orange light on the ground around them.
+  - Placed Resistance towers emit Tron neon orange point lights (`r: 1.38, g: 0.58, b: 0.11`, radius `19..24 px`) from their elevated housings, casting shadows and pooling warm orange light on the ground around them. A tower's own lamp is skipped when shading that tower's sprite (`surfacePalette` with a tower uid), because it hangs just above the roof and would wash it out to flat yellow; neighbouring towers' lamps still light it.
 - **Short-Lived Dynamic Lights (`falloffPower: 3`):**
   - Explosions (`physics.shockwaves`, `echoPendingBlasts`, radius up to `54 px`, boost `2.65×`), muzzle flashes (`justFired` towers and `lasers` origins/impacts), and in-flight parabolic projectiles (`combat.pellets`) use fast cubic falloff (`(1 - d / R)^3`) and high-frequency deterministic flicker to flash across surrounding buildings and throw moving shadows.
 
