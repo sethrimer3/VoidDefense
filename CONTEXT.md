@@ -11,6 +11,7 @@ Domain terms used across code, UI, and documentation.
 - **Delivery Depot**: A player-built structure that sends delivery cars to its furthest depot (2 and then 3 furthest when upgraded) and earns Supplies from completed deliveries.
 - **Depot Link**: The connection from a Delivery Depot to one of its target depots, shown by a Tron light beam that runs along the street route to the target and back, then settles into a faint trace.
 - **Street Fire**: A persistent fire in a trash can, debris pile or trash heap that burns all level until something destroys it.
+- **Void Bed**: The continuous, evolving procedural ambient soundscape of the Void (rumble, mid-low body, airy cosmic wind, harmonic pad, and distant earthquake swells) whose stereo width and pan scale with the Void's size and horizontal extent.
 - **Void Essence**: Persistent between-run currency earned from resisting Void work and preserving the city; spent in the Global Tech Network.
 - **Sparks of Defiance**: Milestone currency (0–3 per sector, shared across modes) awarded for winning at ≥35% (Pyrrhic Containment), ≥55% (Breach Contained), and ≥90% (Flawless Defense) preserved.
 - **Sector**: One of 7 campaign maps (Sector 01–07) or Endless: Event Horizon.
