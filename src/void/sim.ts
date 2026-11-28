@@ -382,7 +382,7 @@ export class VoidSim {
       const newest = this.combat.pellets[this.combat.pellets.length - 1];
       this.sfxEvents.shotX = newest.x;
       this.sfxEvents.shotY = newest.y;
-      this.sfxEvents.shotTowerType = newest.kind === "rocket" ? "rocketTeam" : "matterCannon";
+      this.sfxEvents.shotTowerType = newest.radius >= 3 ? "rocketTeam" : "matterCannon";
     } else if (this.combat.pellets.length < prevPellets) {
       this.sfxEvents.pelletsHit++;
       this.sfxEvents.hitX = samplePelletX;
