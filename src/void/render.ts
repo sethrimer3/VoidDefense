@@ -536,6 +536,18 @@ export class VoidRenderer {
     };
   }
 
+  /** Read-only projection of a world coordinate into canvas viewport space for positional audio. */
+  worldToViewport(fx: number, fy: number): { x: number; y: number; w: number; h: number; zoom: number } {
+    const scale = this.pixelScale();
+    return {
+      x: fx * scale + this.cam.x,
+      y: fy * scale + this.cam.y,
+      w: Math.max(1, this.canvas.width),
+      h: Math.max(1, this.canvas.height),
+      zoom: this.cam.s,
+    };
+  }
+
   panBy(dxClient: number, dyClient: number, worldW: number, worldH: number): void {
     const r = this.canvas.getBoundingClientRect();
     this.cam.x += (dxClient / Math.max(1, r.width)) * this.canvas.width;

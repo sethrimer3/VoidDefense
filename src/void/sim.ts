@@ -52,7 +52,8 @@ export class VoidSim {
   outcome: RunOutcome | null = null;
   private acc = 0;
 
-  /** Lightweight per-frame audio/visual event counters drained by the UI/audio layer. */
+  /** Lightweight per-frame audio/visual event counters & pre-allocated positional ring buffers drained by UI/audio.
+   * Pure bookkeeping — never affects simulation state or determinism. */
   readonly sfxEvents = {
     pelletsFired: 0,
     pelletsHit: 0,
@@ -60,6 +61,22 @@ export class VoidSim {
     cellsConsumed: 0,
     unitsLost: 0,
     lastIncomeAmount: 0,
+    /** Pre-allocated collapse burst ring buffer (`collapseCount` active entries). */
+    collapseList: Array.from({ length: 8 }, () => ({ x: 0, y: 0, size: 0 })),
+    collapseCount: 0,
+    /** Pre-allocated falling chunk landing impacts (`impactCount` active entries). */
+    impactList: Array.from({ length: 8 }, () => ({ x: 0, y: 0, radius: 0, damage: 0 })),
+    impactCount: 0,
+    /** Most recent positional coordinates for shot, hit, consumption, and unit loss. */
+    shotX: 0,
+    shotY: 0,
+    shotTowerType: "matterCannon" as TowerTypeId,
+    hitX: 0,
+    hitY: 0,
+    consumeX: 0,
+    consumeY: 0,
+    deathX: 0,
+    deathY: 0,
   };
 
   constructor(
@@ -278,13 +295,39 @@ export class VoidSim {
     // 3. Step structural integrity & debris fragments
     const prevChunks = this.physics.activeFallingChunkCount();
     this.physics.stepStructuralSupport(this.world, TICK_DT);
-    if (this.physics.activeFallingChunkCount() > prevChunks + 2) {
+    const collapsedCols = this.physics.lastTickCollapseColumns;
+    if (collapsedCols > 0 || this.physics.activeFallingChunkCount() > prevChunks + 2) {
       this.sfxEvents.collapses++;
+      const idx = this.sfxEvents.collapseCount;
+      if (idx < this.sfxEvents.collapseList.length) {
+        const slot = this.sfxEvents.collapseList[idx];
+        slot.x = collapsedCols > 0 ? this.physics.lastTickCollapseX : this.physics.lastLargeCollapseX;
+        slot.y = collapsedCols > 0 ? this.physics.lastTickCollapseY : this.physics.lastLargeCollapseY;
+        slot.size = Math.max(1, collapsedCols || (this.physics.activeFallingChunkCount() - prevChunks));
+        this.sfxEvents.collapseCount = idx + 1;
+      }
+    }
+    // Snapshot falling-chunk ground impacts before `combat.step` consumes and clears `pendingImpacts`
+    if (this.physics.pendingImpacts.length > 0) {
+      for (let i = 0; i < this.physics.pendingImpacts.length; i++) {
+        const slotIdx = this.sfxEvents.impactCount;
+        if (slotIdx >= this.sfxEvents.impactList.length) break;
+        const imp = this.physics.pendingImpacts[i];
+        const slot = this.sfxEvents.impactList[slotIdx];
+        slot.x = imp.x;
+        slot.y = imp.y;
+        slot.radius = imp.radius;
+        slot.damage = imp.damage;
+        this.sfxEvents.impactCount = slotIdx + 1;
+      }
     }
 
     // 3b. Ingest Void-caused cell losses into Chrono Cannon bounded journal
     if (this.physics.recentCellLosses.length > 0) {
       this.sfxEvents.cellsConsumed += this.physics.recentCellLosses.length;
+      const firstLoss = this.physics.recentCellLosses[0];
+      this.sfxEvents.consumeX = this.world.grid.xOf(firstLoss.cellIdx) + 0.5;
+      this.sfxEvents.consumeY = this.world.grid.yOf(firstLoss.cellIdx) + 0.5;
       for (let i = 0; i < this.physics.recentCellLosses.length; i++) {
         const loss = this.physics.recentCellLosses[i];
         this.combat.recordChronoLoss(
@@ -321,6 +364,10 @@ export class VoidSim {
     }
     const prevPellets = this.combat.pellets.length;
     const prevAgents = this.combat.agents.length;
+    const samplePelletX = prevPellets > 0 ? this.combat.pellets[prevPellets - 1].x : this.world.grid.w * 0.5;
+    const samplePelletY = prevPellets > 0 ? this.combat.pellets[prevPellets - 1].y : this.world.grid.h * 0.5;
+    const sampleAgentX = prevAgents > 0 ? this.combat.agents[prevAgents - 1].x : this.world.grid.w * 0.5;
+    const sampleAgentY = prevAgents > 0 ? this.combat.agents[prevAgents - 1].y : this.world.grid.h * 0.5;
     this.combat.step(
       this.world,
       this.physics,
@@ -330,9 +377,22 @@ export class VoidSim {
       this.tech,
       allowOrganisms,
     );
-    if (this.combat.pellets.length > prevPellets) this.sfxEvents.pelletsFired++;
-    else if (this.combat.pellets.length < prevPellets) this.sfxEvents.pelletsHit++;
-    if (this.combat.agents.length < prevAgents) this.sfxEvents.unitsLost++;
+    if (this.combat.pellets.length > prevPellets) {
+      this.sfxEvents.pelletsFired++;
+      const newest = this.combat.pellets[this.combat.pellets.length - 1];
+      this.sfxEvents.shotX = newest.x;
+      this.sfxEvents.shotY = newest.y;
+      this.sfxEvents.shotTowerType = newest.kind === "rocket" ? "rocketTeam" : "matterCannon";
+    } else if (this.combat.pellets.length < prevPellets) {
+      this.sfxEvents.pelletsHit++;
+      this.sfxEvents.hitX = samplePelletX;
+      this.sfxEvents.hitY = samplePelletY;
+    }
+    if (this.combat.agents.length < prevAgents) {
+      this.sfxEvents.unitsLost++;
+      this.sfxEvents.deathX = sampleAgentX;
+      this.sfxEvents.deathY = sampleAgentY;
+    }
 
     this.supplies += this.deliveries.step(this.world, this.combat.towers, this.tick, TICK_DT);
     this.farms.step(TICK_DT, this.combat.lasers);

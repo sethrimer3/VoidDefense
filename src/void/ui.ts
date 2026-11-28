@@ -5,6 +5,12 @@ import { cleanName, defaultFlag, escapeText, flagSvg, randomPlayerName } from ".
 import { getLanguage, LANGUAGES, setLanguage, t, t as tr, translateWithin } from "../i18n/index.ts";
 import { soundOn, syncAudioFocus } from "../sound.ts";
 import { VoidSoundEngine } from "./audio.ts";
+import {
+  mergeCollapseEvents,
+  screenToSpatial,
+  type FireCandidate,
+  type SpatialParams,
+} from "./audio-math.ts";
 import { VoidMusicEngine } from "./music.ts";
 import type {
   PlayStyleMode,
@@ -237,11 +243,72 @@ export class VoidApp {
     this.showTitleScreen();
   }
 
+  private fireCandidates: FireCandidate[] = [];
+
+  private spatialAt(wx: number, wy: number): SpatialParams {
+    const vp = this.renderer.worldToViewport(wx, wy);
+    return screenToSpatial(vp.x, vp.y, vp.w, vp.h);
+  }
+
+  private collectFireCandidates(): readonly FireCandidate[] {
+    const out = this.fireCandidates;
+    let count = 0;
+    const streetFires = this.sim.streetFires.fires;
+    for (let i = 0; i < streetFires.length; i++) {
+      const f = streetFires[i];
+      if (!f.alive) continue;
+      const vp = this.renderer.worldToViewport(f.x + f.w * 0.5, f.y + f.h * 0.5);
+      if (count < out.length) {
+        const slot = out[count];
+        slot.id = i;
+        slot.screenX = vp.x;
+        slot.screenY = vp.y;
+        slot.kind = f.kind;
+        slot.scale = f.kind === 2 ? 1.2 : 1;
+      } else {
+        out.push({ id: i, screenX: vp.x, screenY: vp.y, kind: f.kind, scale: f.kind === 2 ? 1.2 : 1 });
+      }
+      count++;
+    }
+    // Include active farm fires as a warm large-fire voice centred on the burning cells
+    const farmActive = this.sim.farms.active;
+    if (farmActive.size > 0) {
+      let sx = 0;
+      let sy = 0;
+      let n = 0;
+      const w = this.sim.world.grid.w;
+      for (const idx of farmActive.keys()) {
+        sx += idx % w;
+        sy += (idx / w) | 0;
+        n++;
+        if (n >= 64) break;
+      }
+      if (n > 0) {
+        const vp = this.renderer.worldToViewport(sx / n + 0.5, sy / n + 0.5);
+        const scale = Math.min(2.0, 1.15 + farmActive.size * 0.04);
+        if (count < out.length) {
+          const slot = out[count];
+          slot.id = 10000;
+          slot.screenX = vp.x;
+          slot.screenY = vp.y;
+          slot.kind = 2;
+          slot.scale = scale;
+        } else {
+          out.push({ id: 10000, screenX: vp.x, screenY: vp.y, kind: 2, scale });
+        }
+        count++;
+      }
+    }
+    out.length = count;
+    return out;
+  }
+
   private syncAudioVolumes(): void {
     this.soundEngine.setVolumes(
       this.save.settings.masterVolume / 100,
       this.save.settings.sfxVolume / 100,
       this.save.settings.ambienceVolume / 100,
+      this.save.settings.musicVolume / 100,
     );
     this.musicEngine.setVolumes(
       this.save.settings.masterVolume / 100,
@@ -410,7 +477,7 @@ export class VoidApp {
       upgrade: (uid) => {
         const tw = this.sim.combat.towers.find((x) => x.uid === uid);
         if (tw && this.sim.upgradeTower(uid)) {
-          this.soundEngine.playSfx("towerUpgrade");
+          this.soundEngine.playSfx("towerUpgrade", 1, this.spatialAt(tw.x + tw.w * 0.5, tw.y + tw.h * 0.5));
           this.renderer.triggerPlacementPulse(tw.x + tw.w * 0.5, tw.y + tw.h * 0.5);
           this.refreshHUD();
         }
@@ -425,8 +492,13 @@ export class VoidApp {
         this.soundEngine.playSfx("uiClick");
       },
       sell: (uid) => {
+        const tw = this.sim.combat.towers.find((x) => x.uid === uid);
         if (this.sim.sellTower(uid)) {
-          this.soundEngine.playSfx("towerSell");
+          this.soundEngine.playSfx(
+            "towerSell",
+            1,
+            tw ? this.spatialAt(tw.x + tw.w * 0.5, tw.y + tw.h * 0.5) : undefined,
+          );
           this.selectedTowerUid = null;
           this.activeTool = { kind: "none" };
           this.refreshHUD();
@@ -827,7 +899,11 @@ export class VoidApp {
       const { x: tx, y: ty } = this.towerOriginAt(this.activeTool.type, cx, cy);
       const placed = this.sim.placeTower(this.activeTool.type, tx, ty);
       if (placed) {
-        this.soundEngine.playSfx("towerPlace");
+        this.soundEngine.playSfx(
+          "towerPlace",
+          1,
+          this.spatialAt(placed.x + placed.w * 0.5, placed.y + placed.h * 0.5),
+        );
         this.renderer.triggerPlacementPulse(placed.x + placed.w * 0.5, placed.y + placed.h * 0.5);
         if (this.awaitingDeploy && this.coachStep < 0) {
           this.awaitingDeploy = false;
@@ -847,9 +923,10 @@ export class VoidApp {
     }
 
     if (this.activeTool.kind === "castStrike") {
-      const ok = this.sim.castStrike(this.activeTool.strike, fx, fy);
+      const strike = this.activeTool.strike;
+      const ok = this.sim.castStrike(strike, fx, fy);
       if (ok) {
-        this.soundEngine.playSfx("strikeCast");
+        this.soundEngine.playStrike(strike, this.spatialAt(fx, fy));
         this.renderer.triggerPlacementPulse(fx, fy);
         this.activeTool = { kind: "none" };
         this.hoverPreview = null;
@@ -1390,7 +1467,7 @@ export class VoidApp {
       if (upgBtn) {
         upgBtn.onclick = () => {
           if (this.sim.upgradeTower(t.uid)) {
-            this.soundEngine.playSfx("towerUpgrade");
+            this.soundEngine.playSfx("towerUpgrade", 1, this.spatialAt(t.x + t.w * 0.5, t.y + t.h * 0.5));
             this.renderer.triggerPlacementPulse(t.x + t.w * 0.5, t.y + t.h * 0.5);
             this.refreshHUD();
           }
@@ -1412,7 +1489,7 @@ export class VoidApp {
       };
       el.querySelector<HTMLButtonElement>("[data-insp-sell]")!.onclick = () => {
         if (this.sim.sellTower(t.uid)) {
-          this.soundEngine.playSfx("towerSell");
+          this.soundEngine.playSfx("towerSell", 1, this.spatialAt(t.x + t.w * 0.5, t.y + t.h * 0.5));
           this.selectedTowerUid = null;
           this.refreshHUD();
         }
@@ -2011,13 +2088,36 @@ export class VoidApp {
         this.renderPalette();
       }
 
-      // Drain sim audio/visual events
+      // Drain sim audio/visual events (positional stereo panning + merged collapses)
       const ev = this.sim.sfxEvents;
-      if (ev.pelletsFired > 0) this.soundEngine.playSfx("cannonFire");
-      if (ev.pelletsHit > 0) this.soundEngine.playSfx("shellImpact");
-      if (ev.collapses > 0) this.soundEngine.playSfx("collapse", Math.min(1.4, 0.75 + ev.collapses * 0.2));
-      if (ev.cellsConsumed > 0) this.soundEngine.playSfx("voidConsume");
-      if (ev.unitsLost > 0) this.soundEngine.playSfx("unitDeath");
+      if (ev.pelletsFired > 0) {
+        this.soundEngine.playTowerShot(ev.shotTowerType, this.spatialAt(ev.shotX, ev.shotY));
+      }
+      if (ev.pelletsHit > 0) {
+        this.soundEngine.playSfx("shellImpact", 1, this.spatialAt(ev.hitX, ev.hitY));
+      }
+      if (ev.collapseCount > 0) {
+        const merged = mergeCollapseEvents(ev.collapseList.slice(0, ev.collapseCount), 1);
+        for (let i = 0; i < merged.length; i++) {
+          const m = merged[i];
+          this.soundEngine.playCollapse(m.size, this.spatialAt(m.x, m.y));
+        }
+      } else if (ev.collapses > 0) {
+        this.soundEngine.playCollapse(ev.collapses * 3);
+      }
+      if (ev.impactCount > 0) {
+        let best = ev.impactList[0];
+        for (let i = 1; i < ev.impactCount; i++) {
+          if (ev.impactList[i].damage > best.damage) best = ev.impactList[i];
+        }
+        this.soundEngine.playChunkImpact(best.radius, best.damage, this.spatialAt(best.x, best.y));
+      }
+      if (ev.cellsConsumed > 0) {
+        this.soundEngine.playSfx("voidConsume", 1, this.spatialAt(ev.consumeX, ev.consumeY));
+      }
+      if (ev.unitsLost > 0) {
+        this.soundEngine.playSfx("unitDeath", 1, this.spatialAt(ev.deathX, ev.deathY));
+      }
       if (ev.lastIncomeAmount > 0) {
         const b = this.sim.world.buildings.find((mb) => mb.isSkyscraper) ?? this.sim.world.buildings[0];
         if (b) {
@@ -2031,6 +2131,8 @@ export class VoidApp {
       ev.pelletsFired = 0;
       ev.pelletsHit = 0;
       ev.collapses = 0;
+      ev.collapseCount = 0;
+      ev.impactCount = 0;
       ev.cellsConsumed = 0;
       ev.unitsLost = 0;
       ev.lastIncomeAmount = 0;
@@ -2044,17 +2146,26 @@ export class VoidApp {
       );
       this.towerMenu.position();
 
-      const inBattle = this.sim.phase === "battle" && !this.sim.outcome && !this.sim.paused;
+      const inBattle = this.sim.phase === "battle" && !this.sim.outcome && !this.sim.paused && !modalOpen && !this.awaitingDeploy;
       const contacts = this.sim.voidField.totalContactEdges();
-      if (hudTick || inBattle !== this.lastSoundInBattle) {
-        this.lastSoundInBattle = inBattle;
-        this.soundEngine.update(
-          this.lastPreservedPercent,
-          contacts,
-          inBattle,
-          this.sim.physics.activeFallingChunkCount(),
-        );
-      }
+      this.lastSoundInBattle = inBattle;
+      const vp = this.renderer.worldToViewport(0, 0);
+      const { extentNorm, centroidXNorm } = this.sim.voidField.horizontalExtent(this.sim.world);
+      this.soundEngine.updateAmbience({
+        cityPreservedPct: this.lastPreservedPercent,
+        contactEdges: contacts,
+        inBattle,
+        paused: !inBattle,
+        fallingChunks: this.sim.physics.activeFallingChunkCount(),
+        voidExtentX: extentNorm,
+        voidCentroidX: centroidXNorm,
+        zoom: vp.zoom,
+        viewW: vp.w,
+        viewH: vp.h,
+        rainWetness: this.renderer.wetness,
+        fires: vp.zoom > 1.35 ? this.collectFireCandidates() : [],
+        nowMs,
+      });
       this.musicEngine.update(this.sim.outcome ? "outcome" : inBattle ? "battle" : "title", contacts, nowMs);
     } else {
       if (this.lastSoundInBattle) {

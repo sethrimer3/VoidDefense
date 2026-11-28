@@ -288,6 +288,10 @@ export class VoidPhysics {
   lastLargeCollapseTick = 0;
   /** World-pixel centre of the building behind `lastLargeCollapseTick` (the renderer only shakes when it is on screen). */
   lastLargeCollapseX = 0;
+  /** Audio-only bookkeeping for structural columns collapsed during the most recent `stepStructuralSupport` call. */
+  lastTickCollapseColumns = 0;
+  lastTickCollapseX = 0;
+  lastTickCollapseY = 0;
   lastLargeCollapseY = 0;
   /** Pre-allocated pool of 1-pixel grey dust puffs emitted when building columns lose floors. */
   readonly dustPuffs: DustPuff[] = Array.from({ length: MAX_DUST_PUFFS }, () => ({
@@ -603,6 +607,9 @@ export class VoidPhysics {
     this.supportTick++;
     let columnsCollapsedThisTick = 0;
     let largestCollapse = 0;
+    let collapseSumX = 0;
+    let collapseSumY = 0;
+    this.lastTickCollapseColumns = 0;
     const { w, h } = world.grid;
     const { material, buildingAt, hp, maxHp, columnFloors } = world;
 
@@ -756,6 +763,10 @@ export class VoidPhysics {
         }
 
         const collapsed = columnsCollapsedThisTick - collapsedBefore;
+        if (collapsed > 0) {
+          collapseSumX += bCenterX * collapsed;
+          collapseSumY += bCenterY * collapsed;
+        }
         if (
           collapsed >= LARGE_COLLAPSE_MIN_COLUMNS &&
           collapsed >= b.cells.length * LARGE_COLLAPSE_MIN_SHARE &&
@@ -1027,6 +1038,12 @@ export class VoidPhysics {
       if (s.life >= s.maxLife) {
         this.shockwaves.splice(i, 1);
       }
+    }
+
+    if (columnsCollapsedThisTick > 0) {
+      this.lastTickCollapseColumns = columnsCollapsedThisTick;
+      this.lastTickCollapseX = collapseSumX / columnsCollapsedThisTick;
+      this.lastTickCollapseY = collapseSumY / columnsCollapsedThisTick;
     }
 
     // Advance pooled 3D falling chunks (semi-implicit Euler under gravity g = 60 px/s²)

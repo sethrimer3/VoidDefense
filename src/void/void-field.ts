@@ -411,6 +411,11 @@ export class VoidField {
     this.voidCellCount = vCount;
   }
 
+  /** Cached horizontal extent & centroid of the Void frontier (recomputed only when `frontierRevision` changes). */
+  private cachedExtentRev = -1;
+  private cachedExtentNorm = 0;
+  private cachedCentroidXNorm = 0.5;
+
   /** Total exposed contact edges across the entire map. */
   totalContactEdges(): number {
     let edges = 0;
@@ -418,6 +423,46 @@ export class VoidField {
       edges += this.frontierContactCount[cIdx];
     }
     return edges;
+  }
+
+  /** Returns cached horizontal span (`0..1`) and horizontal centroid (`0..1`) of the Void
+   * from its active frontier cells (or active portals when frontier is empty). Never scans the full grid. */
+  horizontalExtent(world: VoidWorld): { extentNorm: number; centroidXNorm: number } {
+    if (this.cachedExtentRev === this.frontierRevision) {
+      return { extentNorm: this.cachedExtentNorm, centroidXNorm: this.cachedCentroidXNorm };
+    }
+    this.cachedExtentRev = this.frontierRevision;
+    const w = Math.max(1, world.grid.w);
+    const frontier = this.frontierCells;
+    if (frontier.length > 0) {
+      let minX = w;
+      let maxX = 0;
+      let sumX = 0;
+      for (let i = 0; i < frontier.length; i++) {
+        const x = frontier[i] % w;
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        sumX += x;
+      }
+      this.cachedExtentNorm = Math.max(0, Math.min(1, (maxX - minX) / w));
+      this.cachedCentroidXNorm = Math.max(0, Math.min(1, sumX / (frontier.length * w)));
+    } else if (world.portals.length > 0) {
+      let minX = w;
+      let maxX = 0;
+      let sumX = 0;
+      for (let i = 0; i < world.portals.length; i++) {
+        const px = world.portals[i].x;
+        if (px < minX) minX = px;
+        if (px > maxX) maxX = px;
+        sumX += px;
+      }
+      this.cachedExtentNorm = Math.max(0, Math.min(1, (maxX - minX) / w));
+      this.cachedCentroidXNorm = Math.max(0, Math.min(1, sumX / (world.portals.length * w)));
+    } else {
+      this.cachedExtentNorm = 0;
+      this.cachedCentroidXNorm = 0.5;
+    }
+    return { extentNorm: this.cachedExtentNorm, centroidXNorm: this.cachedCentroidXNorm };
   }
 
   /** Void power cost to consume cell `idx` into Void:
