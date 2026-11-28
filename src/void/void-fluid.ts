@@ -16,8 +16,6 @@
 
 import { dist } from "../exact.ts";
 import { PARKING_STREET_TIER } from "./config.ts";
-import { CITY_DETAIL_COLORS, cityDetailAt } from "./city-details.ts";
-import { STREET_GLOW_COLORS, streetGlowLayoutAt } from "./street-glow.ts";
 import {
   ARCH_PALETTES,
   facadeColorAt,
@@ -28,7 +26,6 @@ import { farmSoilColor, isWheat } from "./farms.ts";
 import { hash01 } from "./grid.ts";
 import { isOccludedByLedge } from "./ledge.ts";
 import {
-  isBoulevardStreetlightAt,
   looseMaterialLight,
   type TimeOfDayPreset,
   type VoidWeatherMode,
@@ -294,31 +291,18 @@ export function sampleSourceCellColors(
         : valueNoise(x * 0.25, y * 0.25) > 0.55 ? "#a38152" : "#8c6d45";
       accent = "#b08a5a";
     } else if (stTier === 3) {
-      if (isBoulevardStreetlightAt(world, x, y)) {
-        color = "#a8e6ff";
-        accent = "#526278";
-      } else {
-        color = (x + y) % 3 === 0 ? "#384656" : "#2f3b4a";
-        accent = "#4e5e72";
-      }
+      color = (x + y) % 3 === 0 ? "#384656" : "#2f3b4a";
+      accent = "#4e5e72";
     } else {
-      const detail = cityDetailAt(world, idx);
       const kerb =
         (x > 0 && world.buildingAt[idx - 1] >= 0) ||
         (x + 1 < w && world.buildingAt[idx + 1] >= 0) ||
         (y > 0 && world.buildingAt[idx - w] >= 0) ||
         (y + 1 < h && world.buildingAt[idx + w] >= 0);
-      if (detail !== 0 && CITY_DETAIL_COLORS[detail]) {
-        color = CITY_DETAIL_COLORS[detail];
-        accent = "#384252";
-      } else if (kerb) {
+      if (kerb) {
         // Sidewalk kerb slab
         color = "#546072";
         accent = "#6a788c";
-      } else if (streetGlowLayoutAt(world, idx) !== 0) {
-        // Cool curb light dot, curb seam or intersection ring
-        color = STREET_GLOW_COLORS[streetGlowLayoutAt(world, idx)];
-        accent = "#3c4759";
       } else {
         // Road asphalt (readable broken asphalt tones #3c4759 / #4a576c against the pitch-black Void)
         color = stTier === 4 ? "#3c4759" : r < 0.25 ? "#4a576c" : "#3c4759";

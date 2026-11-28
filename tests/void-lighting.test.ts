@@ -17,8 +17,6 @@ import {
   computeSpriteSobelNormals,
   computeTerrainNormalAt,
   INFANTRY_SOBEL_NORMALS,
-  isBoulevardOrAvenueLaneAt,
-  isBoulevardStreetlightAt,
   LIGHTING_QUALITY_CAPS,
   LightingEngine,
   looseMaterialLight,
@@ -936,8 +934,6 @@ test("10. City hierarchy & light restraint: 3 street tiers, boulevard medians/st
   let tier2Ave = 0;
   let tier3Median = 0;
   let tier4Alley = 0;
-  let streetlights = 0;
-  let laneLines = 0;
 
   for (let i = 0; i < count; i++) {
     if (world.material[i] !== CellMaterial.STREET) continue;
@@ -946,18 +942,12 @@ test("10. City hierarchy & light restraint: 3 street tiers, boulevard medians/st
     else if (t === 2) tier2Ave++;
     else if (t === 3) tier3Median++;
     else if (t === 4) tier4Alley++;
-    const x = i % w;
-    const y = (i / w) | 0;
-    if (isBoulevardStreetlightAt(world, x, y)) streetlights++;
-    if (isBoulevardOrAvenueLaneAt(world, x, y)) laneLines++;
   }
 
   assert.ok(tier1Blvd > 1000, `Expected wide boulevards (tier 1), got ${tier1Blvd}`);
   assert.ok(tier2Ave > 1000, `Expected medium avenues (tier 2), got ${tier2Ave}`);
   assert.ok(tier3Median > 100, `Expected boulevard central medians (tier 3), got ${tier3Median}`);
   assert.ok(tier4Alley > 200, `Expected sparse alleys/setbacks (tier 4), got ${tier4Alley}`);
-  assert.ok(streetlights >= 12, `Expected spaced boulevard streetlights, got ${streetlights}`);
-  assert.ok(laneLines >= 100, `Expected curb lines for the inset curb lights, got ${laneLines}`);
 
   const landmarks = getLandmarkBuildingIds(world);
   assert.ok(landmarks.size >= 2 && landmarks.size <= 4, `Expected 2-4 hero landmark buildings, got ${landmarks.size}`);

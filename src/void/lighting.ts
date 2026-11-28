@@ -19,8 +19,6 @@ import { type Agent, CellMaterial, type FallingChunk, LandCover, SurfaceMaterial
 import { valueNoise } from "./portal-noise.ts";
 import { streetFireFlicker } from "./street-fires.ts";
 import { deliveryCarPose } from "./deliveries.ts";
-import { CityDetail, cityDetailAt, halogenLampStanding, halogenLamps, halogenPoolCell, isHalogenPoolAt } from "./city-details.ts";
-import { STREET_GLOW_TINT, streetGlowSpillAt } from "./street-glow.ts";
 import type { VoidSim } from "./sim.ts";
 import { TOWER_SPECS } from "./towers.ts";
 import { evaluateFluidHeatColor, type VoidFluidGrid } from "./void-fluid.ts";
@@ -603,12 +601,16 @@ export function traceLightOcclusion(
   return visibility;
 }
 
+/** Extra neutral ambient on building pixels as the ambient darkens (0 by day, about 0.17 at night), so
+ * buildings read lighter than the dark streets after sunset. */
+export function buildingAmbientLift(preset: TimeOfDayPreset): number {
+  const avg = (preset.ambientColor[0] + preset.ambientColor[1] + preset.ambientColor[2]) / 3;
+  return Math.max(0, 0.6 - avg) * 0.5;
+}
+
 /** Most delivery-car point lights per frame, by quality tier. Every car and fire also paints a cheap
  * additive street glow in the renderer, so low quality keeps their glow without point-light cost. */
 export const DELIVERY_CAR_LIGHT_CAP: Record<LightingQualityMode, number> = { low: 0, medium: 1, high: 8 };
-
-/** Most halogen street-lamp point lights per frame, by quality tier (all lamps always seed the halo). */
-export const HALOGEN_LIGHT_CAP: Record<LightingQualityMode, number> = { low: 0, medium: 0, high: 6 };
 
 /** Most street-fire point lights per frame, by quality tier. */
 export const STREET_FIRE_LIGHT_CAP: Record<LightingQualityMode, number> = { low: 0, medium: 2, high: 8 };
@@ -639,51 +641,6 @@ function priorityBuildingLights(world: VoidWorld): VoidWorld["buildings"] {
   }
   buildingLightOrder.set(world, selected);
   return selected;
-}
-
-/** True when cell `(x, y)` is a boulevard median streetlight fixture (spaced every 16 world pixels along median tier 3). */
-export function isBoulevardStreetlightAt(world: VoidWorld, x: number, y: number): boolean {
-  const { w, h } = world.grid;
-  if (x < 2 || x >= w - 2 || y < 2 || y >= h - 2) return false;
-  const idx = y * w + x;
-  if (world.material[idx] !== CellMaterial.STREET || world.streetTier[idx] !== 3) return false;
-  // Place 1 fixture per 2x2 median block every 16 pixels along the boulevard axis
-  const isEvenCell = (x & 1) === 0 && (y & 1) === 0;
-  if (!isEvenCell) return false;
-  const vertMedian = world.streetTier[idx - 1] === 1 || world.streetTier[idx + 1] === 1;
-  const horizMedian = world.streetTier[idx - w] === 1 || world.streetTier[idx + w] === 1;
-  if (vertMedian && (y & 15) === 6) return true;
-  if (horizMedian && (x & 15) === 6) return true;
-  return false;
-}
-
-/** Inset of the curb line (where the curb lights sit) from the block edge, in world pixels (the sidewalk lies between). */
-export const CURB_LINE_INSET = 2;
-
-function isStreetCorridor(world: VoidWorld, x: number, y: number): boolean {
-  const { w, h } = world.grid;
-  if (x < 0 || y < 0 || x >= w || y >= h) return true;
-  const tier = world.streetTier[y * w + x];
-  return tier === 1 || tier === 2 || tier === 3;
-}
-
-/** True when street cell `(x, y)` lies on a curb line, where `street-glow.ts` sets its inset lights. Every boulevard and avenue
- * carries one line along each side, `CURB_LINE_INSET` pixels out from the block edge so a sidewalk
- * strip separates it from the buildings. Lines stop at intersections, where no block edge runs beside them. */
-export function isBoulevardOrAvenueLaneAt(world: VoidWorld, x: number, y: number): boolean {
-  const { w, h } = world.grid;
-  if (x < 0 || x >= w || y < 0 || y >= h) return false;
-  const idx = y * w + x;
-  if (world.material[idx] !== CellMaterial.STREET) return false;
-  const tier = world.streetTier[idx];
-  if (tier !== 1 && tier !== 2) return false;
-  const d = CURB_LINE_INSET + 1;
-  for (let k = 1; k < d; k++) {
-    if (!isStreetCorridor(world, x - k, y) || !isStreetCorridor(world, x + k, y) ||
-      !isStreetCorridor(world, x, y - k) || !isStreetCorridor(world, x, y + k)) return false;
-  }
-  return !isStreetCorridor(world, x - d, y) || !isStreetCorridor(world, x + d, y) ||
-    !isStreetCorridor(world, x, y - d) || !isStreetCorridor(world, x, y + d);
 }
 
 /** Gathers and prioritizes all active dynamic light sources in the scene (explosions, Void portals,
@@ -969,23 +926,6 @@ export function collectSceneLights(
         castsShadows: quality === "high",
         shadowStrength: 0.3 * shadowScale,
         priority: 71,
-      });
-    }
-  }
-
-  // 7b2. Halogen street lamps: on high quality the nearest few also light facades and wet roads as point lights
-  //      (no shadows). Every lamp always seeds the warm halo, so lower tiers keep their pools for free.
-  if (HALOGEN_LIGHT_CAP[quality] > 0 && neonMult > 0.3) {
-    let n = 0;
-    for (const lamp of halogenLamps(world)) {
-      if (n >= HALOGEN_LIGHT_CAP[quality]) break;
-      const pool = halogenPoolCell(lamp);
-      if (!inView(pool.x, pool.y, 12) || !halogenLampStanding(world, lamp)) continue;
-      n++;
-      lights.push({
-        x: pool.x + 0.5, y: pool.y + 0.5, z: 5,
-        r: 1.15 * Math.min(1, neonMult), g: 0.74 * Math.min(1, neonMult), b: 0.3 * Math.min(1, neonMult),
-        radius: 13, specular: 0.5, castsShadows: false, shadowStrength: 0, priority: 60,
       });
     }
   }
@@ -1293,7 +1233,6 @@ export class LightingEngine {
   terrainNz = new Int8Array(0);
   terrainElev = new Uint8Array(0);
   terrainSurface = new Uint8Array(0);
-  private terrainLane = new Uint8Array(0);
   surfaceTileRevision = new Float64Array(0);
   private surfaceFrame = 0;
   /** Ground-footprint height-field (`w * h`) for 2.5D shadow raycasting. */
@@ -1423,7 +1362,6 @@ export class LightingEngine {
       this.terrainNz = new Int8Array(count);
       this.terrainElev = new Uint8Array(count);
       this.terrainSurface = new Uint8Array(count);
-      this.terrainLane = new Uint8Array(count);
       this.groundElev = new Uint8Array(count);
       this.terrainRelief = new Float32Array(count);
       this.roofSunShadow = new Uint8Array(count).fill(255);
@@ -1605,14 +1543,6 @@ export class LightingEngine {
             : SurfaceMaterial.WET_SHEEN;
         }
         this.terrainSurface[idx] = surface;
-        const stTier = world.streetTier[idx];
-        // Soft cool street glow: curb light dots (3, falling off over 2 px), intersection rings and crosswalks
-        let lane = 0;
-        if (mat === CellMaterial.STREET && (stTier === 1 || stTier === 2 || stTier === 3)) {
-          lane = streetGlowSpillAt(world, idx);
-          if (lane === 0 && cityDetailAt(world, idx) === CityDetail.CROSSWALK) lane = 1;
-        }
-        this.terrainLane[idx] = lane;
         const tGround =
           mat === CellMaterial.VOID || mat === CellMaterial.EMPTY ? 0 :
           mat === CellMaterial.WALL || mat === CellMaterial.BARRIER || cover === LandCover.SILO
@@ -1933,18 +1863,6 @@ export class LightingEngine {
               seeds[dst] = Math.max(seeds[dst], IS_LITTLE_ENDIAN ? color & 255 : color >>> 24);
               seeds[dst + 1] = Math.max(seeds[dst + 1], (color >>> (IS_LITTLE_ENDIAN ? 8 : 16)) & 255);
               seeds[dst + 2] = Math.max(seeds[dst + 2], (color >>> (IS_LITTLE_ENDIAN ? 16 : 8)) & 255);
-            } else if (world && atlasBldId[i] < 0 && world.material[i] === CellMaterial.STREET) {
-              if (isHalogenPoolAt(world, wx, wy)) {
-                // Warm sodium-halogen street lamp pool, distinct from the cool median lights
-                seeds[dst] = Math.max(seeds[dst], 255);
-                seeds[dst + 1] = Math.max(seeds[dst + 1], 168);
-                seeds[dst + 2] = Math.max(seeds[dst + 2], 74);
-              } else if (isBoulevardStreetlightAt(world, wx, wy)) {
-                // Soft boulevard streetlight pool seed at regular spacing along medians
-                seeds[dst] = Math.max(seeds[dst], 115);
-                seeds[dst + 1] = Math.max(seeds[dst + 1], 185);
-                seeds[dst + 2] = Math.max(seeds[dst + 2], 235);
-              }
             }
           }
         }
@@ -2258,6 +2176,7 @@ export class LightingEngine {
     const sunDir = preset ? preset.sunDir : [SUN_DIRECTION.x, SUN_DIRECTION.y, SUN_DIRECTION.z];
     const reachScale = preset ? preset.shadowReachScale : 1;
     const strengthScale = preset ? preset.shadowStrengthScale : 1;
+    const buildingLift = preset ? buildingAmbientLift(preset) : 0;
 
     const shadedFrame = ++this.surfaceFrame;
     // 3. Shade active 16x16 tiles
@@ -2540,24 +2459,6 @@ export class LightingEngine {
             }
           }
 
-          // Curb light dots and intersection rings glow softly cool onto the street, with a wet sheen in rain
-          const lane = isBuilding ? 0 : this.terrainLane[i];
-          if (lane > 0 && preset.neonIntensity > 0.2) {
-            const [tr, tg, tb] = STREET_GLOW_TINT;
-            const laneGlow = preset.neonIntensity * (lane === 3 ? 0.3 + localWet * 0.08 : lane === 2 ? 0.1 : 0.04);
-            ptR += laneGlow * tr;
-            ptG += laneGlow * tg;
-            ptB += laneGlow * tb;
-            if (localWet > 0.05 && lane < 3) {
-              const wetLaneSpill = localWet * preset.neonIntensity * (lane === 2 ? 0.08 : 0.04);
-              ptR += wetLaneSpill * tr;
-              ptG += wetLaneSpill * tg;
-              ptB += wetLaneSpill * tb;
-              spR += wetLaneSpill * 18 * tr;
-              spG += wetLaneSpill * 18 * tg;
-              spB += wetLaneSpill * 18 * tb;
-            }
-          }
           // Emissive neon cores stay bright and saturated with a soft colored boost
           if (isEmissive) {
             const emBoost = 0.85 + preset.neonIntensity * 0.35;
@@ -2582,10 +2483,12 @@ export class LightingEngine {
             (gIdx > 0 && material[gIdx - 1] === CellMaterial.VOID) ||
             (gIdx + 1 < material.length && material[gIdx + 1] === CellMaterial.VOID);
           const amb = nearVoid ? preset.voidAmbientColor : preset.ambientColor;
+          // Buildings keep a neutral fill as the sun goes down, so they stay clearly lighter than the dark roads
+          const lift = isBuilding && !nearVoid ? buildingLift : 0;
 
-          const ambSunR = amb[0] * normalRelief + preset.sunColor[0] * sunDirect;
-          const ambSunG = amb[1] * normalRelief + preset.sunColor[1] * sunDirect;
-          const ambSunB = amb[2] * normalRelief + preset.sunColor[2] * sunDirect;
+          const ambSunR = (amb[0] + lift) * normalRelief + preset.sunColor[0] * sunDirect;
+          const ambSunG = (amb[1] + lift) * normalRelief + preset.sunColor[1] * sunDirect;
+          const ambSunB = (amb[2] + lift) * normalRelief + preset.sunColor[2] * sunDirect;
 
           // Atmospheric haze catching colored light near bright sources
           const hazeK = preset.hazeAmount * 0.36;

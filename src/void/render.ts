@@ -36,7 +36,6 @@ import {
   BUILDING_LIGHT_BUDGET,
   collectSceneLights,
   INFANTRY_SOBEL_NORMALS,
-  isBoulevardStreetlightAt,
   LightingEngine,
   type LightingQualityMode,
   normalizeVoidTimeOfDay,
@@ -95,8 +94,6 @@ import { reflectionColor, SurfaceReflections } from "./reflections.ts";
 import { findStreetPath, isCityStreet, type StreetBfsScratch } from "./street-routes.ts";
 import { deliveryCarPose, depotLinks, laneOffset, tripHeading, type DeliveryRoute } from "./deliveries.ts";
 import { streetFireFlicker } from "./street-fires.ts";
-import { CITY_DETAIL_COLORS, cityDetailAt, halogenLampStanding, halogenLamps } from "./city-details.ts";
-import { STREET_GLOW_COLORS, streetGlowAt } from "./street-glow.ts";
 import type { VoidSim } from "./sim.ts";
 import { STRIKE_SPECS, TOWER_SPECS, canMountOnRoof, footprintBuilding, towerRange } from "./towers.ts";
 import { forEachTowerSpritePixel } from "./tower-sprites.ts";
@@ -865,55 +862,6 @@ export class VoidRenderer {
       c.fillStyle = `rgba(255, 170, 70, ${(0.65 * fade).toFixed(3)})`;
       c.fillRect(end.x - 2, end.y, 5, 1);
       c.fillRect(end.x, end.y - 2, 1, 5);
-    }
-  }
-
-  /** Draws each standing halogen lamp: a 4 px pole, an arm reaching over the road and a warm lamp head
-   * that brightens with the time of day's neon intensity. */
-  private paintHalogenLamps(
-    world: VoidWorld,
-    c: CanvasRenderingContext2D,
-    view: { x0: number; y0: number; x1: number; y1: number },
-    neon: number,
-  ): void {
-    const lit = Math.max(0, Math.min(1, (neon - 0.3) / 0.9));
-    const litHeadsX: number[] = [];
-    const litHeadsY: number[] = [];
-    for (const lamp of halogenLamps(world)) {
-      const { x, y, ax, ay } = lamp;
-      if (x < view.x0 - 6 || x > view.x1 + 6 || y < view.y0 - 4 || y > view.y1 + 10) continue;
-      if (!halogenLampStanding(world, lamp)) continue;
-      c.fillStyle = "#4a515b";
-      c.fillRect(x, y - 4, 1, 4);
-      c.fillStyle = "#6b7380";
-      c.fillRect(x, y - 5, 1, 1);
-      // Arms reach sideways over east-west roads; over a road to the north the arm rises one pixel, and
-      // over a road to the south (toward the viewer) the head sits on the pole top.
-      const hx = x + ax * 2;
-      const hy = ay < 0 ? y - 6 : y - 5;
-      if (ax !== 0) {
-        c.fillStyle = "#5a616c";
-        c.fillRect(x + ax, y - 5, 1, 1);
-      }
-      c.fillStyle = lit > 0 ? "#ffe2a0" : "#9a8f78";
-      c.fillRect(hx, hy, 1, 1);
-      if (lit > 0) {
-        litHeadsX.push(hx);
-        litHeadsY.push(hy);
-      }
-    }
-    if (litHeadsX.length > 0) {
-      c.globalCompositeOperation = "lighter";
-      c.fillStyle = `rgba(255, 176, 80, ${(0.45 * lit).toFixed(3)})`;
-      for (let i = 0; i < litHeadsX.length; i++) {
-        const hx = litHeadsX[i];
-        const hy = litHeadsY[i];
-        c.fillRect(hx - 1, hy, 1, 1);
-        c.fillRect(hx + 1, hy, 1, 1);
-        c.fillRect(hx, hy - 1, 1, 1);
-        c.fillRect(hx, hy + 1, 1, 1);
-      }
-      c.globalCompositeOperation = "source-over";
     }
   }
 
@@ -1841,41 +1789,24 @@ export class VoidRenderer {
       if (hp < 0.4) color = r < 0.2 ? "#7a2fb8" : "#221a24";
       else if (hp < 0.75 && r < 0.22) color = "#4a3b30";
     } else if (mat === CellMaterial.STREET) {
+      // Plain dark asphalt so the lighter buildings read clearly: no lane paint, lights or furniture.
+      const tier = world.streetTier[idx];
       if (hp < 0.85 && (x + y) % 2 === 0) {
-        color = "#252b38";
-      } else if (world.streetTier[idx] === PARKING_STREET_TIER) {
-        const row = y & 7;
-        const bay = x % 5;
-        const occupied = hash01(world.seed, 1208, Math.floor(x / 5), y >> 3) < 0.37;
-        if (row === 0 || (bay === 0 && row < 4)) color = "#78828a";
-        else if (occupied && bay >= 2 && bay <= 3 && row >= 1 && row <= 3) {
-          color = row === 1 ? "#7a96a6" : row === 2 ? "#476277" : "#a25743";
-        } else color = row >= 5 ? "#252d36" : "#303741";
-      } else if (world.streetTier[idx] === 8) {
+        color = "#1d222b";
+      } else if (tier === PARKING_STREET_TIER) {
+        // Lots keep only faint bay lines
+        color = (y & 7) === 0 || (x % 5 === 0 && (y & 7) < 4) ? "#1c2128" : "#111419";
+      } else if (tier === 8) {
         color = cover === LandCover.BRIDGE
           ? (x + y) % 3 === 0 ? "#523b28" : "#876948"
           : valueNoise(x * 0.25, y * 0.25) > 0.55 ? "#a38152" : "#8c6d45";
-      } else if (world.streetTier[idx] === 3) {
-        // Raised boulevard central median with spaced streetlights
-        if (isBoulevardStreetlightAt(world, x, y)) {
-          color = "#a8e6ff";
-        } else {
-          color = (x + y) % 3 === 0 ? "#2a3542" : "#222b36";
-        }
-      } else if (hp >= 0.85 && cityDetailAt(world, idx) !== 0) {
-        // Procedural street furniture: crosswalks, manholes, benches, planters, hydrants, lamp bases...
-        color = CITY_DETAIL_COLORS[cityDetailAt(world, idx)];
+      } else if (tier === 3) {
+        // Boulevard median: a barely raised strip
+        color = "#13171d";
       } else {
         const kerb = (x > 0 && world.buildingAt[idx - 1] >= 0) || (x + 1 < w && world.buildingAt[idx + 1] >= 0) ||
           (y > 0 && world.buildingAt[idx - w] >= 0) || (y + 1 < h && world.buildingAt[idx + w] >= 0);
-        if (kerb) {
-          color = "#2e353e";
-        } else if (streetGlowAt(world, idx) !== 0) {
-          // Cool inset curb light dots with a faint seam between, and major intersection light rings
-          color = STREET_GLOW_COLORS[streetGlowAt(world, idx)];
-        } else {
-          color = world.streetTier[idx] === 4 ? "#1d242e" : r < 0.07 ? "#191f28" : "#151a22";
-        }
+        color = kerb ? "#191d24" : tier === 4 ? "#101318" : "#0c0f13";
       }
     } else if (mat === CellMaterial.PARK) {
       const patch = valueNoise(x * 0.14 + (world.seed & 255), y * 0.14);
@@ -3218,7 +3149,6 @@ export class VoidRenderer {
 
     // Persistent street fires: trash cans, debris piles and trash heaps that burn all level until destroyed
     this.paintStreetFires(sim, rawScene, animTime, viewBounds, glow);
-    this.paintHalogenLamps(world, rawScene, viewBounds, activePreset.neonIntensity);
 
     // Draw above-ground falling chunks (`z >= 0`) and fleeing street civilians (`z >= 0`)
     if (!this.reduceEffects) {
